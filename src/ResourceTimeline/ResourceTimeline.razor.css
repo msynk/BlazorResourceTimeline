@@ -1,0 +1,42 @@
+.timeline-container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+}
+
+.timeline-wrapper {
+    flex: 1;
+    position: relative;
+    overflow: auto;
+    background-color: #ffffff;
+}
+
+canvas {
+    display: block;
+    cursor: pointer;
+    position: sticky;
+    top: 0;
+    left: 0;
+    pointer-events: auto;
+    z-index: 10;
+    background: transparent;
+}
+
+::deep .timeline-content {
+    pointer-events: none;
+    z-index: 1;
+}
+
+.timeline-top-start {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 20;
+    box-sizing: border-box;
+    overflow: hidden;
+    background-color: #f8f9fa;
+    border-right: 1px solid #dee2e6;
+    border-bottom: 1px solid #dee2e6;
+}

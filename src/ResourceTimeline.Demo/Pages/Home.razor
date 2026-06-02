@@ -1,0 +1,115 @@
+﻿@page "/"
+@using ResourceTimeline.Components
+@using ResourceTimeline.Models
+@using ResourceTimeline.Demo.Data
+
+<PageTitle>Resource Timeline</PageTitle>
+
+<div class="demo-page">
+    <header class="demo-header">
+        <div class="demo-title">
+            <h1>Resource Timeline</h1>
+            <p>Canvas-based visualization of resource consumption over time. Scroll in both
+               directions and click a bar to inspect it.</p>
+        </div>
+
+        <div class="demo-controls">
+            <label>
+                Days
+                <select @bind="_days" @bind:after="RegenerateAsync">
+                    <option value="7">7</option>
+                    <option value="30">30</option>
+                    <option value="100">100</option>
+                    <option value="365">365</option>
+                </select>
+            </label>
+            <button class="btn-today" @onclick="GoToTodayAsync">Go to Today</button>
+            <button class="btn-regenerate" @onclick="RegenerateAsync">Regenerate</button>
+        </div>
+    </header>
+
+    <section class="demo-stats">
+        <span><strong>@(_data?.Resources.Count ?? 0)</strong> resources</span>
+        <span><strong>@(_data?.Consumptions.Count ?? 0)</strong> consumptions</span>
+        <span><strong>@_days</strong> days</span>
+        @if (_selected is not null)
+        {
+            <span class="selection">
+                Selected: <strong>@ResourceNameFor(_selected.ResourceId)</strong>
+                @FormatTime(_selected.StartTime) &ndash; @FormatTime(_selected.EndTime)
+                (@FormatDuration(_selected.EndTime - _selected.StartTime))
+            </span>
+        }
+        else
+        {
+            <span class="selection muted">No bar selected</span>
+        }
+    </section>
+
+    <div class="demo-timeline">
+        @if (_data is not null)
+        {
+            <ResourceTimeline @ref="_timeline"
+                              Resources="_data.Resources"
+                              TimeRange="_data.TimeRange"
+                              Consumptions="_data.Consumptions"
+                              OnSelectionChanged="HandleSelectionChanged">
+                <TopStartContent>
+                    <div class="corner">
+                        <span class="corner-title">Resources</span>
+                        <span class="corner-sub">Hour</span>
+                    </div>
+                </TopStartContent>
+            </ResourceTimeline>
+        }
+        else
+        {
+            <div class="demo-loading">Loading timeline data...</div>
+        }
+    </div>
+</div>
+
+@code {
+    private ResourceTimeline? _timeline;
+    private TimelineData? _data;
+    private Consumption? _selected;
+    private int _days = 100;
+
+    protected override void OnInitialized() => Regenerate();
+
+    private void Regenerate()
+    {
+        _selected = null;
+        _data = DataGenerator.GenerateSampleData(days: _days);
+    }
+
+    private Task RegenerateAsync()
+    {
+        Regenerate();
+        return Task.CompletedTask;
+    }
+
+    private async Task GoToTodayAsync()
+    {
+        if (_timeline is not null)
+        {
+            await _timeline.GoToTodayAsync();
+        }
+    }
+
+    private void HandleSelectionChanged(Consumption? bar) => _selected = bar;
+
+    private string ResourceNameFor(string resourceId) =>
+        _data?.Resources.FirstOrDefault(r => r.Id == resourceId)?.Name ?? resourceId;
+
+    private static string FormatTime(long unixMs) =>
+        DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime.ToString("MMM d, HH:mm");
+
+    private static string FormatDuration(long ms)
+    {
+        var span = TimeSpan.FromMilliseconds(ms);
+        return span.TotalHours >= 1
+            ? $"{(int)span.TotalHours}h {span.Minutes}m"
+            : $"{span.Minutes}m";
+    }
+}

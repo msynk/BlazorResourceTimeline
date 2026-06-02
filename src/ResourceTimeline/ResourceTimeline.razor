@@ -1,0 +1,195 @@
+@namespace ResourceTimeline.Components
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<div class="timeline-container">
+    <div class="timeline-wrapper" @ref="_wrapperElement">
+        <canvas @ref="_canvasElement" id="@_canvasId"></canvas>
+    </div>
+    @if (TopStartContent is not null)
+    {
+        <div class="timeline-top-start"
+             style="width:@(_layout.ResourceAxisWidth)px;height:@(_layout.TimeAxisHeight)px;">
+            @TopStartContent
+        </div>
+    }
+</div>
+
+@code {
+    private const string ModulePath = "./_content/ResourceTimeline/resource-timeline.js";
+
+    // Default corner size; replaced with the renderer's actual layout after init.
+    private TimelineLayout _layout = new(150, 60, 40);
+
+    private ElementReference _wrapperElement;
+    private ElementReference _canvasElement;
+    private IJSObjectReference? _jsModule;
+    private IJSObjectReference? _timelineInstance;
+    private DotNetObjectReference<ResourceTimeline>? _selfRef;
+    private readonly string _canvasId = $"timeline-{Guid.NewGuid():N}";
+    private bool _dataLoaded;
+
+    // References of the data last pushed to JS. Used to skip redundant (and
+    // expensive) re-marshalling when the parent re-renders without data changes.
+    private List<Resource>? _loadedResources;
+    private TimeRange? _loadedTimeRange;
+    private List<Consumption>? _loadedConsumptions;
+
+    /// <summary>Resource rows rendered along the vertical axis.</summary>
+    [Parameter] public List<Resource>? Resources { get; set; }
+
+    /// <summary>Time window rendered along the horizontal axis.</summary>
+    [Parameter] public TimeRange? TimeRange { get; set; }
+
+    /// <summary>Consumption bars to display.</summary>
+    [Parameter] public List<Consumption>? Consumptions { get; set; }
+
+    /// <summary>Raised when a consumption bar is selected, or with <c>null</c> when the selection is cleared.</summary>
+    [Parameter] public EventCallback<Consumption?> OnSelectionChanged { get; set; }
+
+    /// <summary>
+    /// Optional custom content rendered in the top-start corner of the component
+    /// (the otherwise blank cell where the time axis and resource axis meet).
+    /// </summary>
+    [Parameter] public RenderFragment? TopStartContent { get; set; }
+
+    /// <summary>Fixed layout dimensions (in pixels) reported by the renderer.</summary>
+    private readonly record struct TimelineLayout(int ResourceAxisWidth, int TimeAxisHeight, int ResourceHeight);
+
+    private bool HasData => Resources is not null && TimeRange is not null && Consumptions is not null;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            _jsModule = await JS.InvokeAsync<IJSObjectReference>("import", ModulePath);
+            _timelineInstance = await _jsModule.InvokeAsync<IJSObjectReference>("createTimeline", _canvasId, _selfRef);
+
+            if (TopStartContent is not null)
+            {
+                _layout = await _timelineInstance.InvokeAsync<TimelineLayout>("getLayout");
+                StateHasChanged();
+            }
+
+            if (HasData)
+            {
+                await LoadDataAsync();
+            }
+        }
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_timelineInstance is not null && HasData && DataChanged())
+        {
+            await LoadDataAsync();
+        }
+    }
+
+    // Only the references are compared. Mutating a list in place without
+    // creating a new instance will not trigger a reload; pass a new list
+    // (or call ReloadAsync) when the contents change.
+    private bool DataChanged() =>
+        !ReferenceEquals(_loadedResources, Resources)
+        || !ReferenceEquals(_loadedTimeRange, TimeRange)
+        || !ReferenceEquals(_loadedConsumptions, Consumptions);
+
+    private async Task LoadDataAsync()
+    {
+        if (_timelineInstance is null || !HasData)
+        {
+            return;
+        }
+
+        await _timelineInstance.InvokeVoidAsync(
+            "setData", Resources, TimeRange!.Start, TimeRange.End, Consumptions);
+
+        _loadedResources = Resources;
+        _loadedTimeRange = TimeRange;
+        _loadedConsumptions = Consumptions;
+        _dataLoaded = true;
+    }
+
+    /// <summary>Forces the current data to be re-sent to the renderer, even if the
+    /// parameter references are unchanged. Use after mutating a list in place.</summary>
+    public Task ReloadAsync()
+    {
+        _loadedResources = null;
+        _loadedTimeRange = null;
+        _loadedConsumptions = null;
+        return LoadDataAsync();
+    }
+
+    /// <summary>Clears the current bar selection programmatically.</summary>
+    public async Task ClearSelectionAsync()
+    {
+        if (_timelineInstance is not null && _dataLoaded)
+        {
+            await _timelineInstance.InvokeVoidAsync("clearSelection");
+        }
+    }
+
+    /// <summary>
+    /// Scrolls the timeline so the current time is centered in view.
+    /// Returns <c>true</c> if "now" falls within the timeline's range and
+    /// navigation occurred; otherwise <c>false</c>.
+    /// </summary>
+    public async Task<bool> GoToTodayAsync()
+    {
+        if (_timelineInstance is null || !_dataLoaded)
+        {
+            return false;
+        }
+
+        return await _timelineInstance.InvokeAsync<bool>("goToNow");
+    }
+
+    /// <summary>
+    /// Scrolls the timeline so the given time (Unix time in milliseconds) is
+    /// centered in view. Returns <c>true</c> if the time is within range.
+    /// </summary>
+    public async Task<bool> ScrollToTimeAsync(long unixMs)
+    {
+        if (_timelineInstance is null || !_dataLoaded)
+        {
+            return false;
+        }
+
+        return await _timelineInstance.InvokeAsync<bool>("scrollToTime", unixMs);
+    }
+
+    [JSInvokable]
+    public async Task OnBarSelected(Consumption? bar)
+    {
+        if (OnSelectionChanged.HasDelegate)
+        {
+            await OnSelectionChanged.InvokeAsync(bar);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (_timelineInstance is not null)
+            {
+                await _timelineInstance.InvokeVoidAsync("dispose");
+                await _timelineInstance.DisposeAsync();
+            }
+
+            if (_jsModule is not null)
+            {
+                await _jsModule.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+            // The circuit is already gone; nothing to clean up on the JS side.
+        }
+        finally
+        {
+            _selfRef?.Dispose();
+        }
+    }
+}

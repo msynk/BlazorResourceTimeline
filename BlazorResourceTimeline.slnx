@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ResourceTimeline.Demo/ResourceTimeline.Demo.csproj" />
+    <Project Path="src/ResourceTimeline/ResourceTimeline.csproj" />
+  </Folder>
+</Solution>
