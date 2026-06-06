@@ -40,12 +40,12 @@
             </span>
             <button class="btn-clear" @onclick="ClearSelectionAsync">Clear</button>
         }
-        else if (_selected is not null)
+        else if (_selectedBars.Count == 1)
         {
             <span class="selection">
-                Selected: <strong>@ResourceNameFor(_selected.ResourceId)</strong>
-                @FormatTime(_selected.StartTime) &ndash; @FormatTime(_selected.EndTime)
-                (@FormatDuration(_selected.EndTime - _selected.StartTime))
+                Selected: <strong>@ResourceNameFor(_selectedBars[0].ResourceId)</strong>
+                @FormatTime(_selectedBars[0].StartTime) &ndash; @FormatTime(_selectedBars[0].EndTime)
+                (@FormatDuration(_selectedBars[0].EndTime - _selectedBars[0].StartTime))
             </span>
             <button class="btn-clear" @onclick="ClearSelectionAsync">Clear</button>
         }
@@ -62,8 +62,7 @@
                               Resources="_data.Resources"
                               TimeRange="_data.TimeRange"
                               Consumptions="_data.Consumptions"
-                              OnSelectionChanged="HandleSelectionChanged"
-                              OnMultiSelectionChanged="HandleMultiSelectionChanged">
+                              OnSelectionChanged="HandleSelectionChanged">
                 <TopStartContent>
                     <div class="corner">
                         <span class="corner-title">Resources</span>
@@ -82,7 +81,6 @@
 @code {
     private ResourceTimeline? _timeline;
     private TimelineData? _data;
-    private Consumption? _selected;
     private IReadOnlyList<Consumption> _selectedBars = Array.Empty<Consumption>();
     private int _days = 100;
 
@@ -90,7 +88,6 @@
 
     private void Regenerate()
     {
-        _selected = null;
         _selectedBars = Array.Empty<Consumption>();
         _data = DataGenerator.GenerateSampleData(days: _days);
     }
@@ -117,9 +114,7 @@
         }
     }
 
-    private void HandleSelectionChanged(Consumption? bar) => _selected = bar;
-
-    private void HandleMultiSelectionChanged(Consumption[] bars) => _selectedBars = bars;
+    private void HandleSelectionChanged(Consumption[] bars) => _selectedBars = bars;
 
     private string ResourceNameFor(string resourceId) =>
         _data?.Resources.FirstOrDefault(r => r.Id == resourceId)?.Name ?? resourceId;

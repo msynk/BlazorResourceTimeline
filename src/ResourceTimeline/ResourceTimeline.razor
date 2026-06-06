@@ -59,17 +59,14 @@
     /// <summary>Consumption bars to display.</summary>
     [Parameter] public List<Consumption>? Consumptions { get; set; }
 
-    /// <summary>Raised when a consumption bar is selected, or with <c>null</c> when the selection is cleared.
-    /// Reports the primary (most recently selected) bar; for the full set use <see cref="OnMultiSelectionChanged"/>.</summary>
-    [Parameter] public EventCallback<Consumption?> OnSelectionChanged { get; set; }
-
     /// <summary>
-    /// Raised whenever the set of selected bars changes. The list contains every
+    /// Raised whenever the set of selected bars changes. The array contains every
     /// currently selected bar, in selection order, and is empty when nothing is selected.
+    /// For a single click the array will contain exactly one element.
     /// Selection supports click, Ctrl/Cmd-click to toggle individual bars, and
     /// click-and-drag to rubber-band select a region.
     /// </summary>
-    [Parameter] public EventCallback<Consumption[]> OnMultiSelectionChanged { get; set; }
+    [Parameter] public EventCallback<Consumption[]> OnSelectionChanged { get; set; }
 
     /// <summary>
     /// Optional custom content rendered in the top-start corner of the component
@@ -235,20 +232,11 @@
     }
 
     [JSInvokable]
-    public async Task OnBarSelected(Consumption? bar)
+    public async Task OnSelectionUpdated(Consumption[] bars)
     {
         if (OnSelectionChanged.HasDelegate)
         {
-            await OnSelectionChanged.InvokeAsync(bar);
-        }
-    }
-
-    [JSInvokable]
-    public async Task OnSelectionUpdated(Consumption[] bars)
-    {
-        if (OnMultiSelectionChanged.HasDelegate)
-        {
-            await OnMultiSelectionChanged.InvokeAsync(bars);
+            await OnSelectionChanged.InvokeAsync(bars);
         }
     }
 

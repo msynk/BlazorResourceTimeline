@@ -43,6 +43,17 @@ public static class DataGenerator
 
     private const string FallbackColor = "#868e96";
 
+    // Colors applied based on each bar's position relative to "now":
+    //   before now -> darkgreen, after now -> blue.
+    private const string PastColor = "darkgreen";
+    private const string FutureColor = "blue";
+
+    // Delay (edge) bar color, shown at both ends of some past bars.
+    private const string DelayColor = "red";
+
+    // Fraction of past bars that receive start/end delay bars.
+    private const double DelayProbability = 0.25;
+
     /// <summary>Builds resource rows from the provided names (or a default set).</summary>
     public static List<Resource> GenerateResources(string[]? resourceNames = null)
     {
@@ -67,11 +78,13 @@ public static class DataGenerator
         var today = (referenceDate ?? DateTime.Now).Date;
         var random = seed.HasValue ? new Random(seed.Value) : new Random();
 
-        // Index of "today" within [0, days - 1], centered with jitter (~middle 40% of span).
-        var center = (days - 1) / 2.0;
-        var spread = Math.Max(1, (int)Math.Round(days * 0.2));
-        var todayIndex = (int)Math.Round(center + random.Next(-spread, spread + 1));
-        todayIndex = Math.Clamp(todayIndex, 0, days - 1);
+        // Place "today" randomly within the second week of the span (day indices
+        // 7..13). Clamp to the available range so short spans still work.
+        var weekStart = Math.Min(7, days - 1);
+        var weekEnd = Math.Min(13, days - 1);
+        var todayIndex = weekStart <= weekEnd
+            ? random.Next(weekStart, weekEnd + 1)
+            : days - 1;
 
         var start = today.AddDays(-todayIndex);
         var end = start.AddDays(days - 1)
@@ -102,10 +115,11 @@ public static class DataGenerator
         var random = seed.HasValue ? new Random(seed.Value) : new Random();
         var timeSpan = timeRange.End - timeRange.Start;
         var days = (int)Math.Ceiling(timeSpan / (double)OneDayMs);
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         foreach (var resource in resources)
         {
-            var (abbrev, color) = GetResourceTypeInfo(resource.Name);
+            var (abbrev, _) = GetResourceTypeInfo(resource.Name);
             var resourceNum = ExtractNumber(resource.Name);
 
             var consumptionsPerDay = minConsumptionsPerDay +
@@ -135,7 +149,12 @@ public static class DataGenerator
 
                 if (endTime > timeRange.End) continue;
 
-                consumptions.Add(new Consumption
+                // Color by position relative to "now": green in the past, blue
+                // in the future. A bar straddling now is treated as past.
+                var isPast = startTime < nowMs;
+                var color = isPast ? PastColor : FutureColor;
+
+                var consumption = new Consumption
                 {
                     Id = $"cons-{resource.Id}-{i}",
                     ResourceId = resource.Id,
@@ -151,7 +170,19 @@ public static class DataGenerator
                     TextBelow = AbbreviateDuration(endTime - startTime),
                     TextStart = AbbreviateTime(startTime),
                     TextEnd = AbbreviateTime(endTime)
-                });
+                };
+
+                // On some past bars, attach red delay bars at both ends to
+                // showcase the edge-bar customization feature.
+                if (isPast && random.NextDouble() < DelayProbability)
+                {
+                    var startDelay = (long)(minDuration * (0.3 + random.NextDouble() * 0.7));
+                    var endDelay = (long)(minDuration * (0.3 + random.NextDouble() * 0.7));
+                    consumption.StartBar = new EdgeBar { Duration = startDelay, Color = DelayColor };
+                    consumption.EndBar = new EdgeBar { Duration = endDelay, Color = DelayColor };
+                }
+
+                consumptions.Add(consumption);
                 lastEndTime = endTime;
             }
         }

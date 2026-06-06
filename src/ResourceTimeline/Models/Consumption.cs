@@ -35,4 +35,18 @@ public class Consumption
 
     /// <summary>Optional label rendered just after the bar's end edge.</summary>
     public string? TextEnd { get; set; }
+
+    /// <summary>
+    /// Optional decorative bar drawn immediately before the main bar's start edge.
+    /// Shares the main bar's row and height. Commonly used to indicate a delay
+    /// before the planned consumption began.
+    /// </summary>
+    public EdgeBar? StartBar { get; set; }
+
+    /// <summary>
+    /// Optional decorative bar drawn immediately after the main bar's end edge.
+    /// Shares the main bar's row and height. Commonly used to indicate a delay
+    /// after the planned consumption ended.
+    /// </summary>
+    public EdgeBar? EndBar { get; set; }
 }

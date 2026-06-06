@@ -587,35 +587,61 @@ class ResourceTimeline {
 
                 const barX = this.getTimeToX(cons.startTime);
                 const barEndX = this.getTimeToX(cons.endTime);
-                if (barEndX < startX || barX > visibleEndX) continue;
+
+                // Edge (delay) bars extend the drawn span before/after the main
+                // bar, so account for them when culling and when drawing.
+                const startEdgeMs = cons.startBar && cons.startBar.duration > 0 ? cons.startBar.duration : 0;
+                const endEdgeMs = cons.endBar && cons.endBar.duration > 0 ? cons.endBar.duration : 0;
+                const drawStartX = startEdgeMs ? this.getTimeToX(cons.startTime - startEdgeMs) : barX;
+                const drawEndX = endEdgeMs ? this.getTimeToX(cons.endTime + endEdgeMs) : barEndX;
+                if (drawEndX < startX || drawStartX > visibleEndX) continue;
+
+                // Start edge bar: drawn immediately before the main bar's start.
+                if (startEdgeMs) {
+                    const edgeWidth = Math.max(c.minBarWidth, barX - drawStartX);
+                    this.ctx.fillStyle = cons.startBar.color || c.colors.bar;
+                    this.ctx.fillRect(drawStartX, barTop, edgeWidth, c.barHeight);
+                }
+                // End edge bar: drawn immediately after the main bar's end.
+                if (endEdgeMs) {
+                    const edgeWidth = Math.max(c.minBarWidth, drawEndX - barEndX);
+                    this.ctx.fillStyle = cons.endBar.color || c.colors.bar;
+                    this.ctx.fillRect(barEndX, barTop, edgeWidth, c.barHeight);
+                }
 
                 const barWidth = Math.max(c.minBarWidth, barEndX - barX);
                 const isSelected = this.selectedBars.has(cons.id);
                 if (isSelected) {
                     this.ctx.fillStyle = cons.color || c.colors.barSelected;
                     this.ctx.fillRect(barX, barTop, barWidth, c.barHeight);
+                    // The selection outline wraps the full span, edge bars included.
+                    const selLeft = drawStartX - 1;
+                    const selWidth = Math.max(barWidth, drawEndX - drawStartX) + 2;
                     this.ctx.strokeStyle = c.colors.barSelectedBorder;
                     this.ctx.lineWidth = 2;
-                    this.ctx.strokeRect(barX - 1, barTop - 1, barWidth + 2, c.barHeight + 2);
+                    this.ctx.strokeRect(selLeft, barTop - 1, selWidth, c.barHeight + 2);
                 } else {
                     this.ctx.fillStyle = cons.color || c.colors.bar;
                     this.ctx.fillRect(barX, barTop, barWidth, c.barHeight);
                 }
 
                 // Per-bar labels (only when present, to keep the common path cheap).
+                // Start/end labels sit outside the full span (edge bars included).
                 if (cons.textAbove || cons.textBelow || cons.textStart || cons.textEnd) {
-                    this._drawBarLabels(cons, barX, barEndX, barTop, barCenterY, c);
+                    this._drawBarLabels(cons, barX, barEndX, drawStartX, drawEndX, barTop, barCenterY, c);
                 }
             }
         }
     }
 
     // Renders the optional labels around a single bar. Positions:
-    //   above  -> centered over the bar, baseline just above it
-    //   below  -> centered under the bar, baseline just below it
-    //   start  -> right-aligned, ending just before the bar's left edge
-    //   end    -> left-aligned, starting just after the bar's right edge
-    _drawBarLabels(cons, barX, barEndX, barTop, barCenterY, c) {
+    //   above  -> centered over the main bar, baseline just above it
+    //   below  -> centered under the main bar, baseline just below it
+    //   start  -> right-aligned, ending just before the full span's left edge
+    //   end    -> left-aligned, starting just after the full span's right edge
+    // spanStartX/spanEndX are the outer edges of the drawn bar including any
+    // start/end edge bars, so the start/end labels never overlap them.
+    _drawBarLabels(cons, barX, barEndX, spanStartX, spanEndX, barTop, barCenterY, c) {
         const ctx = this.ctx;
         const gap = c.barLabelGap;
         ctx.font = c.barLabelFont;
@@ -637,12 +663,12 @@ class ResourceTimeline {
         if (cons.textStart) {
             ctx.textAlign = 'right';
             ctx.textBaseline = 'middle';
-            ctx.fillText(cons.textStart, barX - gap, barCenterY);
+            ctx.fillText(cons.textStart, spanStartX - gap, barCenterY);
         }
         if (cons.textEnd) {
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            ctx.fillText(cons.textEnd, barEndX + gap, barCenterY);
+            ctx.fillText(cons.textEnd, spanEndX + gap, barCenterY);
         }
     }
 
@@ -752,13 +778,16 @@ class ResourceTimeline {
         const resource = this.resources[resourceIndex];
         const clickTime = this.getXToTime(canvasX);
 
-        // Scan only this resource's bars (sorted by startTime).
+        // Scan this resource's bars. Hit-testing uses each bar's effective span
+        // (the main bar plus any start/end edge bars), so clicking an edge bar
+        // selects its owning consumption.
         const resourceConsumptions = this.consumptionsByResource.get(resource.id) || [];
         let clickedBar = null;
         let minDistance = Infinity;
         for (const cons of resourceConsumptions) {
-            if (cons.startTime > clickTime) break; // sorted: no later bar can contain the click
-            if (clickTime <= cons.endTime) {
+            const effStart = this._effectiveStartTime(cons);
+            const effEnd = this._effectiveEndTime(cons);
+            if (clickTime >= effStart && clickTime <= effEnd) {
                 const barCenterX = (this.getTimeToX(cons.startTime) + this.getTimeToX(cons.endTime)) / 2;
                 const distance = Math.abs(canvasX - barCenterX);
                 if (distance < minDistance) {
@@ -818,9 +847,9 @@ class ResourceTimeline {
             if (!resourceConsumptions) continue;
 
             for (const cons of resourceConsumptions) {
-                // Bar horizontal bounds in content space.
-                const barStartX = this._timeToContentX(cons.startTime);
-                const barEndX = Math.max(barStartX + c.minBarWidth, this._timeToContentX(cons.endTime));
+                // Bar horizontal bounds in content space, including edge bars.
+                const barStartX = this._timeToContentX(this._effectiveStartTime(cons));
+                const barEndX = Math.max(barStartX + c.minBarWidth, this._timeToContentX(this._effectiveEndTime(cons)));
                 if (barEndX < minX || barStartX > maxX) continue;
                 next.set(cons.id, cons);
             }
@@ -836,6 +865,19 @@ class ResourceTimeline {
         if (visibleWidth <= 0) return 0;
         const pixelsPerMs = (visibleWidth / 24) / (60 * 60 * 1000);
         return (time - this.timeRange.start) * pixelsPerMs;
+    }
+
+    // Effective start/end times of a consumption, extended to cover any
+    // start/end edge (delay) bars. Used so edge bars count as part of the bar
+    // for hit-testing and selection.
+    _effectiveStartTime(cons) {
+        const edge = cons.startBar && cons.startBar.duration > 0 ? cons.startBar.duration : 0;
+        return cons.startTime - edge;
+    }
+
+    _effectiveEndTime(cons) {
+        const edge = cons.endBar && cons.endBar.duration > 0 ? cons.endBar.duration : 0;
+        return cons.endTime + edge;
     }
 
     // Draws the marquee rectangle (converting content coords back to canvas).
@@ -882,14 +924,11 @@ class ResourceTimeline {
         this._notifySelection();
     }
 
-    // Notifies .NET of the current selection: both the primary (most recently
-    // selected) bar for single-selection consumers and the full list.
+    // Notifies .NET of the current selection state.
     _notifySelection() {
         if (!this.dotNetRef) return;
 
         const all = Array.from(this.selectedBars.values());
-        const primary = all.length > 0 ? all[all.length - 1] : null;
-        this.dotNetRef.invokeMethodAsync('OnBarSelected', primary);
         this.dotNetRef.invokeMethodAsync('OnSelectionUpdated', all);
     }
 
