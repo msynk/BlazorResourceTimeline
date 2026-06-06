@@ -34,8 +34,13 @@ class ResourceTimeline {
                 barSelected: '#4dabf7',
                 barSelectedBorder: '#1971c2',
                 barLabel: '#495057',
-                now: '#e03131'
-            }
+                now: '#e03131',
+                selectionFill: 'rgba(77, 171, 247, 0.18)',
+                selectionBorder: '#4dabf7'
+            },
+            // Minimum pointer movement (px) before a press is treated as a
+            // rubber-band drag rather than a click.
+            dragThreshold: 4
         };
 
         // Data
@@ -47,9 +52,17 @@ class ResourceTimeline {
         this.consumptionsByResource = new Map();
 
         // State
-        this.selectedBar = null;
+        // Selected bars keyed by consumption id, preserving the order in which
+        // they were selected. The most recently selected bar is treated as the
+        // "primary" selection for single-selection consumers.
+        this.selectedBars = new Map();
         this.scrollX = 0;
         this.scrollY = 0;
+
+        // Rubber-band (marquee) drag state. Coordinates are stored in content
+        // space (independent of scroll) so the rectangle tracks the data while
+        // the user scrolls mid-drag.
+        this.drag = null;
 
         // Performance helpers
         this.visibleTimeRange = null;
@@ -59,7 +72,9 @@ class ResourceTimeline {
         // Bound handlers so we can remove them on dispose
         this._onResize = () => this.resizeCanvas();
         this._onScroll = () => this._handleScroll();
-        this._onClick = (e) => this.handleClick(e);
+        this._onMouseDown = (e) => this.handleMouseDown(e);
+        this._onMouseMove = (e) => this.handleMouseMove(e);
+        this._onMouseUp = (e) => this.handleMouseUp(e);
         this._onContextMenu = (e) => e.preventDefault();
 
         this._setupEventListeners();
@@ -68,7 +83,11 @@ class ResourceTimeline {
     _setupEventListeners() {
         window.addEventListener('resize', this._onResize);
         this.wrapper.addEventListener('scroll', this._onScroll, { passive: true });
-        this.canvas.addEventListener('click', this._onClick);
+        this.canvas.addEventListener('mousedown', this._onMouseDown);
+        // Move/up are bound on window so a drag continues to track even when the
+        // pointer leaves the canvas, and completes on release anywhere.
+        window.addEventListener('mousemove', this._onMouseMove);
+        window.addEventListener('mouseup', this._onMouseUp);
         this.canvas.addEventListener('contextmenu', this._onContextMenu);
     }
 
@@ -230,6 +249,7 @@ class ResourceTimeline {
                 this.drawNowLine();
                 this.drawTimeAxis();
                 this.drawResourceAxis();
+                this.drawSelectionRect();
             } catch (error) {
                 console.error('ResourceTimeline render error:', error);
             } finally {
@@ -554,7 +574,7 @@ class ResourceTimeline {
                 if (barEndX < startX || barX > visibleEndX) continue;
 
                 const barWidth = Math.max(c.minBarWidth, barEndX - barX);
-                const isSelected = this.selectedBar && this.selectedBar.id === cons.id;
+                const isSelected = this.selectedBars.has(cons.id);
                 if (isSelected) {
                     this.ctx.fillStyle = cons.color || c.colors.barSelected;
                     this.ctx.fillRect(barX, barTop, barWidth, c.barHeight);
@@ -610,24 +630,113 @@ class ResourceTimeline {
         }
     }
 
-    handleClick(e) {
-        const rect = this.canvas.getBoundingClientRect();
-        const canvasX = e.clientX - rect.left;
-        const canvasY = e.clientY - rect.top;
+    // ---- Pointer interaction: click, Ctrl/Cmd-click, and marquee drag ----
 
-        // Clicks on the sticky axes clear the selection.
-        if (canvasX < this.config.resourceAxisWidth || canvasY < this.config.timeAxisHeight) {
-            this._setSelection(null);
+    // Converts a viewport pointer event to canvas-local coordinates.
+    _eventToCanvas(e) {
+        const rect = this.canvas.getBoundingClientRect();
+        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+
+    // True when the point lies within the scrollable content area (i.e. not on
+    // either sticky axis).
+    _isInContentArea(canvasX, canvasY) {
+        return canvasX >= this.config.resourceAxisWidth && canvasY >= this.config.timeAxisHeight;
+    }
+
+    // Converts canvas-local coordinates into scroll-independent content
+    // coordinates so an in-progress marquee tracks the data while scrolling.
+    _canvasToContent(canvasX, canvasY) {
+        return {
+            x: canvasX - this.config.resourceAxisWidth + this.scrollX,
+            y: canvasY - this.config.timeAxisHeight + this.scrollY
+        };
+    }
+
+    handleMouseDown(e) {
+        // Only react to the primary (left) button.
+        if (e.button !== 0) return;
+
+        const { x: canvasX, y: canvasY } = this._eventToCanvas(e);
+
+        // Presses on the sticky axes clear the selection (unless modified).
+        if (!this._isInContentArea(canvasX, canvasY)) {
+            if (!this._isAdditiveEvent(e)) {
+                this._clearSelectionInternal();
+            }
             return;
         }
 
+        const content = this._canvasToContent(canvasX, canvasY);
+        // Prevent the press from starting a native text/image selection while
+        // dragging the marquee.
+        e.preventDefault();
+        this.drag = {
+            additive: this._isAdditiveEvent(e),
+            startX: content.x,
+            startY: content.y,
+            currentX: content.x,
+            currentY: content.y,
+            // Snapshot of the selection at drag start, used as the base set
+            // when the drag is additive (Ctrl/Cmd held).
+            baseSelection: new Map(this.selectedBars),
+            moved: false
+        };
+    }
+
+    handleMouseMove(e) {
+        if (!this.drag) return;
+
+        const { x: canvasX, y: canvasY } = this._eventToCanvas(e);
+        const content = this._canvasToContent(canvasX, canvasY);
+        this.drag.currentX = content.x;
+        this.drag.currentY = content.y;
+
+        const dx = Math.abs(content.x - this.drag.startX);
+        const dy = Math.abs(content.y - this.drag.startY);
+        if (!this.drag.moved && (dx > this.config.dragThreshold || dy > this.config.dragThreshold)) {
+            this.drag.moved = true;
+        }
+
+        if (this.drag.moved) {
+            this._applyMarqueeSelection();
+            this.render();
+        }
+    }
+
+    handleMouseUp(e) {
+        if (!this.drag) return;
+
+        const drag = this.drag;
+        this.drag = null;
+
+        if (drag.moved) {
+            // Marquee selection was already applied during the move; finalize it.
+            this._applyMarqueeSelection();
+            this.render();
+            this._notifySelection();
+        } else {
+            // No meaningful movement: treat as a click / Ctrl-click.
+            const { x: canvasX, y: canvasY } = this._eventToCanvas(e);
+            this._handleClickSelect(canvasX, canvasY, drag.additive);
+        }
+    }
+
+    // Selects (or toggles) the single bar nearest the click point.
+    _handleClickSelect(canvasX, canvasY, additive) {
+        if (!this._isInContentArea(canvasX, canvasY)) return;
+
         const resourceIndex = this.getYToResource(canvasY);
-        if (resourceIndex === -1) return;
+        if (resourceIndex === -1) {
+            if (!additive) this._clearSelectionInternal();
+            this._notifySelection();
+            return;
+        }
 
         const resource = this.resources[resourceIndex];
         const clickTime = this.getXToTime(canvasX);
 
-        // Scan only this resource's bars (sorted by startTime) instead of all data.
+        // Scan only this resource's bars (sorted by startTime).
         const resourceConsumptions = this.consumptionsByResource.get(resource.id) || [];
         let clickedBar = null;
         let minDistance = Infinity;
@@ -643,15 +752,129 @@ class ResourceTimeline {
             }
         }
 
-        this._setSelection(clickedBar);
+        if (additive) {
+            if (clickedBar) {
+                // Toggle membership, Explorer-style.
+                if (this.selectedBars.has(clickedBar.id)) {
+                    this.selectedBars.delete(clickedBar.id);
+                } else {
+                    this.selectedBars.set(clickedBar.id, clickedBar);
+                }
+            }
+            // Additive click on empty space leaves the selection unchanged.
+        } else {
+            this.selectedBars.clear();
+            if (clickedBar) {
+                this.selectedBars.set(clickedBar.id, clickedBar);
+            }
+        }
+
+        this.render();
+        this._notifySelection();
     }
 
-    _setSelection(bar) {
-        this.selectedBar = bar;
-        this.render();
-        if (this.dotNetRef) {
-            this.dotNetRef.invokeMethodAsync('OnBarSelected', bar);
+    // True when a modifier requesting additive selection is held.
+    _isAdditiveEvent(e) {
+        return e.ctrlKey || e.metaKey;
+    }
+
+    // Recomputes the selection from the current marquee rectangle, combining it
+    // with the snapshot taken at drag start when the drag is additive.
+    _applyMarqueeSelection() {
+        if (!this.drag) return;
+
+        const minX = Math.min(this.drag.startX, this.drag.currentX);
+        const maxX = Math.max(this.drag.startX, this.drag.currentX);
+        const minY = Math.min(this.drag.startY, this.drag.currentY);
+        const maxY = Math.max(this.drag.startY, this.drag.currentY);
+
+        const next = this.drag.additive ? new Map(this.drag.baseSelection) : new Map();
+
+        const c = this.config;
+        for (let resourceIndex = 0; resourceIndex < this.resources.length; resourceIndex++) {
+            // Row bounds in content space.
+            const rowTop = resourceIndex * c.resourceHeight;
+            const rowBottom = rowTop + c.resourceHeight;
+            if (rowBottom < minY || rowTop > maxY) continue;
+
+            const resource = this.resources[resourceIndex];
+            const resourceConsumptions = this.consumptionsByResource.get(resource.id);
+            if (!resourceConsumptions) continue;
+
+            for (const cons of resourceConsumptions) {
+                // Bar horizontal bounds in content space.
+                const barStartX = this._timeToContentX(cons.startTime);
+                const barEndX = Math.max(barStartX + c.minBarWidth, this._timeToContentX(cons.endTime));
+                if (barEndX < minX || barStartX > maxX) continue;
+                next.set(cons.id, cons);
+            }
         }
+
+        this.selectedBars = next;
+    }
+
+    // Time -> content-space X (scroll-independent), mirroring getTimeToX.
+    _timeToContentX(time) {
+        const wrapperRect = this.wrapper.getBoundingClientRect();
+        const visibleWidth = wrapperRect.width - this.config.resourceAxisWidth;
+        if (visibleWidth <= 0) return 0;
+        const pixelsPerMs = (visibleWidth / 24) / (60 * 60 * 1000);
+        return (time - this.timeRange.start) * pixelsPerMs;
+    }
+
+    // Draws the marquee rectangle (converting content coords back to canvas).
+    drawSelectionRect() {
+        if (!this.drag || !this.drag.moved) return;
+
+        const c = this.config;
+        const x1 = this.drag.startX - this.scrollX + c.resourceAxisWidth;
+        const y1 = this.drag.startY - this.scrollY + c.timeAxisHeight;
+        const x2 = this.drag.currentX - this.scrollX + c.resourceAxisWidth;
+        const y2 = this.drag.currentY - this.scrollY + c.timeAxisHeight;
+
+        const left = Math.min(x1, x2);
+        const top = Math.min(y1, y2);
+        const width = Math.abs(x2 - x1);
+        const height = Math.abs(y2 - y1);
+
+        // Clip to the content area so the rectangle never overlaps the axes.
+        const ctx = this.ctx;
+        const wrapperRect = this.wrapper.getBoundingClientRect();
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(
+            c.resourceAxisWidth,
+            c.timeAxisHeight,
+            wrapperRect.width - c.resourceAxisWidth,
+            wrapperRect.height - c.timeAxisHeight
+        );
+        ctx.clip();
+
+        ctx.fillStyle = c.colors.selectionFill;
+        ctx.fillRect(left, top, width, height);
+        ctx.strokeStyle = c.colors.selectionBorder;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(left + 0.5, top + 0.5, width, height);
+        ctx.restore();
+    }
+
+    // Clears the selection without notifying .NET.
+    _clearSelectionInternal() {
+        if (this.selectedBars.size === 0) return;
+        this.selectedBars.clear();
+        this.render();
+        this._notifySelection();
+    }
+
+    // Notifies .NET of the current selection: both the primary (most recently
+    // selected) bar for single-selection consumers and the full list.
+    _notifySelection() {
+        if (!this.dotNetRef) return;
+
+        const all = Array.from(this.selectedBars.values());
+        const primary = all.length > 0 ? all[all.length - 1] : null;
+        this.dotNetRef.invokeMethodAsync('OnBarSelected', primary);
+        this.dotNetRef.invokeMethodAsync('OnSelectionUpdated', all);
     }
 
     // ---- Public API invoked from .NET ----
@@ -738,16 +961,22 @@ class ResourceTimeline {
         this.timeRange = { start, end };
         this.consumptions = (consumptions || []).slice().sort((a, b) => a.startTime - b.startTime);
         this._indexConsumptions();
-        this.selectedBar = null;
+        this.selectedBars.clear();
+        this.drag = null;
         this.setupCanvas();
     }
 
     clearSelection() {
-        this._setSelection(null);
+        this._clearSelectionInternal();
     }
 
     getSelectedBar() {
-        return this.selectedBar;
+        const all = Array.from(this.selectedBars.values());
+        return all.length > 0 ? all[all.length - 1] : null;
+    }
+
+    getSelectedBars() {
+        return Array.from(this.selectedBars.values());
     }
 
     dispose() {
@@ -755,7 +984,9 @@ class ResourceTimeline {
         if (this._scrollRaf) cancelAnimationFrame(this._scrollRaf);
         window.removeEventListener('resize', this._onResize);
         this.wrapper.removeEventListener('scroll', this._onScroll);
-        this.canvas.removeEventListener('click', this._onClick);
+        this.canvas.removeEventListener('mousedown', this._onMouseDown);
+        window.removeEventListener('mousemove', this._onMouseMove);
+        window.removeEventListener('mouseup', this._onMouseUp);
         this.canvas.removeEventListener('contextmenu', this._onContextMenu);
         const contentDiv = this.wrapper.querySelector('.timeline-content');
         if (contentDiv) contentDiv.remove();

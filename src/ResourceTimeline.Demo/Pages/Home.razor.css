@@ -94,6 +94,20 @@
     color: #1971c2;
 }
 
+.btn-clear {
+    padding: 0.15rem 0.6rem;
+    border: 1px solid #adb5bd;
+    border-radius: 4px;
+    background-color: #fff;
+    color: #495057;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+
+.btn-clear:hover {
+    background-color: #e9ecef;
+}
+
 .demo-timeline {
     flex: 1;
     min-height: 0;

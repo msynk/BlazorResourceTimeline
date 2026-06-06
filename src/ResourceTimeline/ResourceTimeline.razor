@@ -44,8 +44,17 @@
     /// <summary>Consumption bars to display.</summary>
     [Parameter] public List<Consumption>? Consumptions { get; set; }
 
-    /// <summary>Raised when a consumption bar is selected, or with <c>null</c> when the selection is cleared.</summary>
+    /// <summary>Raised when a consumption bar is selected, or with <c>null</c> when the selection is cleared.
+    /// Reports the primary (most recently selected) bar; for the full set use <see cref="OnMultiSelectionChanged"/>.</summary>
     [Parameter] public EventCallback<Consumption?> OnSelectionChanged { get; set; }
+
+    /// <summary>
+    /// Raised whenever the set of selected bars changes. The list contains every
+    /// currently selected bar, in selection order, and is empty when nothing is selected.
+    /// Selection supports click, Ctrl/Cmd-click to toggle individual bars, and
+    /// click-and-drag to rubber-band select a region.
+    /// </summary>
+    [Parameter] public EventCallback<Consumption[]> OnMultiSelectionChanged { get; set; }
 
     /// <summary>
     /// Optional custom content rendered in the top-start corner of the component
@@ -130,6 +139,17 @@
         }
     }
 
+    /// <summary>Returns the currently selected bars, in selection order. Empty when nothing is selected.</summary>
+    public async Task<IReadOnlyList<Consumption>> GetSelectedBarsAsync()
+    {
+        if (_timelineInstance is null || !_dataLoaded)
+        {
+            return Array.Empty<Consumption>();
+        }
+
+        return await _timelineInstance.InvokeAsync<Consumption[]>("getSelectedBars");
+    }
+
     /// <summary>
     /// Scrolls the timeline so the current time is centered in view.
     /// Returns <c>true</c> if "now" falls within the timeline's range and
@@ -165,6 +185,15 @@
         if (OnSelectionChanged.HasDelegate)
         {
             await OnSelectionChanged.InvokeAsync(bar);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnSelectionUpdated(Consumption[] bars)
+    {
+        if (OnMultiSelectionChanged.HasDelegate)
+        {
+            await OnMultiSelectionChanged.InvokeAsync(bars);
         }
     }
 

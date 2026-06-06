@@ -32,17 +32,26 @@
         <span><strong>@(_data?.Resources.Count ?? 0)</strong> resources</span>
         <span><strong>@(_data?.Consumptions.Count ?? 0)</strong> consumptions</span>
         <span><strong>@_days</strong> days</span>
-        @if (_selected is not null)
+        @if (_selectedBars.Count > 1)
+        {
+            <span class="selection">
+                <strong>@_selectedBars.Count</strong> bars selected
+                (@FormatDuration(_selectedBars.Sum(b => b.EndTime - b.StartTime)) total)
+            </span>
+            <button class="btn-clear" @onclick="ClearSelectionAsync">Clear</button>
+        }
+        else if (_selected is not null)
         {
             <span class="selection">
                 Selected: <strong>@ResourceNameFor(_selected.ResourceId)</strong>
                 @FormatTime(_selected.StartTime) &ndash; @FormatTime(_selected.EndTime)
                 (@FormatDuration(_selected.EndTime - _selected.StartTime))
             </span>
+            <button class="btn-clear" @onclick="ClearSelectionAsync">Clear</button>
         }
         else
         {
-            <span class="selection muted">No bar selected</span>
+            <span class="selection muted">No bar selected &mdash; drag to marquee-select, Ctrl+click to multi-select</span>
         }
     </section>
 
@@ -53,7 +62,8 @@
                               Resources="_data.Resources"
                               TimeRange="_data.TimeRange"
                               Consumptions="_data.Consumptions"
-                              OnSelectionChanged="HandleSelectionChanged">
+                              OnSelectionChanged="HandleSelectionChanged"
+                              OnMultiSelectionChanged="HandleMultiSelectionChanged">
                 <TopStartContent>
                     <div class="corner">
                         <span class="corner-title">Resources</span>
@@ -73,6 +83,7 @@
     private ResourceTimeline? _timeline;
     private TimelineData? _data;
     private Consumption? _selected;
+    private IReadOnlyList<Consumption> _selectedBars = Array.Empty<Consumption>();
     private int _days = 100;
 
     protected override void OnInitialized() => Regenerate();
@@ -80,6 +91,7 @@
     private void Regenerate()
     {
         _selected = null;
+        _selectedBars = Array.Empty<Consumption>();
         _data = DataGenerator.GenerateSampleData(days: _days);
     }
 
@@ -97,7 +109,17 @@
         }
     }
 
+    private async Task ClearSelectionAsync()
+    {
+        if (_timeline is not null)
+        {
+            await _timeline.ClearSelectionAsync();
+        }
+    }
+
     private void HandleSelectionChanged(Consumption? bar) => _selected = bar;
+
+    private void HandleMultiSelectionChanged(Consumption[] bars) => _selectedBars = bars;
 
     private string ResourceNameFor(string resourceId) =>
         _data?.Resources.FirstOrDefault(r => r.Id == resourceId)?.Name ?? resourceId;
