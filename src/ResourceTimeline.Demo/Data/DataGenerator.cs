@@ -119,75 +119,136 @@ public static class DataGenerator
 
         foreach (var resource in resources)
         {
-            var (abbrev, _) = GetResourceTypeInfo(resource.Name);
-            var resourceNum = ExtractNumber(resource.Name);
-
-            var consumptionsPerDay = minConsumptionsPerDay +
-                random.Next(maxConsumptionsPerDay - minConsumptionsPerDay + 1);
-            var totalConsumptions = consumptionsPerDay * days;
-            if (totalConsumptions <= 0) continue;
-
-            var avgDuration = (minDuration + maxDuration) / 2.0;
-            var slotSize = timeSpan / (double)totalConsumptions;
-            var maxSlotUsage = Math.Min(slotSize * 0.7, avgDuration);
-            var lastEndTime = timeRange.Start;
-
-            for (var i = 0; i < totalConsumptions; i++)
-            {
-                var slotStart = (long)(timeRange.Start + i * slotSize);
-                var slotEnd = (long)(slotStart + slotSize);
-                var minStart = Math.Max(slotStart, lastEndTime + minGap);
-                var maxStart = Math.Min(slotEnd - minDuration - minGap, timeRange.End - minDuration);
-
-                if (maxStart <= minStart) continue;
-
-                var duration = (long)(minDuration + random.NextDouble() *
-                    Math.Min(maxDuration - minDuration, maxSlotUsage - minDuration));
-                var startTime = (long)(minStart + random.NextDouble() *
-                    Math.Max(0, maxStart - minStart - duration));
-                var endTime = startTime + duration;
-
-                if (endTime > timeRange.End) continue;
-
-                // Color by position relative to "now": green in the past, blue
-                // in the future. A bar straddling now is treated as past.
-                var isPast = startTime < nowMs;
-                var color = isPast ? PastColor : FutureColor;
-
-                var consumption = new Consumption
-                {
-                    Id = $"cons-{resource.Id}-{i}",
-                    ResourceId = resource.Id,
-                    StartTime = startTime,
-                    EndTime = endTime,
-                    Color = color,
-                    // Short, abbreviated labels around each bar:
-                    //   above -> resource abbreviation + number     (e.g. "SRV01")
-                    //   below -> duration                           (e.g. "2h15m")
-                    //   start -> start time                         (e.g. "08:30")
-                    //   end   -> end time                           (e.g. "10:45")
-                    TextAbove = $"{abbrev}{resourceNum}",
-                    TextBelow = AbbreviateDuration(endTime - startTime),
-                    TextStart = AbbreviateTime(startTime),
-                    TextEnd = AbbreviateTime(endTime)
-                };
-
-                // On some past bars, attach red delay bars at both ends to
-                // showcase the edge-bar customization feature.
-                if (isPast && random.NextDouble() < DelayProbability)
-                {
-                    var startDelay = (long)(minDuration * (0.3 + random.NextDouble() * 0.7));
-                    var endDelay = (long)(minDuration * (0.3 + random.NextDouble() * 0.7));
-                    consumption.StartBar = new EdgeBar { Duration = startDelay, Color = DelayColor };
-                    consumption.EndBar = new EdgeBar { Duration = endDelay, Color = DelayColor };
-                }
-
-                consumptions.Add(consumption);
-                lastEndTime = endTime;
-            }
+            AddConsumptionsForResource(
+                consumptions, resource, timeRange, timeSpan, days, nowMs, random,
+                minConsumptionsPerDay, maxConsumptionsPerDay, minDuration, maxDuration, minGap);
         }
 
         return consumptions.OrderBy(c => c.StartTime).ToList();
+    }
+
+    /// <summary>
+    /// Asynchronous, cooperative variant of <see cref="GenerateConsumptions"/>. It yields to
+    /// the UI thread between resources so a single-threaded host (Blazor WebAssembly) stays
+    /// responsive, and observes <paramref name="cancellationToken"/> so an in-flight run can
+    /// be abandoned the moment a newer request arrives.
+    /// </summary>
+    public static async Task<List<Consumption>> GenerateConsumptionsAsync(
+        List<Resource> resources,
+        TimeRange timeRange,
+        CancellationToken cancellationToken = default,
+        int minConsumptionsPerDay = 3,
+        int maxConsumptionsPerDay = 8,
+        long minDuration = 30 * 60 * 1000,
+        long maxDuration = 4 * 60 * 60 * 1000,
+        long minGap = 15 * 60 * 1000,
+        int? seed = null)
+    {
+        var consumptions = new List<Consumption>();
+        var random = seed.HasValue ? new Random(seed.Value) : new Random();
+        var timeSpan = timeRange.End - timeRange.Start;
+        var days = (int)Math.Ceiling(timeSpan / (double)OneDayMs);
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        foreach (var resource in resources)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            AddConsumptionsForResource(
+                consumptions, resource, timeRange, timeSpan, days, nowMs, random,
+                minConsumptionsPerDay, maxConsumptionsPerDay, minDuration, maxDuration, minGap);
+
+            // Hand control back to the event loop so pending UI work (loading
+            // indicator, a new "Days" selection) can run between resources.
+            await Task.Yield();
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return consumptions.OrderBy(c => c.StartTime).ToList();
+    }
+
+    // Generates and appends the consumption bars for a single resource. Shared by the
+    // synchronous and asynchronous generation paths to keep their behavior identical.
+    private static void AddConsumptionsForResource(
+        List<Consumption> consumptions,
+        Resource resource,
+        TimeRange timeRange,
+        long timeSpan,
+        int days,
+        long nowMs,
+        Random random,
+        int minConsumptionsPerDay,
+        int maxConsumptionsPerDay,
+        long minDuration,
+        long maxDuration,
+        long minGap)
+    {
+        var (abbrev, _) = GetResourceTypeInfo(resource.Name);
+        var resourceNum = ExtractNumber(resource.Name);
+
+        var consumptionsPerDay = minConsumptionsPerDay +
+            random.Next(maxConsumptionsPerDay - minConsumptionsPerDay + 1);
+        var totalConsumptions = consumptionsPerDay * days;
+        if (totalConsumptions <= 0) return;
+
+        var avgDuration = (minDuration + maxDuration) / 2.0;
+        var slotSize = timeSpan / (double)totalConsumptions;
+        var maxSlotUsage = Math.Min(slotSize * 0.7, avgDuration);
+        var lastEndTime = timeRange.Start;
+
+        for (var i = 0; i < totalConsumptions; i++)
+        {
+            var slotStart = (long)(timeRange.Start + i * slotSize);
+            var slotEnd = (long)(slotStart + slotSize);
+            var minStart = Math.Max(slotStart, lastEndTime + minGap);
+            var maxStart = Math.Min(slotEnd - minDuration - minGap, timeRange.End - minDuration);
+
+            if (maxStart <= minStart) continue;
+
+            var duration = (long)(minDuration + random.NextDouble() *
+                Math.Min(maxDuration - minDuration, maxSlotUsage - minDuration));
+            var startTime = (long)(minStart + random.NextDouble() *
+                Math.Max(0, maxStart - minStart - duration));
+            var endTime = startTime + duration;
+
+            if (endTime > timeRange.End) continue;
+
+            // Color by position relative to "now": green in the past, blue
+            // in the future. A bar straddling now is treated as past.
+            var isPast = startTime < nowMs;
+            var color = isPast ? PastColor : FutureColor;
+
+            var consumption = new Consumption
+            {
+                Id = $"cons-{resource.Id}-{i}",
+                ResourceId = resource.Id,
+                StartTime = startTime,
+                EndTime = endTime,
+                Color = color,
+                // Short, abbreviated labels around each bar:
+                //   above -> resource abbreviation + number     (e.g. "SRV01")
+                //   below -> duration                           (e.g. "2h15m")
+                //   start -> start time                         (e.g. "08:30")
+                //   end   -> end time                           (e.g. "10:45")
+                TextAbove = $"{abbrev}{resourceNum}",
+                TextBelow = AbbreviateDuration(endTime - startTime),
+                TextStart = AbbreviateTime(startTime),
+                TextEnd = AbbreviateTime(endTime)
+            };
+
+            // On some past bars, attach red delay bars at both ends to
+            // showcase the edge-bar customization feature.
+            if (isPast && random.NextDouble() < DelayProbability)
+            {
+                var startDelay = (long)(minDuration * (0.3 + random.NextDouble() * 0.7));
+                var endDelay = (long)(minDuration * (0.3 + random.NextDouble() * 0.7));
+                consumption.StartBar = new EdgeBar { Duration = startDelay, Color = DelayColor };
+                consumption.EndBar = new EdgeBar { Duration = endDelay, Color = DelayColor };
+            }
+
+            consumptions.Add(consumption);
+            lastEndTime = endTime;
+        }
     }
 
     // Maps a resource name to its abbreviation and color, matching on the
@@ -239,6 +300,31 @@ public static class DataGenerator
         var resources = GenerateResources(resourceNames);
         var timeRange = GenerateTimeRange(days, seed: seed);
         var consumptions = GenerateConsumptions(resources, timeRange, seed: seed);
+
+        return new TimelineData
+        {
+            Resources = resources,
+            TimeRange = timeRange,
+            Consumptions = consumptions
+        };
+    }
+
+    /// <summary>
+    /// Asynchronous, cancellable variant of <see cref="GenerateSampleData"/>. It yields to the
+    /// UI thread while building consumptions so the host stays responsive during a heavy run,
+    /// and throws <see cref="OperationCanceledException"/> if <paramref name="cancellationToken"/>
+    /// is signalled (e.g. the user picks a different number of days mid-run).
+    /// </summary>
+    public static async Task<TimelineData> GenerateSampleDataAsync(
+        int days = 100,
+        CancellationToken cancellationToken = default,
+        string[]? resourceNames = null,
+        int? seed = null)
+    {
+        var resources = GenerateResources(resourceNames);
+        var timeRange = GenerateTimeRange(days, seed: seed);
+        var consumptions = await GenerateConsumptionsAsync(
+            resources, timeRange, cancellationToken, seed: seed);
 
         return new TimelineData
         {

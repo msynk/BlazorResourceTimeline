@@ -71,9 +71,12 @@
                 </TopStartContent>
             </ResourceTimeline>
         }
-        else
+        @if (_isGenerating || _data is null)
         {
-            <div class="demo-loading">Loading timeline data...</div>
+            <div class="demo-loading" role="status" aria-live="polite">
+                <span class="demo-loading-spinner"></span>
+                <span>Generating timeline data&hellip;</span>
+            </div>
         }
     </div>
 </div>
@@ -83,19 +86,55 @@
     private TimelineData? _data;
     private IReadOnlyList<Consumption> _selectedBars = Array.Empty<Consumption>();
     private int _days = 100;
+    private bool _isGenerating;
+    private CancellationTokenSource? _generationCts;
 
-    protected override void OnInitialized() => Regenerate();
+    protected override Task OnInitializedAsync() => RegenerateAsync();
 
-    private void Regenerate()
+    private async Task RegenerateAsync()
     {
+        // A new request supersedes any in-flight generation: cancel it so the
+        // running loop bails out and the latest selection wins immediately.
+        _generationCts?.Cancel();
+        _generationCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _generationCts = cts;
+        var token = cts.Token;
+
+        // Show the generating overlay and let it paint before the heavy work
+        // starts. The existing timeline (if any) stays mounted underneath so the
+        // overlay is continuous through generation and into the renderer's own
+        // loading spinner once the new data is handed over.
         _selectedBars = Array.Empty<Consumption>();
-        _data = DataGenerator.GenerateSampleData(days: _days);
-    }
+        _isGenerating = true;
+        StateHasChanged();
+        await Task.Yield();
 
-    private Task RegenerateAsync()
-    {
-        Regenerate();
-        return Task.CompletedTask;
+        try
+        {
+            var data = await DataGenerator.GenerateSampleDataAsync(_days, token);
+
+            // Ignore a result that has been superseded by a newer request.
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            _data = data;
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded mid-run; the newer request owns the UI state.
+        }
+        finally
+        {
+            if (_generationCts == cts)
+            {
+                _isGenerating = false;
+                _generationCts.Dispose();
+                _generationCts = null;
+            }
+        }
     }
 
     private async Task GoToTodayAsync()
