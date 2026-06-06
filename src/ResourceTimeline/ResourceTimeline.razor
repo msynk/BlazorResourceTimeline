@@ -13,6 +13,20 @@
             @TopStartContent
         </div>
     }
+    @if (_isLoading)
+    {
+        <div class="timeline-loading" role="status" aria-live="polite">
+            @if (LoadingContent is not null)
+            {
+                @LoadingContent
+            }
+            else
+            {
+                <div class="timeline-loading-spinner"></div>
+                <span class="timeline-loading-text">Loading…</span>
+            }
+        </div>
+    }
 </div>
 
 @code {
@@ -28,6 +42,7 @@
     private DotNetObjectReference<ResourceTimeline>? _selfRef;
     private readonly string _canvasId = $"timeline-{Guid.NewGuid():N}";
     private bool _dataLoaded;
+    private bool _isLoading;
 
     // References of the data last pushed to JS. Used to skip redundant (and
     // expensive) re-marshalling when the parent re-renders without data changes.
@@ -61,6 +76,19 @@
     /// (the otherwise blank cell where the time axis and resource axis meet).
     /// </summary>
     [Parameter] public RenderFragment? TopStartContent { get; set; }
+
+    /// <summary>
+    /// Optional custom content shown as an overlay while the renderer is
+    /// drawing the bars. When not provided, a default spinner is displayed.
+    /// </summary>
+    [Parameter] public RenderFragment? LoadingContent { get; set; }
+
+    /// <summary>
+    /// Minimum time (in milliseconds) the loading overlay stays visible. Rendering
+    /// often completes within a frame or two, which is too brief to perceive; this
+    /// keeps the overlay on screen long enough to be seen. Set to 0 to disable.
+    /// </summary>
+    [Parameter] public int LoadingMinDurationMs { get; set; } = 300;
 
     /// <summary>Fixed layout dimensions (in pixels) reported by the renderer.</summary>
     private readonly record struct TimelineLayout(int ResourceAxisWidth, int TimeAxisHeight, int ResourceHeight);
@@ -111,13 +139,40 @@
             return;
         }
 
-        await _timelineInstance.InvokeVoidAsync(
-            "setData", Resources, TimeRange!.Start, TimeRange.End, Consumptions);
+        _isLoading = true;
+        StateHasChanged();
+        // Yield so Blazor actually paints the overlay before the synchronous
+        // JS rendering work begins; otherwise the overlay can be skipped.
+        await Task.Yield();
 
-        _loadedResources = Resources;
-        _loadedTimeRange = TimeRange;
-        _loadedConsumptions = Consumptions;
-        _dataLoaded = true;
+        var startedAt = DateTime.UtcNow;
+        try
+        {
+            await _timelineInstance.InvokeVoidAsync(
+                "setData", Resources, TimeRange!.Start, TimeRange.End, Consumptions);
+
+            // Wait until the renderer has painted the bars before hiding the overlay.
+            await _timelineInstance.InvokeVoidAsync("whenRendered");
+
+            _loadedResources = Resources;
+            _loadedTimeRange = TimeRange;
+            _loadedConsumptions = Consumptions;
+            _dataLoaded = true;
+        }
+        finally
+        {
+            // Keep the overlay visible for a minimum duration so it doesn't
+            // flash by imperceptibly on fast renders.
+            var elapsed = (DateTime.UtcNow - startedAt).TotalMilliseconds;
+            var remaining = LoadingMinDurationMs - (int)elapsed;
+            if (remaining > 0)
+            {
+                await Task.Delay(remaining);
+            }
+
+            _isLoading = false;
+            StateHasChanged();
+        }
     }
 
     /// <summary>Forces the current data to be re-sent to the renderer, even if the

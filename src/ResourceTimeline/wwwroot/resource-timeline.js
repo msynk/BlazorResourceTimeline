@@ -69,6 +69,10 @@ class ResourceTimeline {
         this.animationFrame = null;
         this._scrollRaf = null;
 
+        // Resolvers waiting for the next completed paint (see whenRendered).
+        this._renderedResolvers = [];
+        this._renderPending = false;
+
         // Bound handlers so we can remove them on dispose
         this._onResize = () => this.resizeCanvas();
         this._onScroll = () => this._handleScroll();
@@ -239,6 +243,7 @@ class ResourceTimeline {
                 this.visibleTimeRange = this.calculateVisibleTimeRange();
                 if (!this.visibleTimeRange) {
                     this.animationFrame = null;
+                    this._flushRenderedResolvers();
                     return;
                 }
 
@@ -254,8 +259,19 @@ class ResourceTimeline {
                 console.error('ResourceTimeline render error:', error);
             } finally {
                 this.animationFrame = null;
+                this._flushRenderedResolvers();
             }
         });
+    }
+
+    // Resolves any promises returned by whenRendered() now that a paint has
+    // completed.
+    _flushRenderedResolvers() {
+        this._renderPending = false;
+        if (this._renderedResolvers.length === 0) return;
+        const resolvers = this._renderedResolvers;
+        this._renderedResolvers = [];
+        for (const resolve of resolvers) resolve();
     }
 
     drawBackground() {
@@ -963,6 +979,9 @@ class ResourceTimeline {
         this._indexConsumptions();
         this.selectedBars.clear();
         this.drag = null;
+        // A paint is expected as a result of this data change; whenRendered()
+        // will wait for it rather than resolving on the next idle frame.
+        this._renderPending = true;
         this.setupCanvas();
     }
 
@@ -979,6 +998,19 @@ class ResourceTimeline {
         return Array.from(this.selectedBars.values());
     }
 
+    // Resolves after the next render's paint completes. Lets the host hide a
+    // loading overlay only once the bars are actually on screen. If no render
+    // is pending (nothing to draw), resolves on the next frame.
+    whenRendered() {
+        return new Promise((resolve) => {
+            if (this.animationFrame || this._renderPending) {
+                this._renderedResolvers.push(resolve);
+            } else {
+                requestAnimationFrame(() => resolve());
+            }
+        });
+    }
+
     dispose() {
         if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
         if (this._scrollRaf) cancelAnimationFrame(this._scrollRaf);
@@ -990,6 +1022,7 @@ class ResourceTimeline {
         this.canvas.removeEventListener('contextmenu', this._onContextMenu);
         const contentDiv = this.wrapper.querySelector('.timeline-content');
         if (contentDiv) contentDiv.remove();
+        this._flushRenderedResolvers();
         this.dotNetRef = null;
     }
 }
