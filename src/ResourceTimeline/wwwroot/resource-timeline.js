@@ -22,6 +22,7 @@ class ResourceTimeline {
             minBarWidth: 2,
             barLabelFont: '11px sans-serif',
             barLabelGap: 3,
+            barIconSize: 16,
             colors: {
                 contentBg: '#ffffff',
                 axisBg: '#f8f9fa',
@@ -50,6 +51,11 @@ class ResourceTimeline {
         // Persistent index: resourceId -> consumptions[] (sorted by startTime).
         // Built once when data is set, reused for rendering and hit-testing.
         this.consumptionsByResource = new Map();
+
+        // Cache of loaded <img> elements keyed by source, used to draw bar
+        // icons on the canvas. Images load asynchronously; a re-render is
+        // triggered once each one is ready.
+        this.imageCache = new Map();
 
         // State
         // Selected bars keyed by consumption id, preserving the order in which
@@ -625,51 +631,118 @@ class ResourceTimeline {
                     this.ctx.fillRect(barX, barTop, barWidth, c.barHeight);
                 }
 
-                // Per-bar labels (only when present, to keep the common path cheap).
-                // Start/end labels sit outside the full span (edge bars included).
-                if (cons.textAbove || cons.textBelow || cons.textStart || cons.textEnd) {
-                    this._drawBarLabels(cons, barX, barEndX, drawStartX, drawEndX, barTop, barCenterY, c);
+                // Per-bar labels and icons (only when present, to keep the
+                // common path cheap). Start/end decorations sit outside the
+                // full span (edge bars included).
+                if (cons.icons?.length || cons.textAbove || cons.textBelow || cons.textStart || cons.textEnd) {
+                    this._drawBarDecorations(cons, barX, barEndX, drawStartX, drawEndX, barTop, barCenterY, c);
                 }
             }
         }
     }
 
-    // Renders the optional labels around a single bar. Positions:
+    // Renders the optional icons and labels around a single bar.
+    // Label positions:
     //   above  -> centered over the main bar, baseline just above it
     //   below  -> centered under the main bar, baseline just below it
     //   start  -> right-aligned, ending just before the full span's left edge
     //   end    -> left-aligned, starting just after the full span's right edge
+    // Icons share these anchor positions and are drawn first; labels are then
+    // pushed outward so they never overlap an icon at the same position.
     // spanStartX/spanEndX are the outer edges of the drawn bar including any
-    // start/end edge bars, so the start/end labels never overlap them.
-    _drawBarLabels(cons, barX, barEndX, spanStartX, spanEndX, barTop, barCenterY, c) {
+    // start/end edge bars, so start/end decorations never overlap them.
+    _drawBarDecorations(cons, barX, barEndX, spanStartX, spanEndX, barTop, barCenterY, c) {
         const ctx = this.ctx;
         const gap = c.barLabelGap;
-        ctx.font = c.barLabelFont;
-        ctx.fillStyle = c.colors.barLabel;
-
         const barBottom = barTop + c.barHeight;
         const barCenterX = (barX + barEndX) / 2;
+
+        // Outer edges, advanced as decorations are placed so multiple items at
+        // the same position stack without overlapping.
+        let startEdgeX = spanStartX;  // moves left for start-anchored items
+        let endEdgeX = spanEndX;      // moves right for end-anchored items
+        let aboveY = barTop - gap;    // bottom edge of the next above-anchored item
+        let belowY = barBottom + gap; // top edge of the next below-anchored item
+
+        if (cons.icons && cons.icons.length) {
+            const defaultSize = c.barIconSize;
+            for (const icon of cons.icons) {
+                if (!icon || !icon.source) continue;
+                const img = this._getImage(icon.source);
+                // Skip until the image has loaded; its onload triggers a re-render.
+                if (!img || !img.complete || img.naturalWidth === 0) continue;
+
+                const box = icon.size && icon.size > 0 ? icon.size : defaultSize;
+                // Fit within the square box, preserving aspect ratio.
+                const ratio = img.naturalWidth / img.naturalHeight;
+                let w = box, h = box;
+                if (ratio >= 1) {
+                    h = box / ratio;
+                } else {
+                    w = box * ratio;
+                }
+
+                const pos = String(icon.position || 'start').toLowerCase();
+                if (pos === 'end') {
+                    const x = endEdgeX + gap;
+                    ctx.drawImage(img, x, barCenterY - h / 2, w, h);
+                    endEdgeX = x + w;
+                } else if (pos === 'above') {
+                    ctx.drawImage(img, barCenterX - w / 2, aboveY - h, w, h);
+                    aboveY -= h + gap;
+                } else if (pos === 'below') {
+                    ctx.drawImage(img, barCenterX - w / 2, belowY, w, h);
+                    belowY += h + gap;
+                } else { // 'start' (default)
+                    const x = startEdgeX - gap - w;
+                    ctx.drawImage(img, x, barCenterY - h / 2, w, h);
+                    startEdgeX = x;
+                }
+            }
+        }
+
+        ctx.font = c.barLabelFont;
+        ctx.fillStyle = c.colors.barLabel;
 
         if (cons.textAbove) {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'bottom';
-            ctx.fillText(cons.textAbove, barCenterX, barTop - gap);
+            ctx.fillText(cons.textAbove, barCenterX, aboveY);
         }
         if (cons.textBelow) {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            ctx.fillText(cons.textBelow, barCenterX, barBottom + gap);
+            ctx.fillText(cons.textBelow, barCenterX, belowY);
         }
         if (cons.textStart) {
             ctx.textAlign = 'right';
             ctx.textBaseline = 'middle';
-            ctx.fillText(cons.textStart, spanStartX - gap, barCenterY);
+            ctx.fillText(cons.textStart, startEdgeX - gap, barCenterY);
         }
         if (cons.textEnd) {
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            ctx.fillText(cons.textEnd, spanEndX + gap, barCenterY);
+            ctx.fillText(cons.textEnd, endEdgeX + gap, barCenterY);
         }
+    }
+
+    // Returns a cached <img> for the given source, creating and loading it on
+    // first use. A completed load schedules a re-render so the icon appears as
+    // soon as it is ready.
+    _getImage(src) {
+        let img = this.imageCache.get(src);
+        if (!img) {
+            img = new Image();
+            this.imageCache.set(src, img);
+            img.onload = () => {
+                if (this._hasData()) this.render();
+            };
+            // On error the image stays incomplete (naturalWidth === 0) and is
+            // simply skipped when drawing.
+            img.onerror = () => { };
+            img.src = src;
+        }
+        return img;
     }
 
     // ---- Pointer interaction: click, Ctrl/Cmd-click, and marquee drag ----
@@ -1061,6 +1134,7 @@ class ResourceTimeline {
         this.canvas.removeEventListener('contextmenu', this._onContextMenu);
         const contentDiv = this.wrapper.querySelector('.timeline-content');
         if (contentDiv) contentDiv.remove();
+        this.imageCache.clear();
         this._flushRenderedResolvers();
         this.dotNetRef = null;
     }

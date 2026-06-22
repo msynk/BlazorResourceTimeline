@@ -54,6 +54,37 @@ public static class DataGenerator
     // Fraction of past bars that receive start/end delay bars.
     private const double DelayProbability = 0.25;
 
+    // Fraction of bars that receive one or more decorative icons.
+    private const double IconProbability = 0.35;
+
+    // Positions an icon can be anchored to, picked at random per icon.
+    private static readonly BarIconPosition[] IconPositions =
+    [
+        BarIconPosition.Start,
+        BarIconPosition.End,
+        BarIconPosition.Above,
+        BarIconPosition.Below
+    ];
+
+    // A small palette of inline SVG icons, exposed as ready-to-use data URIs.
+    // Using data URIs keeps the demo self-contained (no extra image files to
+    // ship) while still exercising the real image-loading path in the renderer.
+    private static readonly string[] IconSources =
+    [
+        // Amber warning triangle
+        SvgDataUri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 2 1 21h22L12 2z' fill='#f59f00'/><rect x='11' y='9' width='2' height='6' fill='#fff'/><rect x='11' y='17' width='2' height='2' fill='#fff'/></svg>"),
+        // Green check circle
+        SvgDataUri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='11' fill='#2f9e44'/><path d='M6 12l4 4 8-8' stroke='#fff' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>"),
+        // Yellow star
+        SvgDataUri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z' fill='#fcc419'/></svg>"),
+        // Red flag
+        SvgDataUri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='4' y='2' width='2' height='20' fill='#495057'/><path d='M6 3h13l-3 4 3 4H6z' fill='#e03131'/></svg>"),
+        // Blue lock
+        SvgDataUri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='5' y='10' width='14' height='11' rx='2' fill='#1971c2'/><path d='M8 10V7a4 4 0 0 1 8 0v3' stroke='#1971c2' stroke-width='2' fill='none'/></svg>"),
+        // Purple lightning bolt
+        SvgDataUri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M13 2L4 14h6l-1 8 9-12h-6z' fill='#9c36b5'/></svg>")
+    ];
+
     /// <summary>Builds resource rows from the provided names (or a default set).</summary>
     public static List<Resource> GenerateResources(string[]? resourceNames = null)
     {
@@ -246,6 +277,24 @@ public static class DataGenerator
                 consumption.EndBar = new EdgeBar { Duration = endDelay, Color = DelayColor };
             }
 
+            // Randomly decorate some bars with one or two icons at random
+            // positions to showcase the custom-icon feature.
+            if (random.NextDouble() < IconProbability)
+            {
+                var iconCount = random.Next(1, 3); // 1 or 2 icons
+                var icons = new List<BarIcon>(iconCount);
+                for (var k = 0; k < iconCount; k++)
+                {
+                    icons.Add(new BarIcon
+                    {
+                        Source = IconSources[random.Next(IconSources.Length)],
+                        Position = IconPositions[random.Next(IconPositions.Length)],
+                        Size = 14 + random.Next(5) // 14..18 px
+                    });
+                }
+                consumption.Icons = icons;
+            }
+
             consumptions.Add(consumption);
             lastEndTime = endTime;
         }
@@ -290,6 +339,11 @@ public static class DataGenerator
     // Compact 24-hour time, e.g. "08:30".
     private static string AbbreviateTime(long unixMs) =>
         DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime.ToString("HH:mm");
+
+    // Wraps raw SVG markup as an inline, URL-encoded data URI usable as an
+    // image source by the renderer.
+    private static string SvgDataUri(string svg) =>
+        "data:image/svg+xml," + Uri.EscapeDataString(svg);
 
     /// <summary>Generates a complete <see cref="TimelineData"/> bundle in one call.</summary>
     public static TimelineData GenerateSampleData(

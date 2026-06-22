@@ -49,4 +49,12 @@ public class Consumption
     /// after the planned consumption ended.
     /// </summary>
     public EdgeBar? EndBar { get; set; }
+
+    /// <summary>
+    /// Optional custom icons or small images rendered around the bar. Each icon
+    /// can be anchored to a different position (start, end, above or below).
+    /// Multiple icons sharing a position are laid out next to one another,
+    /// growing away from the bar in the order they appear in the list.
+    /// </summary>
+    public List<BarIcon>? Icons { get; set; }
 }
