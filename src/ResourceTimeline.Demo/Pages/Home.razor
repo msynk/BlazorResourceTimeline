@@ -141,6 +141,13 @@
                     EndTime = DateTimeOffset.UtcNow.AddHours(-2).ToUnixTimeMilliseconds(),
                     Color = "#1971c2",
                     TextAbove = "Batch job",
+                    // Custom icons can be anchored at the start, end, above or
+                    // below the bar. Source is any image URL or data URI.
+                    Icons = new List<BarIcon>
+                    {
+                        new() { Source = "/icons/check.svg", Position = BarIconPosition.Start },
+                        new() { Source = "/icons/star.svg", Position = BarIconPosition.End, Size = 18 },
+                    },
                 },
                 new Consumption
                 {
@@ -149,6 +156,16 @@
                     StartTime = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds(),
                     EndTime = DateTimeOffset.UtcNow.AddHours(3).ToUnixTimeMilliseconds(),
                     Color = "#e8590c",
+                    TextStart = "08:30",
+                    TextEnd = "12:30",
+                    // Decorative edge bars extend before/after the main bar,
+                    // e.g. to show a delay around the planned period.
+                    StartBar = new EdgeBar { Duration = 30 * 60 * 1000, Color = "red" },
+                    EndBar = new EdgeBar { Duration = 45 * 60 * 1000, Color = "red" },
+                    Icons = new List<BarIcon>
+                    {
+                        new() { Source = "/icons/warning.svg", Position = BarIconPosition.Above },
+                    },
                 },
                 new Consumption
                 {
@@ -158,6 +175,10 @@
                     EndTime = DateTimeOffset.UtcNow.AddHours(8).ToUnixTimeMilliseconds(),
                     Color = "#2f9e44",
                     TextBelow = "Maintenance",
+                    Icons = new List<BarIcon>
+                    {
+                        new() { Source = "/icons/lock.svg", Position = BarIconPosition.Start, Size = 16 },
+                    },
                 },
             };
 
