@@ -74,6 +74,82 @@
     background-color: #e7f5ff;
 }
 
+.btn-code {
+    padding: 0.4rem 0.9rem;
+    border: 1px solid #495057;
+    border-radius: 4px;
+    background-color: #fff;
+    color: #495057;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+.btn-code:hover {
+    background-color: #f1f3f5;
+}
+
+.demo-code {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    border-radius: 6px;
+    overflow: hidden;
+    background-color: #1e1e1e;
+    /* Hidden but kept in the layout so the timeline canvas underneath keeps
+       its size; toggling visibility never resizes or remounts the renderer. */
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.demo-code.is-visible {
+    visibility: visible;
+    opacity: 1;
+}
+
+.demo-code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 0.75rem;
+    background-color: #2d2d2d;
+    color: #ced4da;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.btn-copy {
+    padding: 0.15rem 0.7rem;
+    border: 1px solid #495057;
+    border-radius: 4px;
+    background-color: #3a3a3a;
+    color: #e9ecef;
+    cursor: pointer;
+    font-size: 0.78rem;
+}
+
+.btn-copy:hover {
+    background-color: #495057;
+}
+
+.demo-code pre {
+    margin: 0;
+    padding: 0.85rem 1rem;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+}
+
+.demo-code code {
+    font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: #d4d4d4;
+    white-space: pre;
+}
+
 .demo-stats {
     display: flex;
     flex-wrap: wrap;

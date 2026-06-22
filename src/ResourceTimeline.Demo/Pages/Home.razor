@@ -2,6 +2,7 @@
 @using ResourceTimeline.Components
 @using ResourceTimeline.Models
 @using ResourceTimeline.Demo.Data
+@inject IJSRuntime JS
 
 <PageTitle>Resource Timeline</PageTitle>
 
@@ -25,6 +26,9 @@
             </label>
             <button class="btn-today" @onclick="GoToTodayAsync">Go to Today</button>
             <button class="btn-regenerate" @onclick="RegenerateAsync">Regenerate</button>
+            <button class="btn-code" @onclick="ToggleCode">
+                @(_showCode ? "Hide Code" : "Show Code")
+            </button>
         </div>
     </header>
 
@@ -78,6 +82,18 @@
                 <span>Generating timeline data&hellip;</span>
             </div>
         }
+        @* Code sample is overlaid on top of the timeline rather than replacing
+           it, so the canvas stays mounted and sized. Toggling is instant and the
+           renderer never has to re-initialize or reload data. *@
+        <div class="demo-code @(_showCode ? "is-visible" : null)" aria-hidden="@(!_showCode)">
+            <div class="demo-code-header">
+                <span>Sample usage</span>
+                <button class="btn-copy" @onclick="CopyCodeAsync">
+                    @(_codeCopied ? "Copied!" : "Copy")
+                </button>
+            </div>
+            <pre><code>@CodeSample</code></pre>
+        </div>
     </div>
 </div>
 
@@ -87,7 +103,74 @@
     private IReadOnlyList<Consumption> _selectedBars = Array.Empty<Consumption>();
     private int _days = 100;
     private bool _isGenerating;
+    private bool _showCode;
+    private bool _codeCopied;
     private CancellationTokenSource? _generationCts;
+
+    private const string CodeSample = """
+        @page "/timeline"
+        @using ResourceTimeline.Components
+        @using ResourceTimeline.Models
+
+        <ResourceTimeline Resources="_resources"
+                          TimeRange="_timeRange"
+                          Consumptions="_consumptions"
+                          OnSelectionChanged="HandleSelectionChanged" />
+
+        @code {
+            private readonly List<Resource> _resources = new()
+            {
+                new Resource { Id = "r1", Name = "Server A" },
+                new Resource { Id = "r2", Name = "Server B" },
+                new Resource { Id = "r3", Name = "Database" },
+            };
+
+            private readonly TimeRange _timeRange = new()
+            {
+                Start = DateTimeOffset.UtcNow.AddHours(-12).ToUnixTimeMilliseconds(),
+                End = DateTimeOffset.UtcNow.AddHours(12).ToUnixTimeMilliseconds(),
+            };
+
+            private readonly List<Consumption> _consumptions = new()
+            {
+                new Consumption
+                {
+                    Id = "c1",
+                    ResourceId = "r1",
+                    StartTime = DateTimeOffset.UtcNow.AddHours(-6).ToUnixTimeMilliseconds(),
+                    EndTime = DateTimeOffset.UtcNow.AddHours(-2).ToUnixTimeMilliseconds(),
+                    Color = "#1971c2",
+                    TextAbove = "Batch job",
+                },
+                new Consumption
+                {
+                    Id = "c2",
+                    ResourceId = "r2",
+                    StartTime = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds(),
+                    EndTime = DateTimeOffset.UtcNow.AddHours(3).ToUnixTimeMilliseconds(),
+                    Color = "#e8590c",
+                },
+                new Consumption
+                {
+                    Id = "c3",
+                    ResourceId = "r3",
+                    StartTime = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
+                    EndTime = DateTimeOffset.UtcNow.AddHours(8).ToUnixTimeMilliseconds(),
+                    Color = "#2f9e44",
+                    TextBelow = "Maintenance",
+                },
+            };
+
+            private void HandleSelectionChanged(Consumption[] selected)
+            {
+                // selected contains every currently selected bar (empty when none).
+                foreach (var bar in selected)
+                {
+                    Console.WriteLine($"Selected {bar.Id} on {bar.ResourceId}");
+                }
+            }
+        }
+        """;
 
     protected override Task OnInitializedAsync() => RegenerateAsync();
 
@@ -154,6 +237,25 @@
     }
 
     private void HandleSelectionChanged(Consumption[] bars) => _selectedBars = bars;
+
+    private void ToggleCode()
+    {
+        _showCode = !_showCode;
+        _codeCopied = false;
+    }
+
+    private async Task CopyCodeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", CodeSample);
+            _codeCopied = true;
+        }
+        catch
+        {
+            // Clipboard access can be blocked (e.g. insecure context); ignore.
+        }
+    }
 
     private string ResourceNameFor(string resourceId) =>
         _data?.Resources.FirstOrDefault(r => r.Id == resourceId)?.Name ?? resourceId;
