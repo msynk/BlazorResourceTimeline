@@ -582,7 +582,6 @@ class ResourceTimeline {
             if (resourceY + c.resourceHeight < startY || resourceY > visibleEndY) continue;
 
             const barCenterY = resourceY + c.resourceHeight / 2;
-            const barTop = barCenterY - c.barHeight / 2;
             const resourceConsumptions = this.consumptionsByResource.get(resource.id);
             if (!resourceConsumptions) continue;
 
@@ -590,6 +589,11 @@ class ResourceTimeline {
                 // Time-range culling (list is sorted by startTime).
                 if (cons.endTime < visStart) continue;
                 if (cons.startTime > visEnd) break;
+
+                // Per-bar height (falls back to the configured default), kept
+                // vertically centered within the resource row.
+                const barHeight = cons.height && cons.height > 0 ? cons.height : c.barHeight;
+                const barTop = barCenterY - barHeight / 2;
 
                 const barX = this.getTimeToX(cons.startTime);
                 const barEndX = this.getTimeToX(cons.endTime);
@@ -606,36 +610,36 @@ class ResourceTimeline {
                 if (startEdgeMs) {
                     const edgeWidth = Math.max(c.minBarWidth, barX - drawStartX);
                     this.ctx.fillStyle = cons.startBar.color || c.colors.bar;
-                    this.ctx.fillRect(drawStartX, barTop, edgeWidth, c.barHeight);
+                    this.ctx.fillRect(drawStartX, barTop, edgeWidth, barHeight);
                 }
                 // End edge bar: drawn immediately after the main bar's end.
                 if (endEdgeMs) {
                     const edgeWidth = Math.max(c.minBarWidth, drawEndX - barEndX);
                     this.ctx.fillStyle = cons.endBar.color || c.colors.bar;
-                    this.ctx.fillRect(barEndX, barTop, edgeWidth, c.barHeight);
+                    this.ctx.fillRect(barEndX, barTop, edgeWidth, barHeight);
                 }
 
                 const barWidth = Math.max(c.minBarWidth, barEndX - barX);
                 const isSelected = this.selectedBars.has(cons.id);
                 if (isSelected) {
                     this.ctx.fillStyle = cons.color || c.colors.barSelected;
-                    this.ctx.fillRect(barX, barTop, barWidth, c.barHeight);
+                    this.ctx.fillRect(barX, barTop, barWidth, barHeight);
                     // The selection outline wraps the full span, edge bars included.
                     const selLeft = drawStartX - 1;
                     const selWidth = Math.max(barWidth, drawEndX - drawStartX) + 2;
                     this.ctx.strokeStyle = c.colors.barSelectedBorder;
                     this.ctx.lineWidth = 2;
-                    this.ctx.strokeRect(selLeft, barTop - 1, selWidth, c.barHeight + 2);
+                    this.ctx.strokeRect(selLeft, barTop - 1, selWidth, barHeight + 2);
                 } else {
                     this.ctx.fillStyle = cons.color || c.colors.bar;
-                    this.ctx.fillRect(barX, barTop, barWidth, c.barHeight);
+                    this.ctx.fillRect(barX, barTop, barWidth, barHeight);
                 }
 
                 // Per-bar labels and icons (only when present, to keep the
                 // common path cheap). Start/end decorations sit outside the
                 // full span (edge bars included).
                 if (cons.icons?.length || cons.textAbove || cons.textBelow || cons.textStart || cons.textEnd) {
-                    this._drawBarDecorations(cons, barX, barEndX, drawStartX, drawEndX, barTop, barCenterY, c);
+                    this._drawBarDecorations(cons, barX, barEndX, drawStartX, drawEndX, barTop, barCenterY, barHeight, c);
                 }
             }
         }
@@ -651,10 +655,10 @@ class ResourceTimeline {
     // pushed outward so they never overlap an icon at the same position.
     // spanStartX/spanEndX are the outer edges of the drawn bar including any
     // start/end edge bars, so start/end decorations never overlap them.
-    _drawBarDecorations(cons, barX, barEndX, spanStartX, spanEndX, barTop, barCenterY, c) {
+    _drawBarDecorations(cons, barX, barEndX, spanStartX, spanEndX, barTop, barCenterY, barHeight, c) {
         const ctx = this.ctx;
         const gap = c.barLabelGap;
-        const barBottom = barTop + c.barHeight;
+        const barBottom = barTop + barHeight;
         const barCenterX = (barX + barEndX) / 2;
 
         // Outer edges, advanced as decorations are placed so multiple items at

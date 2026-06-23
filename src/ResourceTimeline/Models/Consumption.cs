@@ -24,6 +24,14 @@ public class Consumption
     /// </summary>
     public string? Color { get; set; }
 
+    /// <summary>
+    /// Optional height of the bar in pixels. The bar is vertically centered within
+    /// its resource row regardless of height. Falls back to the renderer's default
+    /// bar height when null or not greater than zero. Any start/end edge bars share
+    /// this height.
+    /// </summary>
+    public int? Height { get; set; }
+
     /// <summary>Optional label rendered centered above the bar.</summary>
     public string? TextAbove { get; set; }
 

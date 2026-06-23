@@ -46,6 +46,17 @@
     background: #fff;
 }
 
+.bar-height-control input[type="range"] {
+    width: 110px;
+    cursor: pointer;
+}
+
+.bar-height-value {
+    min-width: 2.8rem;
+    font-variant-numeric: tabular-nums;
+    color: #868e96;
+}
+
 .btn-regenerate {
     padding: 0.4rem 0.9rem;
     border: none;

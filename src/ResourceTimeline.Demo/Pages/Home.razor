@@ -24,6 +24,12 @@
                     <option value="365">365</option>
                 </select>
             </label>
+            <label class="bar-height-control">
+                Bar height
+                <input type="range" min="2" max="32" step="1"
+                       @bind="_barHeight" @bind:event="oninput" @bind:after="ApplyBarHeightAsync" />
+                <span class="bar-height-value">@_barHeight px</span>
+            </label>
             <button class="btn-today" @onclick="GoToTodayAsync">Go to Today</button>
             <button class="btn-regenerate" @onclick="RegenerateAsync">Regenerate</button>
             <button class="btn-code" @onclick="ToggleCode">
@@ -102,6 +108,7 @@
     private TimelineData? _data;
     private IReadOnlyList<Consumption> _selectedBars = Array.Empty<Consumption>();
     private int _days = 100;
+    private int _barHeight = 4;
     private bool _isGenerating;
     private bool _showCode;
     private bool _codeCopied;
@@ -140,6 +147,8 @@
                     StartTime = DateTimeOffset.UtcNow.AddHours(-6).ToUnixTimeMilliseconds(),
                     EndTime = DateTimeOffset.UtcNow.AddHours(-2).ToUnixTimeMilliseconds(),
                     Color = "#1971c2",
+                    // Optional per-bar height in pixels (defaults to a thin bar).
+                    Height = 12,
                     TextAbove = "Batch job",
                     // Custom icons can be anchored at the start, end, above or
                     // below the bar. Source is any image URL or data URI.
@@ -225,6 +234,7 @@
             }
 
             _data = data;
+            ApplyBarHeightToData();
         }
         catch (OperationCanceledException)
         {
@@ -246,6 +256,31 @@
         if (_timeline is not null)
         {
             await _timeline.GoToTodayAsync();
+        }
+    }
+
+    // Applies the current bar height to every consumption in the loaded data.
+    // Heights are mutated in place, so a ReloadAsync is needed to push the
+    // change to the renderer.
+    private void ApplyBarHeightToData()
+    {
+        if (_data is null)
+        {
+            return;
+        }
+
+        foreach (var consumption in _data.Consumptions)
+        {
+            consumption.Height = _barHeight;
+        }
+    }
+
+    private async Task ApplyBarHeightAsync()
+    {
+        ApplyBarHeightToData();
+        if (_timeline is not null)
+        {
+            await _timeline.ReloadAsync();
         }
     }
 
