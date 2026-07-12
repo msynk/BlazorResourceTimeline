@@ -47,10 +47,10 @@ class BlazorResourceTimeline {
         // Data
         this.resources = [];
         this.timeRange = { start: null, end: null };
-        this.consumptions = [];
-        // Persistent index: resourceId -> consumptions[] (sorted by startTime).
+        this.allocations = [];
+        // Persistent index: resourceId -> allocations[] (sorted by startTime).
         // Built once when data is set, reused for rendering and hit-testing.
-        this.consumptionsByResource = new Map();
+        this.allocationsByResource = new Map();
 
         // Cache of loaded <img> elements keyed by source, used to draw bar
         // icons on the canvas. Images load asynchronously; a re-render is
@@ -58,7 +58,7 @@ class BlazorResourceTimeline {
         this.imageCache = new Map();
 
         // State
-        // Selected bars keyed by consumption id, preserving the order in which
+        // Selected bars keyed by allocation id, preserving the order in which
         // they were selected. The most recently selected bar is treated as the
         // "primary" selection for single-selection consumers.
         this.selectedBars = new Map();
@@ -256,7 +256,7 @@ class BlazorResourceTimeline {
                 // z-order: background -> grid -> bars -> now line -> sticky axes
                 this.drawBackground();
                 this.drawGridLines();
-                this.drawConsumptionBars();
+                this.drawAllocationBars();
                 this.drawNowLine();
                 this.drawTimeAxis();
                 this.drawResourceAxis();
@@ -557,7 +557,7 @@ class BlazorResourceTimeline {
         this.ctx.fill();
     }
 
-    drawConsumptionBars() {
+    drawAllocationBars() {
         if (!this.visibleTimeRange) return;
 
         const c = this.config;
@@ -582,47 +582,47 @@ class BlazorResourceTimeline {
             if (resourceY + c.resourceHeight < startY || resourceY > visibleEndY) continue;
 
             const barCenterY = resourceY + c.resourceHeight / 2;
-            const resourceConsumptions = this.consumptionsByResource.get(resource.id);
-            if (!resourceConsumptions) continue;
+            const resourceAllocations = this.allocationsByResource.get(resource.id);
+            if (!resourceAllocations) continue;
 
-            for (const cons of resourceConsumptions) {
+            for (const alloc of resourceAllocations) {
                 // Time-range culling (list is sorted by startTime).
-                if (cons.endTime < visStart) continue;
-                if (cons.startTime > visEnd) break;
+                if (alloc.endTime < visStart) continue;
+                if (alloc.startTime > visEnd) break;
 
                 // Per-bar height (falls back to the configured default), kept
                 // vertically centered within the resource row.
-                const barHeight = cons.height && cons.height > 0 ? cons.height : c.barHeight;
+                const barHeight = alloc.height && alloc.height > 0 ? alloc.height : c.barHeight;
                 const barTop = barCenterY - barHeight / 2;
 
-                const barX = this.getTimeToX(cons.startTime);
-                const barEndX = this.getTimeToX(cons.endTime);
+                const barX = this.getTimeToX(alloc.startTime);
+                const barEndX = this.getTimeToX(alloc.endTime);
 
                 // Edge (delay) bars extend the drawn span before/after the main
                 // bar, so account for them when culling and when drawing.
-                const startEdgeMs = cons.startBar && cons.startBar.duration > 0 ? cons.startBar.duration : 0;
-                const endEdgeMs = cons.endBar && cons.endBar.duration > 0 ? cons.endBar.duration : 0;
-                const drawStartX = startEdgeMs ? this.getTimeToX(cons.startTime - startEdgeMs) : barX;
-                const drawEndX = endEdgeMs ? this.getTimeToX(cons.endTime + endEdgeMs) : barEndX;
+                const startEdgeMs = alloc.startBar && alloc.startBar.duration > 0 ? alloc.startBar.duration : 0;
+                const endEdgeMs = alloc.endBar && alloc.endBar.duration > 0 ? alloc.endBar.duration : 0;
+                const drawStartX = startEdgeMs ? this.getTimeToX(alloc.startTime - startEdgeMs) : barX;
+                const drawEndX = endEdgeMs ? this.getTimeToX(alloc.endTime + endEdgeMs) : barEndX;
                 if (drawEndX < startX || drawStartX > visibleEndX) continue;
 
                 // Start edge bar: drawn immediately before the main bar's start.
                 if (startEdgeMs) {
                     const edgeWidth = Math.max(c.minBarWidth, barX - drawStartX);
-                    this.ctx.fillStyle = cons.startBar.color || c.colors.bar;
+                    this.ctx.fillStyle = alloc.startBar.color || c.colors.bar;
                     this.ctx.fillRect(drawStartX, barTop, edgeWidth, barHeight);
                 }
                 // End edge bar: drawn immediately after the main bar's end.
                 if (endEdgeMs) {
                     const edgeWidth = Math.max(c.minBarWidth, drawEndX - barEndX);
-                    this.ctx.fillStyle = cons.endBar.color || c.colors.bar;
+                    this.ctx.fillStyle = alloc.endBar.color || c.colors.bar;
                     this.ctx.fillRect(barEndX, barTop, edgeWidth, barHeight);
                 }
 
                 const barWidth = Math.max(c.minBarWidth, barEndX - barX);
-                const isSelected = this.selectedBars.has(cons.id);
+                const isSelected = this.selectedBars.has(alloc.id);
                 if (isSelected) {
-                    this.ctx.fillStyle = cons.color || c.colors.barSelected;
+                    this.ctx.fillStyle = alloc.color || c.colors.barSelected;
                     this.ctx.fillRect(barX, barTop, barWidth, barHeight);
                     // The selection outline wraps the full span, edge bars included.
                     const selLeft = drawStartX - 1;
@@ -631,15 +631,15 @@ class BlazorResourceTimeline {
                     this.ctx.lineWidth = 2;
                     this.ctx.strokeRect(selLeft, barTop - 1, selWidth, barHeight + 2);
                 } else {
-                    this.ctx.fillStyle = cons.color || c.colors.bar;
+                    this.ctx.fillStyle = alloc.color || c.colors.bar;
                     this.ctx.fillRect(barX, barTop, barWidth, barHeight);
                 }
 
                 // Per-bar labels and icons (only when present, to keep the
                 // common path cheap). Start/end decorations sit outside the
                 // full span (edge bars included).
-                if (cons.icons?.length || cons.textAbove || cons.textBelow || cons.textStart || cons.textEnd) {
-                    this._drawBarDecorations(cons, barX, barEndX, drawStartX, drawEndX, barTop, barCenterY, barHeight, c);
+                if (alloc.icons?.length || alloc.textAbove || alloc.textBelow || alloc.textStart || alloc.textEnd) {
+                    this._drawBarDecorations(alloc, barX, barEndX, drawStartX, drawEndX, barTop, barCenterY, barHeight, c);
                 }
             }
         }
@@ -655,7 +655,7 @@ class BlazorResourceTimeline {
     // pushed outward so they never overlap an icon at the same position.
     // spanStartX/spanEndX are the outer edges of the drawn bar including any
     // start/end edge bars, so start/end decorations never overlap them.
-    _drawBarDecorations(cons, barX, barEndX, spanStartX, spanEndX, barTop, barCenterY, barHeight, c) {
+    _drawBarDecorations(alloc, barX, barEndX, spanStartX, spanEndX, barTop, barCenterY, barHeight, c) {
         const ctx = this.ctx;
         const gap = c.barLabelGap;
         const barBottom = barTop + barHeight;
@@ -668,9 +668,9 @@ class BlazorResourceTimeline {
         let aboveY = barTop - gap;    // bottom edge of the next above-anchored item
         let belowY = barBottom + gap; // top edge of the next below-anchored item
 
-        if (cons.icons && cons.icons.length) {
+        if (alloc.icons && alloc.icons.length) {
             const defaultSize = c.barIconSize;
-            for (const icon of cons.icons) {
+            for (const icon of alloc.icons) {
                 if (!icon || !icon.source) continue;
                 const img = this._getImage(icon.source);
                 // Skip until the image has loaded; its onload triggers a re-render.
@@ -708,25 +708,25 @@ class BlazorResourceTimeline {
         ctx.font = c.barLabelFont;
         ctx.fillStyle = c.colors.barLabel;
 
-        if (cons.textAbove) {
+        if (alloc.textAbove) {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'bottom';
-            ctx.fillText(cons.textAbove, barCenterX, aboveY);
+            ctx.fillText(alloc.textAbove, barCenterX, aboveY);
         }
-        if (cons.textBelow) {
+        if (alloc.textBelow) {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            ctx.fillText(cons.textBelow, barCenterX, belowY);
+            ctx.fillText(alloc.textBelow, barCenterX, belowY);
         }
-        if (cons.textStart) {
+        if (alloc.textStart) {
             ctx.textAlign = 'right';
             ctx.textBaseline = 'middle';
-            ctx.fillText(cons.textStart, startEdgeX - gap, barCenterY);
+            ctx.fillText(alloc.textStart, startEdgeX - gap, barCenterY);
         }
-        if (cons.textEnd) {
+        if (alloc.textEnd) {
             ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            ctx.fillText(cons.textEnd, endEdgeX + gap, barCenterY);
+            ctx.fillText(alloc.textEnd, endEdgeX + gap, barCenterY);
         }
     }
 
@@ -857,19 +857,19 @@ class BlazorResourceTimeline {
 
         // Scan this resource's bars. Hit-testing uses each bar's effective span
         // (the main bar plus any start/end edge bars), so clicking an edge bar
-        // selects its owning consumption.
-        const resourceConsumptions = this.consumptionsByResource.get(resource.id) || [];
+        // selects its owning allocation.
+        const resourceAllocations = this.allocationsByResource.get(resource.id) || [];
         let clickedBar = null;
         let minDistance = Infinity;
-        for (const cons of resourceConsumptions) {
-            const effStart = this._effectiveStartTime(cons);
-            const effEnd = this._effectiveEndTime(cons);
+        for (const alloc of resourceAllocations) {
+            const effStart = this._effectiveStartTime(alloc);
+            const effEnd = this._effectiveEndTime(alloc);
             if (clickTime >= effStart && clickTime <= effEnd) {
-                const barCenterX = (this.getTimeToX(cons.startTime) + this.getTimeToX(cons.endTime)) / 2;
+                const barCenterX = (this.getTimeToX(alloc.startTime) + this.getTimeToX(alloc.endTime)) / 2;
                 const distance = Math.abs(canvasX - barCenterX);
                 if (distance < minDistance) {
                     minDistance = distance;
-                    clickedBar = cons;
+                    clickedBar = alloc;
                 }
             }
         }
@@ -920,15 +920,15 @@ class BlazorResourceTimeline {
             if (rowBottom < minY || rowTop > maxY) continue;
 
             const resource = this.resources[resourceIndex];
-            const resourceConsumptions = this.consumptionsByResource.get(resource.id);
-            if (!resourceConsumptions) continue;
+            const resourceAllocations = this.allocationsByResource.get(resource.id);
+            if (!resourceAllocations) continue;
 
-            for (const cons of resourceConsumptions) {
+            for (const alloc of resourceAllocations) {
                 // Bar horizontal bounds in content space, including edge bars.
-                const barStartX = this._timeToContentX(this._effectiveStartTime(cons));
-                const barEndX = Math.max(barStartX + c.minBarWidth, this._timeToContentX(this._effectiveEndTime(cons)));
+                const barStartX = this._timeToContentX(this._effectiveStartTime(alloc));
+                const barEndX = Math.max(barStartX + c.minBarWidth, this._timeToContentX(this._effectiveEndTime(alloc)));
                 if (barEndX < minX || barStartX > maxX) continue;
-                next.set(cons.id, cons);
+                next.set(alloc.id, alloc);
             }
         }
 
@@ -944,17 +944,17 @@ class BlazorResourceTimeline {
         return (time - this.timeRange.start) * pixelsPerMs;
     }
 
-    // Effective start/end times of a consumption, extended to cover any
+    // Effective start/end times of an allocation, extended to cover any
     // start/end edge (delay) bars. Used so edge bars count as part of the bar
     // for hit-testing and selection.
-    _effectiveStartTime(cons) {
-        const edge = cons.startBar && cons.startBar.duration > 0 ? cons.startBar.duration : 0;
-        return cons.startTime - edge;
+    _effectiveStartTime(alloc) {
+        const edge = alloc.startBar && alloc.startBar.duration > 0 ? alloc.startBar.duration : 0;
+        return alloc.startTime - edge;
     }
 
-    _effectiveEndTime(cons) {
-        const edge = cons.endBar && cons.endBar.duration > 0 ? cons.endBar.duration : 0;
-        return cons.endTime + edge;
+    _effectiveEndTime(alloc) {
+        const edge = alloc.endBar && alloc.endBar.duration > 0 ? alloc.endBar.duration : 0;
+        return alloc.endTime + edge;
     }
 
     // Draws the marquee rectangle (converting content coords back to canvas).
@@ -1049,21 +1049,21 @@ class BlazorResourceTimeline {
         return this.scrollToTime(Date.now());
     }
 
-    // Rebuilds the resourceId -> sorted consumptions index used for
+    // Rebuilds the resourceId -> sorted allocations index used for
     // rendering and hit-testing.
-    _indexConsumptions() {
+    _indexAllocations() {
         const index = new Map();
-        for (const cons of this.consumptions) {
-            let list = index.get(cons.resourceId);
+        for (const alloc of this.allocations) {
+            let list = index.get(alloc.resourceId);
             if (!list) {
                 list = [];
-                index.set(cons.resourceId, list);
+                index.set(alloc.resourceId, list);
             }
-            list.push(cons);
+            list.push(alloc);
         }
         // Each resource's list inherits global sort order, so it is already
         // sorted by startTime.
-        this.consumptionsByResource = index;
+        this.allocationsByResource = index;
     }
 
     setResources(resources) {
@@ -1080,19 +1080,19 @@ class BlazorResourceTimeline {
         }
     }
 
-    setConsumptions(consumptions) {
-        this.consumptions = (consumptions || []).slice().sort((a, b) => a.startTime - b.startTime);
-        this._indexConsumptions();
+    setAllocations(allocations) {
+        this.allocations = (allocations || []).slice().sort((a, b) => a.startTime - b.startTime);
+        this._indexAllocations();
         if (this.canvas.width > 0 && this.canvas.height > 0) {
             this.render();
         }
     }
 
-    setData(resources, start, end, consumptions) {
+    setData(resources, start, end, allocations) {
         this.resources = resources || [];
         this.timeRange = { start, end };
-        this.consumptions = (consumptions || []).slice().sort((a, b) => a.startTime - b.startTime);
-        this._indexConsumptions();
+        this.allocations = (allocations || []).slice().sort((a, b) => a.startTime - b.startTime);
+        this._indexAllocations();
         this.selectedBars.clear();
         this.drag = null;
         // A paint is expected as a result of this data change; whenRendered()

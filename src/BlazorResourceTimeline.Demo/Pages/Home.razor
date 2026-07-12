@@ -10,7 +10,7 @@
     <header class="demo-header">
         <div class="demo-title">
             <h1>Resource Timeline</h1>
-            <p>Canvas-based visualization of resource consumption over time. Scroll in both
+            <p>Canvas-based visualization of resource allocation over time. Scroll in both
                directions and click a bar to inspect it.</p>
         </div>
 
@@ -39,8 +39,8 @@
     </header>
 
     <section class="demo-stats">
-        <span><strong>@(_data?.Resources.Count ?? 0)</strong> resources</span>
-        <span><strong>@(_data?.Consumptions.Count ?? 0)</strong> consumptions</span>
+        <span><strong>@(_config?.Resources.Count ?? 0)</strong> resources</span>
+        <span><strong>@(_config?.Allocations.Count ?? 0)</strong> allocations</span>
         <span><strong>@_days</strong> days</span>
         @if (_selectedBars.Count > 1)
         {
@@ -66,12 +66,10 @@
     </section>
 
     <div class="demo-timeline">
-        @if (_data is not null)
+        @if (_config is not null)
         {
             <BlazorResourceTimeline @ref="_timeline"
-                              Resources="_data.Resources"
-                              TimeRange="_data.TimeRange"
-                              Consumptions="_data.Consumptions"
+                              Config="_config"
                               OnSelectionChanged="HandleSelectionChanged">
                 <TopStartContent>
                     <div class="corner">
@@ -81,7 +79,7 @@
                 </TopStartContent>
             </BlazorResourceTimeline>
         }
-        @if (_isGenerating || _data is null)
+        @if (_isGenerating || _config is null)
         {
             <div class="demo-loading" role="status" aria-live="polite">
                 <span class="demo-loading-spinner"></span>
@@ -105,8 +103,8 @@
 
 @code {
     private BlazorResourceTimeline? _timeline;
-    private TimelineData? _data;
-    private IReadOnlyList<BlazorResourceTimelineConsumption> _selectedBars = Array.Empty<BlazorResourceTimelineConsumption>();
+    private BlazorResourceTimelineConfig? _config;
+    private IReadOnlyList<BlazorResourceTimelineAllocation> _selectedBars = Array.Empty<BlazorResourceTimelineAllocation>();
     private int _days = 100;
     private int _barHeight = 4;
     private bool _isGenerating;
@@ -119,79 +117,77 @@
         @using BlazorResourceTimeline.Components
         @using BlazorResourceTimeline.Models
 
-        <BlazorResourceTimeline Resources="_resources"
-                          TimeRange="_timeRange"
-                          Consumptions="_consumptions"
-                          OnSelectionChanged="HandleSelectionChanged" />
+        <BlazorResourceTimeline Config="_config"
+                                OnSelectionChanged="HandleSelectionChanged" />
 
         @code {
-            private readonly List<BlazorResourceTimelineResource> _resources = new()
+            // All render data is bundled into a single Config instance. Assign a
+            // new instance to re-render the timeline.
+            private readonly BlazorResourceTimelineConfig _config = new()
             {
-                new BlazorResourceTimelineResource { Id = "r1", Name = "Server A" },
-                new BlazorResourceTimelineResource { Id = "r2", Name = "Server B" },
-                new BlazorResourceTimelineResource { Id = "r3", Name = "Database" },
-            };
-
-            private readonly BlazorResourceTimelineTimeRange _timeRange = new()
-            {
-                Start = DateTimeOffset.UtcNow.AddHours(-12).ToUnixTimeMilliseconds(),
-                End = DateTimeOffset.UtcNow.AddHours(12).ToUnixTimeMilliseconds(),
-            };
-
-            private readonly List<BlazorResourceTimelineConsumption> _consumptions = new()
-            {
-                new BlazorResourceTimelineConsumption
+                Resources = new()
                 {
-                    Id = "c1",
-                    ResourceId = "r1",
-                    StartTime = DateTimeOffset.UtcNow.AddHours(-6).ToUnixTimeMilliseconds(),
-                    EndTime = DateTimeOffset.UtcNow.AddHours(-2).ToUnixTimeMilliseconds(),
-                    Color = "#1971c2",
-                    // Optional per-bar height in pixels (defaults to a thin bar).
-                    Height = 12,
-                    TextAbove = "Batch job",
-                    // Custom icons can be anchored at the start, end, above or
-                    // below the bar. Source is any image URL or data URI.
-                    Icons = new List<BlazorResourceTimelineBarIcon>
+                    new BlazorResourceTimelineResource { Id = "r1", Name = "Server A" },
+                    new BlazorResourceTimelineResource { Id = "r2", Name = "Server B" },
+                    new BlazorResourceTimelineResource { Id = "r3", Name = "Database" },
+                },
+                StartDate = DateTimeOffset.UtcNow.AddHours(-12),
+                EndDate = DateTimeOffset.UtcNow.AddHours(12),
+                Allocations = new()
+                {
+                    new BlazorResourceTimelineAllocation
                     {
-                        new() { Source = "/icons/check.svg", Position = BlazorResourceTimelineBarIconPosition.Start },
-                        new() { Source = "/icons/star.svg", Position = BlazorResourceTimelineBarIconPosition.End, Size = 18 },
+                        Id = "c1",
+                        ResourceId = "r1",
+                        StartTime = DateTimeOffset.UtcNow.AddHours(-6).ToUnixTimeMilliseconds(),
+                        EndTime = DateTimeOffset.UtcNow.AddHours(-2).ToUnixTimeMilliseconds(),
+                        Color = "#1971c2",
+                        // Optional per-bar height in pixels (defaults to a thin bar).
+                        Height = 12,
+                        TextAbove = "Batch job",
+                        // Custom icons can be anchored at the start, end, above or
+                        // below the bar. Source is any image URL or data URI.
+                        Icons = new List<BlazorResourceTimelineBarIcon>
+                        {
+                            new() { Source = "/icons/check.svg", Position = BlazorResourceTimelineBarIconPosition.Start },
+                            new() { Source = "/icons/star.svg", Position = BlazorResourceTimelineBarIconPosition.End, Size = 18 },
+                        },
+                    },
+                    new BlazorResourceTimelineAllocation
+                    {
+                        Id = "c2",
+                        ResourceId = "r2",
+                        StartTime = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds(),
+                        EndTime = DateTimeOffset.UtcNow.AddHours(3).ToUnixTimeMilliseconds(),
+                        Color = "#e8590c",
+                        TextStart = "08:30",
+                        TextEnd = "12:30",
+                        // Decorative edge bars extend before/after the main bar,
+                        // e.g. to show a delay around the planned period.
+                        StartBar = new BlazorResourceTimelineEdgeBar { Duration = 30 * 60 * 1000, Color = "red" },
+                        EndBar = new BlazorResourceTimelineEdgeBar { Duration = 45 * 60 * 1000, Color = "red" },
+                        Icons = new List<BlazorResourceTimelineBarIcon>
+                        {
+                            new() { Source = "/icons/warning.svg", Position = BlazorResourceTimelineBarIconPosition.Above },
+                        },
+                    },
+                    new BlazorResourceTimelineAllocation
+                    {
+                        Id = "c3",
+                        ResourceId = "r3",
+                        StartTime = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
+                        EndTime = DateTimeOffset.UtcNow.AddHours(8).ToUnixTimeMilliseconds(),
+                        Color = "#2f9e44",
+                        TextBelow = "Maintenance",
+                        Icons = new List<BlazorResourceTimelineBarIcon>
+                        {
+                            new() { Source = "/icons/lock.svg", Position = BlazorResourceTimelineBarIconPosition.Start, Size = 16 },
+                        },
                     },
                 },
-                new BlazorResourceTimelineConsumption
-                {
-                    Id = "c2",
-                    ResourceId = "r2",
-                    StartTime = DateTimeOffset.UtcNow.AddHours(-1).ToUnixTimeMilliseconds(),
-                    EndTime = DateTimeOffset.UtcNow.AddHours(3).ToUnixTimeMilliseconds(),
-                    Color = "#e8590c",
-                    TextStart = "08:30",
-                    TextEnd = "12:30",
-                    // Decorative edge bars extend before/after the main bar,
-                    // e.g. to show a delay around the planned period.
-                    StartBar = new BlazorResourceTimelineEdgeBar { Duration = 30 * 60 * 1000, Color = "red" },
-                    EndBar = new BlazorResourceTimelineEdgeBar { Duration = 45 * 60 * 1000, Color = "red" },
-                    Icons = new List<BlazorResourceTimelineBarIcon>
-                    {
-                        new() { Source = "/icons/warning.svg", Position = BlazorResourceTimelineBarIconPosition.Above },
-                    },
-                },
-                new BlazorResourceTimelineConsumption
-                {
-                    Id = "c3",
-                    ResourceId = "r3",
-                    StartTime = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
-                    EndTime = DateTimeOffset.UtcNow.AddHours(8).ToUnixTimeMilliseconds(),
-                    Color = "#2f9e44",
-                    TextBelow = "Maintenance",
-                    Icons = new List<BlazorResourceTimelineBarIcon>
-                    {
-                        new() { Source = "/icons/lock.svg", Position = BlazorResourceTimelineBarIconPosition.Start, Size = 16 },
-                    },
-                },
             };
 
-            private void HandleSelectionChanged(BlazorResourceTimelineConsumption[] selected)
+            private void HandleSelectionChanged(BlazorResourceTimelineAllocation[] selected)
             {
                 // selected contains every currently selected bar (empty when none).
                 foreach (var bar in selected)
@@ -218,14 +214,14 @@
         // starts. The existing timeline (if any) stays mounted underneath so the
         // overlay is continuous through generation and into the renderer's own
         // loading spinner once the new data is handed over.
-        _selectedBars = Array.Empty<BlazorResourceTimelineConsumption>();
+        _selectedBars = Array.Empty<BlazorResourceTimelineAllocation>();
         _isGenerating = true;
         StateHasChanged();
         await Task.Yield();
 
         try
         {
-            var data = await DataGenerator.GenerateSampleDataAsync(_days, token);
+            var config = await DataGenerator.GenerateSampleDataAsync(_days, token);
 
             // Ignore a result that has been superseded by a newer request.
             if (token.IsCancellationRequested)
@@ -233,7 +229,7 @@
                 return;
             }
 
-            _data = data;
+            _config = config;
             ApplyBarHeightToData();
         }
         catch (OperationCanceledException)
@@ -259,19 +255,19 @@
         }
     }
 
-    // Applies the current bar height to every consumption in the loaded data.
+    // Applies the current bar height to every allocation in the loaded data.
     // Heights are mutated in place, so a ReloadAsync is needed to push the
     // change to the renderer.
     private void ApplyBarHeightToData()
     {
-        if (_data is null)
+        if (_config is null)
         {
             return;
         }
 
-        foreach (var consumption in _data.Consumptions)
+        foreach (var allocation in _config.Allocations)
         {
-            consumption.Height = _barHeight;
+            allocation.Height = _barHeight;
         }
     }
 
@@ -292,7 +288,7 @@
         }
     }
 
-    private void HandleSelectionChanged(BlazorResourceTimelineConsumption[] bars) => _selectedBars = bars;
+    private void HandleSelectionChanged(BlazorResourceTimelineAllocation[] bars) => _selectedBars = bars;
 
     private void ToggleCode()
     {
@@ -314,7 +310,7 @@
     }
 
     private string ResourceNameFor(string resourceId) =>
-        _data?.Resources.FirstOrDefault(r => r.Id == resourceId)?.Name ?? resourceId;
+        _config?.Resources.FirstOrDefault(r => r.Id == resourceId)?.Name ?? resourceId;
 
     private static string FormatTime(long unixMs) =>
         DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime.ToString("MMM d, HH:mm");

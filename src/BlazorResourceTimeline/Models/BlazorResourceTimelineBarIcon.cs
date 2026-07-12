@@ -1,7 +1,7 @@
 namespace BlazorResourceTimeline.Models;
 
 /// <summary>
-/// A small custom icon or image rendered next to a <see cref="BlazorResourceTimelineConsumption"/> bar.
+/// A small custom icon or image rendered next to a <see cref="BlazorResourceTimelineAllocation"/> bar.
 /// Multiple icons can be attached to a single bar and placed at different
 /// positions. Icons are purely decorative (not selectable). Each icon is
 /// scaled to fit inside a square box (see <see cref="Size"/>) while preserving

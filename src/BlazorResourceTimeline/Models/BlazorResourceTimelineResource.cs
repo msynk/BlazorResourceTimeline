@@ -5,7 +5,7 @@ namespace BlazorResourceTimeline.Models;
 /// </summary>
 public class BlazorResourceTimelineResource
 {
-    /// <summary>Stable identifier used to associate consumptions with this resource.</summary>
+    /// <summary>Stable identifier used to associate allocations with this resource.</summary>
     public required string Id { get; set; }
 
     /// <summary>Display label rendered on the sticky resource axis.</summary>

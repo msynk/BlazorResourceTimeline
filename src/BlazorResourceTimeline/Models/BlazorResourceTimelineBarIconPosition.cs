@@ -4,7 +4,7 @@ namespace BlazorResourceTimeline.Models;
 
 /// <summary>
 /// Where a <see cref="BlazorResourceTimelineBarIcon"/> is anchored relative to its owning
-/// <see cref="BlazorResourceTimelineConsumption"/> bar.
+/// <see cref="BlazorResourceTimelineAllocation"/> bar.
 /// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum BlazorResourceTimelineBarIconPosition

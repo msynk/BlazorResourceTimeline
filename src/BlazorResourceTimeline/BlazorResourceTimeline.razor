@@ -44,20 +44,16 @@
     private bool _dataLoaded;
     private bool _isLoading;
 
-    // References of the data last pushed to JS. Used to skip redundant (and
+    // Reference of the config last pushed to JS. Used to skip redundant (and
     // expensive) re-marshalling when the parent re-renders without data changes.
-    private List<BlazorResourceTimelineResource>? _loadedResources;
-    private BlazorResourceTimelineTimeRange? _loadedTimeRange;
-    private List<BlazorResourceTimelineConsumption>? _loadedConsumptions;
+    private BlazorResourceTimelineConfig? _loadedConfig;
 
-    /// <summary>Resource rows rendered along the vertical axis.</summary>
-    [Parameter] public List<BlazorResourceTimelineResource>? Resources { get; set; }
-
-    /// <summary>Time window rendered along the horizontal axis.</summary>
-    [Parameter] public BlazorResourceTimelineTimeRange? TimeRange { get; set; }
-
-    /// <summary>Consumption bars to display.</summary>
-    [Parameter] public List<BlazorResourceTimelineConsumption>? Consumptions { get; set; }
+    /// <summary>
+    /// Data the timeline renders: the resource rows, the visible time window and
+    /// the allocation bars. The timeline renders once this is set and re-renders
+    /// whenever a new instance is assigned.
+    /// </summary>
+    [Parameter] public BlazorResourceTimelineConfig? Config { get; set; }
 
     /// <summary>
     /// Raised whenever the set of selected bars changes. The array contains every
@@ -66,7 +62,7 @@
     /// Selection supports click, Ctrl/Cmd-click to toggle individual bars, and
     /// click-and-drag to rubber-band select a region.
     /// </summary>
-    [Parameter] public EventCallback<BlazorResourceTimelineConsumption[]> OnSelectionChanged { get; set; }
+    [Parameter] public EventCallback<BlazorResourceTimelineAllocation[]> OnSelectionChanged { get; set; }
 
     /// <summary>
     /// Optional custom content rendered in the top-start corner of the component
@@ -87,7 +83,7 @@
     /// </summary>
     [Parameter] public int LoadingMinDurationMs { get; set; } = 300;
 
-    private bool HasData => Resources is not null && TimeRange is not null && Consumptions is not null;
+    private bool HasData => Config is not null;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -118,13 +114,10 @@
         }
     }
 
-    // Only the references are compared. Mutating a list in place without
-    // creating a new instance will not trigger a reload; pass a new list
-    // (or call ReloadAsync) when the contents change.
-    private bool DataChanged() =>
-        !ReferenceEquals(_loadedResources, Resources)
-        || !ReferenceEquals(_loadedTimeRange, TimeRange)
-        || !ReferenceEquals(_loadedConsumptions, Consumptions);
+    // Only the reference is compared. Mutating the config (or its lists) in place
+    // without creating a new instance will not trigger a reload; assign a new
+    // Config (or call ReloadAsync) when the contents change.
+    private bool DataChanged() => !ReferenceEquals(_loadedConfig, Config);
 
     private async Task LoadDataAsync()
     {
@@ -139,18 +132,18 @@
         // JS rendering work begins; otherwise the overlay can be skipped.
         await Task.Yield();
 
+        var config = Config!;
         var startedAt = DateTime.UtcNow;
         try
         {
             await _timelineInstance.InvokeVoidAsync(
-                "setData", Resources, TimeRange!.Start, TimeRange.End, Consumptions);
+                "setData", config.Resources, config.StartDate.ToUnixTimeMilliseconds(),
+                config.EndDate.ToUnixTimeMilliseconds(), config.Allocations);
 
             // Wait until the renderer has painted the bars before hiding the overlay.
             await _timelineInstance.InvokeVoidAsync("whenRendered");
 
-            _loadedResources = Resources;
-            _loadedTimeRange = TimeRange;
-            _loadedConsumptions = Consumptions;
+            _loadedConfig = config;
             _dataLoaded = true;
         }
         finally
@@ -170,12 +163,10 @@
     }
 
     /// <summary>Forces the current data to be re-sent to the renderer, even if the
-    /// parameter references are unchanged. Use after mutating a list in place.</summary>
+    /// Config reference is unchanged. Use after mutating the config in place.</summary>
     public Task ReloadAsync()
     {
-        _loadedResources = null;
-        _loadedTimeRange = null;
-        _loadedConsumptions = null;
+        _loadedConfig = null;
         return LoadDataAsync();
     }
 
@@ -189,14 +180,14 @@
     }
 
     /// <summary>Returns the currently selected bars, in selection order. Empty when nothing is selected.</summary>
-    public async Task<IReadOnlyList<BlazorResourceTimelineConsumption>> GetSelectedBarsAsync()
+    public async Task<IReadOnlyList<BlazorResourceTimelineAllocation>> GetSelectedBarsAsync()
     {
         if (_timelineInstance is null || !_dataLoaded)
         {
-            return Array.Empty<BlazorResourceTimelineConsumption>();
+            return Array.Empty<BlazorResourceTimelineAllocation>();
         }
 
-        return await _timelineInstance.InvokeAsync<BlazorResourceTimelineConsumption[]>("getSelectedBars");
+        return await _timelineInstance.InvokeAsync<BlazorResourceTimelineAllocation[]>("getSelectedBars");
     }
 
     /// <summary>
@@ -229,7 +220,7 @@
     }
 
     [JSInvokable]
-    public async Task OnSelectionUpdated(BlazorResourceTimelineConsumption[] bars)
+    public async Task OnSelectionUpdated(BlazorResourceTimelineAllocation[] bars)
     {
         if (OnSelectionChanged.HasDelegate)
         {

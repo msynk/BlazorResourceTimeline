@@ -2,7 +2,7 @@ namespace BlazorResourceTimeline.Models;
 
 /// <summary>
 /// An additional bar drawn immediately before (start) or after (end) a main
-/// <see cref="BlazorResourceTimelineConsumption"/> bar. Edge bars share the main bar's row, height and
+/// <see cref="BlazorResourceTimelineAllocation"/> bar. Edge bars share the main bar's row, height and
 /// vertical position, differing only in their color and extent. They are purely
 /// decorative (not selectable) and are typically used to visualize delays in
 /// using the planned time of a resource.

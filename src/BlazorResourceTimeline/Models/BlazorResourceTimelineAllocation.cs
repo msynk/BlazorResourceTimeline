@@ -1,12 +1,12 @@
 namespace BlazorResourceTimeline.Models;
 
 /// <summary>
-/// A single consumption period drawn as a bar on a resource row.
+/// A single allocation period drawn as a bar on a resource row.
 /// Times are expressed as Unix time in milliseconds to match the canvas renderer.
 /// </summary>
-public class BlazorResourceTimelineConsumption
+public class BlazorResourceTimelineAllocation
 {
-    /// <summary>Unique identifier for the consumption bar.</summary>
+    /// <summary>Unique identifier for the allocation bar.</summary>
     public required string Id { get; set; }
 
     /// <summary>Identifier of the owning <see cref="BlazorResourceTimelineResource"/>.</summary>
@@ -47,14 +47,14 @@ public class BlazorResourceTimelineConsumption
     /// <summary>
     /// Optional decorative bar drawn immediately before the main bar's start edge.
     /// Shares the main bar's row and height. Commonly used to indicate a delay
-    /// before the planned consumption began.
+    /// before the planned allocation began.
     /// </summary>
     public BlazorResourceTimelineEdgeBar? StartBar { get; set; }
 
     /// <summary>
     /// Optional decorative bar drawn immediately after the main bar's end edge.
     /// Shares the main bar's row and height. Commonly used to indicate a delay
-    /// after the planned consumption ended.
+    /// after the planned allocation ended.
     /// </summary>
     public BlazorResourceTimelineEdgeBar? EndBar { get; set; }
 

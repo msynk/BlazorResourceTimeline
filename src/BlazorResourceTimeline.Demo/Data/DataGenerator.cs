@@ -4,7 +4,7 @@ namespace BlazorResourceTimeline.Demo.Data;
 
 /// <summary>
 /// Produces realistic sample data for the demo: a set of resources,
-/// a time range and consumption bars spread across that range with natural gaps.
+/// a time range and allocation bars spread across that range with natural gaps.
 /// </summary>
 public static class DataGenerator
 {
@@ -99,7 +99,7 @@ public static class DataGenerator
     /// day (defaults to today) is placed randomly near the middle of the period so the
     /// timeline extends both into the past and the future.
     /// </summary>
-    public static BlazorResourceTimelineTimeRange GenerateTimeRange(int days, DateTime? referenceDate = null, int? seed = null)
+    public static (DateTimeOffset StartDate, DateTimeOffset EndDate) GenerateTimeRange(int days, DateTime? referenceDate = null, int? seed = null)
     {
         if (days < 1)
         {
@@ -121,63 +121,65 @@ public static class DataGenerator
         var end = start.AddDays(days - 1)
             .AddHours(23).AddMinutes(59).AddSeconds(59).AddMilliseconds(999);
 
-        return new BlazorResourceTimelineTimeRange
-        {
-            Start = new DateTimeOffset(start).ToUnixTimeMilliseconds(),
-            End = new DateTimeOffset(end).ToUnixTimeMilliseconds()
-        };
+        return (new DateTimeOffset(start), new DateTimeOffset(end));
     }
 
     /// <summary>
-    /// Distributes consumption bars for every resource across the time range,
+    /// Distributes allocation bars for every resource across the time range,
     /// keeping a minimum gap between bars so the layout stays readable.
     /// </summary>
-    public static List<BlazorResourceTimelineConsumption> GenerateConsumptions(
+    public static List<BlazorResourceTimelineAllocation> GenerateAllocations(
         List<BlazorResourceTimelineResource> resources,
-        BlazorResourceTimelineTimeRange timeRange,
-        int minConsumptionsPerDay = 3,
-        int maxConsumptionsPerDay = 8,
+        DateTimeOffset startDate,
+        DateTimeOffset endDate,
+        int minAllocationsPerDay = 3,
+        int maxAllocationsPerDay = 8,
         long minDuration = 30 * 60 * 1000,
         long maxDuration = 4 * 60 * 60 * 1000,
         long minGap = 15 * 60 * 1000,
         int? seed = null)
     {
-        var consumptions = new List<BlazorResourceTimelineConsumption>();
+        var allocations = new List<BlazorResourceTimelineAllocation>();
         var random = seed.HasValue ? new Random(seed.Value) : new Random();
-        var timeSpan = timeRange.End - timeRange.Start;
+        var startMs = startDate.ToUnixTimeMilliseconds();
+        var endMs = endDate.ToUnixTimeMilliseconds();
+        var timeSpan = endMs - startMs;
         var days = (int)Math.Ceiling(timeSpan / (double)OneDayMs);
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         foreach (var resource in resources)
         {
-            AddConsumptionsForResource(
-                consumptions, resource, timeRange, timeSpan, days, nowMs, random,
-                minConsumptionsPerDay, maxConsumptionsPerDay, minDuration, maxDuration, minGap);
+            AddAllocationsForResource(
+                allocations, resource, startMs, endMs, timeSpan, days, nowMs, random,
+                minAllocationsPerDay, maxAllocationsPerDay, minDuration, maxDuration, minGap);
         }
 
-        return consumptions.OrderBy(c => c.StartTime).ToList();
+        return allocations.OrderBy(c => c.StartTime).ToList();
     }
 
     /// <summary>
-    /// Asynchronous, cooperative variant of <see cref="GenerateConsumptions"/>. It yields to
+    /// Asynchronous, cooperative variant of <see cref="GenerateAllocations"/>. It yields to
     /// the UI thread between resources so a single-threaded host (Blazor WebAssembly) stays
     /// responsive, and observes <paramref name="cancellationToken"/> so an in-flight run can
     /// be abandoned the moment a newer request arrives.
     /// </summary>
-    public static async Task<List<BlazorResourceTimelineConsumption>> GenerateConsumptionsAsync(
+    public static async Task<List<BlazorResourceTimelineAllocation>> GenerateAllocationsAsync(
         List<BlazorResourceTimelineResource> resources,
-        BlazorResourceTimelineTimeRange timeRange,
+        DateTimeOffset startDate,
+        DateTimeOffset endDate,
         CancellationToken cancellationToken = default,
-        int minConsumptionsPerDay = 3,
-        int maxConsumptionsPerDay = 8,
+        int minAllocationsPerDay = 3,
+        int maxAllocationsPerDay = 8,
         long minDuration = 30 * 60 * 1000,
         long maxDuration = 4 * 60 * 60 * 1000,
         long minGap = 15 * 60 * 1000,
         int? seed = null)
     {
-        var consumptions = new List<BlazorResourceTimelineConsumption>();
+        var allocations = new List<BlazorResourceTimelineAllocation>();
         var random = seed.HasValue ? new Random(seed.Value) : new Random();
-        var timeSpan = timeRange.End - timeRange.Start;
+        var startMs = startDate.ToUnixTimeMilliseconds();
+        var endMs = endDate.ToUnixTimeMilliseconds();
+        var timeSpan = endMs - startMs;
         var days = (int)Math.Ceiling(timeSpan / (double)OneDayMs);
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -185,9 +187,9 @@ public static class DataGenerator
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            AddConsumptionsForResource(
-                consumptions, resource, timeRange, timeSpan, days, nowMs, random,
-                minConsumptionsPerDay, maxConsumptionsPerDay, minDuration, maxDuration, minGap);
+            AddAllocationsForResource(
+                allocations, resource, startMs, endMs, timeSpan, days, nowMs, random,
+                minAllocationsPerDay, maxAllocationsPerDay, minDuration, maxDuration, minGap);
 
             // Hand control back to the event loop so pending UI work (loading
             // indicator, a new "Days" selection) can run between resources.
@@ -195,21 +197,22 @@ public static class DataGenerator
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        return consumptions.OrderBy(c => c.StartTime).ToList();
+        return allocations.OrderBy(c => c.StartTime).ToList();
     }
 
-    // Generates and appends the consumption bars for a single resource. Shared by the
+    // Generates and appends the allocation bars for a single resource. Shared by the
     // synchronous and asynchronous generation paths to keep their behavior identical.
-    private static void AddConsumptionsForResource(
-        List<BlazorResourceTimelineConsumption> consumptions,
+    private static void AddAllocationsForResource(
+        List<BlazorResourceTimelineAllocation> allocations,
         BlazorResourceTimelineResource resource,
-        BlazorResourceTimelineTimeRange timeRange,
+        long startMs,
+        long endMs,
         long timeSpan,
         int days,
         long nowMs,
         Random random,
-        int minConsumptionsPerDay,
-        int maxConsumptionsPerDay,
+        int minAllocationsPerDay,
+        int maxAllocationsPerDay,
         long minDuration,
         long maxDuration,
         long minGap)
@@ -217,22 +220,22 @@ public static class DataGenerator
         var (abbrev, _) = GetResourceTypeInfo(resource.Name);
         var resourceNum = ExtractNumber(resource.Name);
 
-        var consumptionsPerDay = minConsumptionsPerDay +
-            random.Next(maxConsumptionsPerDay - minConsumptionsPerDay + 1);
-        var totalConsumptions = consumptionsPerDay * days;
-        if (totalConsumptions <= 0) return;
+        var allocationsPerDay = minAllocationsPerDay +
+            random.Next(maxAllocationsPerDay - minAllocationsPerDay + 1);
+        var totalAllocations = allocationsPerDay * days;
+        if (totalAllocations <= 0) return;
 
         var avgDuration = (minDuration + maxDuration) / 2.0;
-        var slotSize = timeSpan / (double)totalConsumptions;
+        var slotSize = timeSpan / (double)totalAllocations;
         var maxSlotUsage = Math.Min(slotSize * 0.7, avgDuration);
-        var lastEndTime = timeRange.Start;
+        var lastEndTime = startMs;
 
-        for (var i = 0; i < totalConsumptions; i++)
+        for (var i = 0; i < totalAllocations; i++)
         {
-            var slotStart = (long)(timeRange.Start + i * slotSize);
+            var slotStart = (long)(startMs + i * slotSize);
             var slotEnd = (long)(slotStart + slotSize);
             var minStart = Math.Max(slotStart, lastEndTime + minGap);
-            var maxStart = Math.Min(slotEnd - minDuration - minGap, timeRange.End - minDuration);
+            var maxStart = Math.Min(slotEnd - minDuration - minGap, endMs - minDuration);
 
             if (maxStart <= minStart) continue;
 
@@ -242,14 +245,14 @@ public static class DataGenerator
                 Math.Max(0, maxStart - minStart - duration));
             var endTime = startTime + duration;
 
-            if (endTime > timeRange.End) continue;
+            if (endTime > endMs) continue;
 
             // Color by position relative to "now": green in the past, blue
             // in the future. A bar straddling now is treated as past.
             var isPast = startTime < nowMs;
             var color = isPast ? PastColor : FutureColor;
 
-            var consumption = new BlazorResourceTimelineConsumption
+            var allocation = new BlazorResourceTimelineAllocation
             {
                 Id = $"cons-{resource.Id}-{i}",
                 ResourceId = resource.Id,
@@ -273,8 +276,8 @@ public static class DataGenerator
             {
                 var startDelay = (long)(minDuration * (0.3 + random.NextDouble() * 0.7));
                 var endDelay = (long)(minDuration * (0.3 + random.NextDouble() * 0.7));
-                consumption.StartBar = new BlazorResourceTimelineEdgeBar { Duration = startDelay, Color = DelayColor };
-                consumption.EndBar = new BlazorResourceTimelineEdgeBar { Duration = endDelay, Color = DelayColor };
+                allocation.StartBar = new BlazorResourceTimelineEdgeBar { Duration = startDelay, Color = DelayColor };
+                allocation.EndBar = new BlazorResourceTimelineEdgeBar { Duration = endDelay, Color = DelayColor };
             }
 
             // Randomly decorate some bars with one or two icons at random
@@ -292,10 +295,10 @@ public static class DataGenerator
                         Size = 14 + random.Next(5) // 14..18 px
                     });
                 }
-                consumption.Icons = icons;
+                allocation.Icons = icons;
             }
 
-            consumptions.Add(consumption);
+            allocations.Add(allocation);
             lastEndTime = endTime;
         }
     }
@@ -345,46 +348,48 @@ public static class DataGenerator
     private static string SvgDataUri(string svg) =>
         "data:image/svg+xml," + Uri.EscapeDataString(svg);
 
-    /// <summary>Generates a complete <see cref="TimelineData"/> bundle in one call.</summary>
-    public static TimelineData GenerateSampleData(
+    /// <summary>Generates a complete <see cref="BlazorResourceTimelineConfig"/> bundle in one call.</summary>
+    public static BlazorResourceTimelineConfig GenerateSampleData(
         int days = 100,
         string[]? resourceNames = null,
         int? seed = null)
     {
         var resources = GenerateResources(resourceNames);
-        var timeRange = GenerateTimeRange(days, seed: seed);
-        var consumptions = GenerateConsumptions(resources, timeRange, seed: seed);
+        var (startDate, endDate) = GenerateTimeRange(days, seed: seed);
+        var allocations = GenerateAllocations(resources, startDate, endDate, seed: seed);
 
-        return new TimelineData
+        return new BlazorResourceTimelineConfig
         {
             Resources = resources,
-            TimeRange = timeRange,
-            Consumptions = consumptions
+            StartDate = startDate,
+            EndDate = endDate,
+            Allocations = allocations
         };
     }
 
     /// <summary>
     /// Asynchronous, cancellable variant of <see cref="GenerateSampleData"/>. It yields to the
-    /// UI thread while building consumptions so the host stays responsive during a heavy run,
+    /// UI thread while building allocations so the host stays responsive during a heavy run,
     /// and throws <see cref="OperationCanceledException"/> if <paramref name="cancellationToken"/>
     /// is signalled (e.g. the user picks a different number of days mid-run).
     /// </summary>
-    public static async Task<TimelineData> GenerateSampleDataAsync(
+    public static async Task<BlazorResourceTimelineConfig> GenerateSampleDataAsync(
         int days = 100,
         CancellationToken cancellationToken = default,
         string[]? resourceNames = null,
         int? seed = null)
     {
         var resources = GenerateResources(resourceNames);
-        var timeRange = GenerateTimeRange(days, seed: seed);
-        var consumptions = await GenerateConsumptionsAsync(
-            resources, timeRange, cancellationToken, seed: seed);
+        var (startDate, endDate) = GenerateTimeRange(days, seed: seed);
+        var allocations = await GenerateAllocationsAsync(
+            resources, startDate, endDate, cancellationToken, seed: seed);
 
-        return new TimelineData
+        return new BlazorResourceTimelineConfig
         {
             Resources = resources,
-            TimeRange = timeRange,
-            Consumptions = consumptions
+            StartDate = startDate,
+            EndDate = endDate,
+            Allocations = allocations
         };
     }
 }
