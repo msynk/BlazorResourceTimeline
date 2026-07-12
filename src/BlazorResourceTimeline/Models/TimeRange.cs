@@ -1,4 +1,4 @@
-namespace ResourceTimeline.Models;
+namespace BlazorResourceTimeline.Models;
 
 /// <summary>
 /// Inclusive time window rendered along the horizontal axis,

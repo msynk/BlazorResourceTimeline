@@ -1,4 +1,4 @@
-namespace ResourceTimeline.Models;
+namespace BlazorResourceTimeline.Models;
 
 /// <summary>
 /// A single row on the timeline (for example a server, database or worker).

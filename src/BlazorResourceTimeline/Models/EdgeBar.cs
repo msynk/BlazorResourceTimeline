@@ -1,4 +1,4 @@
-namespace ResourceTimeline.Models;
+namespace BlazorResourceTimeline.Models;
 
 /// <summary>
 /// An additional bar drawn immediately before (start) or after (end) a main

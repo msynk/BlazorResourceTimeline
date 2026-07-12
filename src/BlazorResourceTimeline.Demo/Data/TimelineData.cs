@@ -1,6 +1,6 @@
-using ResourceTimeline.Models;
+using BlazorResourceTimeline.Models;
 
-namespace ResourceTimeline.Demo.Data;
+namespace BlazorResourceTimeline.Demo.Data;
 
 /// <summary>
 /// Convenience bundle returned by <see cref="DataGenerator"/> that carries

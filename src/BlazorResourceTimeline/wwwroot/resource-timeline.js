@@ -1,11 +1,11 @@
-// Canvas-based renderer for the ResourceTimeline Blazor component.
+// Canvas-based renderer for the BlazorResourceTimeline Blazor component.
 // Exposes a small factory used by the .razor component through JS interop.
 
 export function createTimeline(canvasId, dotNetRef) {
-    return new ResourceTimeline(canvasId, dotNetRef);
+    return new BlazorResourceTimeline(canvasId, dotNetRef);
 }
 
-class ResourceTimeline {
+class BlazorResourceTimeline {
     constructor(canvasId, dotNetRef) {
         this.canvas = document.getElementById(canvasId);
         this.ctx = this.canvas.getContext('2d');
@@ -262,7 +262,7 @@ class ResourceTimeline {
                 this.drawResourceAxis();
                 this.drawSelectionRect();
             } catch (error) {
-                console.error('ResourceTimeline render error:', error);
+                console.error('BlazorResourceTimeline render error:', error);
             } finally {
                 this.animationFrame = null;
                 this._flushRenderedResolvers();

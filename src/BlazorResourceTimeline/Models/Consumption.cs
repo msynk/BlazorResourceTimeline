@@ -1,4 +1,4 @@
-namespace ResourceTimeline.Models;
+namespace BlazorResourceTimeline.Models;
 
 /// <summary>
 /// A single consumption period drawn as a bar on a resource row.

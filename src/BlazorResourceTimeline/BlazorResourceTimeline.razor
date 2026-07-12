@@ -1,4 +1,4 @@
-@namespace ResourceTimeline.Components
+@namespace BlazorResourceTimeline.Components
 @inject IJSRuntime JS
 @implements IAsyncDisposable
 
@@ -30,7 +30,7 @@
 </div>
 
 @code {
-    private const string ModulePath = "./_content/ResourceTimeline/resource-timeline.js";
+    private const string ModulePath = "./_content/BlazorResourceTimeline/resource-timeline.js";
 
     // Default corner size; replaced with the renderer's actual layout after init.
     private TimelineLayout _layout = new(150, 60, 40);
@@ -39,7 +39,7 @@
     private ElementReference _canvasElement;
     private IJSObjectReference? _jsModule;
     private IJSObjectReference? _timelineInstance;
-    private DotNetObjectReference<ResourceTimeline>? _selfRef;
+    private DotNetObjectReference<BlazorResourceTimeline>? _selfRef;
     private readonly string _canvasId = $"timeline-{Guid.NewGuid():N}";
     private bool _dataLoaded;
     private bool _isLoading;

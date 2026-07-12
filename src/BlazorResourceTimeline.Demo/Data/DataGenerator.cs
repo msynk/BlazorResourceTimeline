@@ -1,6 +1,6 @@
-using ResourceTimeline.Models;
+using BlazorResourceTimeline.Models;
 
-namespace ResourceTimeline.Demo.Data;
+namespace BlazorResourceTimeline.Demo.Data;
 
 /// <summary>
 /// Produces realistic sample data for the demo: a set of resources,

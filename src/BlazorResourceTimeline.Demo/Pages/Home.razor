@@ -1,7 +1,7 @@
 ﻿@page "/"
-@using ResourceTimeline.Components
-@using ResourceTimeline.Models
-@using ResourceTimeline.Demo.Data
+@using BlazorResourceTimeline.Components
+@using BlazorResourceTimeline.Models
+@using BlazorResourceTimeline.Demo.Data
 @inject IJSRuntime JS
 
 <PageTitle>Resource Timeline</PageTitle>
@@ -68,7 +68,7 @@
     <div class="demo-timeline">
         @if (_data is not null)
         {
-            <ResourceTimeline @ref="_timeline"
+            <BlazorResourceTimeline @ref="_timeline"
                               Resources="_data.Resources"
                               TimeRange="_data.TimeRange"
                               Consumptions="_data.Consumptions"
@@ -79,7 +79,7 @@
                         <span class="corner-sub">Hour</span>
                     </div>
                 </TopStartContent>
-            </ResourceTimeline>
+            </BlazorResourceTimeline>
         }
         @if (_isGenerating || _data is null)
         {
@@ -104,7 +104,7 @@
 </div>
 
 @code {
-    private ResourceTimeline? _timeline;
+    private BlazorResourceTimeline? _timeline;
     private TimelineData? _data;
     private IReadOnlyList<Consumption> _selectedBars = Array.Empty<Consumption>();
     private int _days = 100;
@@ -116,10 +116,10 @@
 
     private const string CodeSample = """
         @page "/timeline"
-        @using ResourceTimeline.Components
-        @using ResourceTimeline.Models
+        @using BlazorResourceTimeline.Components
+        @using BlazorResourceTimeline.Models
 
-        <ResourceTimeline Resources="_resources"
+        <BlazorResourceTimeline Resources="_resources"
                           TimeRange="_timeRange"
                           Consumptions="_consumptions"
                           OnSelectionChanged="HandleSelectionChanged" />

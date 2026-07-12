@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace ResourceTimeline.Models;
+namespace BlazorResourceTimeline.Models;
 
 /// <summary>
 /// Where a <see cref="BarIcon"/> is anchored relative to its owning
