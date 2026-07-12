@@ -106,7 +106,7 @@
 @code {
     private BlazorResourceTimeline? _timeline;
     private TimelineData? _data;
-    private IReadOnlyList<Consumption> _selectedBars = Array.Empty<Consumption>();
+    private IReadOnlyList<BlazorResourceTimelineConsumption> _selectedBars = Array.Empty<BlazorResourceTimelineConsumption>();
     private int _days = 100;
     private int _barHeight = 4;
     private bool _isGenerating;
@@ -125,22 +125,22 @@
                           OnSelectionChanged="HandleSelectionChanged" />
 
         @code {
-            private readonly List<Resource> _resources = new()
+            private readonly List<BlazorResourceTimelineResource> _resources = new()
             {
-                new Resource { Id = "r1", Name = "Server A" },
-                new Resource { Id = "r2", Name = "Server B" },
-                new Resource { Id = "r3", Name = "Database" },
+                new BlazorResourceTimelineResource { Id = "r1", Name = "Server A" },
+                new BlazorResourceTimelineResource { Id = "r2", Name = "Server B" },
+                new BlazorResourceTimelineResource { Id = "r3", Name = "Database" },
             };
 
-            private readonly TimeRange _timeRange = new()
+            private readonly BlazorResourceTimelineTimeRange _timeRange = new()
             {
                 Start = DateTimeOffset.UtcNow.AddHours(-12).ToUnixTimeMilliseconds(),
                 End = DateTimeOffset.UtcNow.AddHours(12).ToUnixTimeMilliseconds(),
             };
 
-            private readonly List<Consumption> _consumptions = new()
+            private readonly List<BlazorResourceTimelineConsumption> _consumptions = new()
             {
-                new Consumption
+                new BlazorResourceTimelineConsumption
                 {
                     Id = "c1",
                     ResourceId = "r1",
@@ -152,13 +152,13 @@
                     TextAbove = "Batch job",
                     // Custom icons can be anchored at the start, end, above or
                     // below the bar. Source is any image URL or data URI.
-                    Icons = new List<BarIcon>
+                    Icons = new List<BlazorResourceTimelineBarIcon>
                     {
-                        new() { Source = "/icons/check.svg", Position = BarIconPosition.Start },
-                        new() { Source = "/icons/star.svg", Position = BarIconPosition.End, Size = 18 },
+                        new() { Source = "/icons/check.svg", Position = BlazorResourceTimelineBarIconPosition.Start },
+                        new() { Source = "/icons/star.svg", Position = BlazorResourceTimelineBarIconPosition.End, Size = 18 },
                     },
                 },
-                new Consumption
+                new BlazorResourceTimelineConsumption
                 {
                     Id = "c2",
                     ResourceId = "r2",
@@ -169,14 +169,14 @@
                     TextEnd = "12:30",
                     // Decorative edge bars extend before/after the main bar,
                     // e.g. to show a delay around the planned period.
-                    StartBar = new EdgeBar { Duration = 30 * 60 * 1000, Color = "red" },
-                    EndBar = new EdgeBar { Duration = 45 * 60 * 1000, Color = "red" },
-                    Icons = new List<BarIcon>
+                    StartBar = new BlazorResourceTimelineEdgeBar { Duration = 30 * 60 * 1000, Color = "red" },
+                    EndBar = new BlazorResourceTimelineEdgeBar { Duration = 45 * 60 * 1000, Color = "red" },
+                    Icons = new List<BlazorResourceTimelineBarIcon>
                     {
-                        new() { Source = "/icons/warning.svg", Position = BarIconPosition.Above },
+                        new() { Source = "/icons/warning.svg", Position = BlazorResourceTimelineBarIconPosition.Above },
                     },
                 },
-                new Consumption
+                new BlazorResourceTimelineConsumption
                 {
                     Id = "c3",
                     ResourceId = "r3",
@@ -184,14 +184,14 @@
                     EndTime = DateTimeOffset.UtcNow.AddHours(8).ToUnixTimeMilliseconds(),
                     Color = "#2f9e44",
                     TextBelow = "Maintenance",
-                    Icons = new List<BarIcon>
+                    Icons = new List<BlazorResourceTimelineBarIcon>
                     {
-                        new() { Source = "/icons/lock.svg", Position = BarIconPosition.Start, Size = 16 },
+                        new() { Source = "/icons/lock.svg", Position = BlazorResourceTimelineBarIconPosition.Start, Size = 16 },
                     },
                 },
             };
 
-            private void HandleSelectionChanged(Consumption[] selected)
+            private void HandleSelectionChanged(BlazorResourceTimelineConsumption[] selected)
             {
                 // selected contains every currently selected bar (empty when none).
                 foreach (var bar in selected)
@@ -218,7 +218,7 @@
         // starts. The existing timeline (if any) stays mounted underneath so the
         // overlay is continuous through generation and into the renderer's own
         // loading spinner once the new data is handed over.
-        _selectedBars = Array.Empty<Consumption>();
+        _selectedBars = Array.Empty<BlazorResourceTimelineConsumption>();
         _isGenerating = true;
         StateHasChanged();
         await Task.Yield();
@@ -292,7 +292,7 @@
         }
     }
 
-    private void HandleSelectionChanged(Consumption[] bars) => _selectedBars = bars;
+    private void HandleSelectionChanged(BlazorResourceTimelineConsumption[] bars) => _selectedBars = bars;
 
     private void ToggleCode()
     {

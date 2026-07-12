@@ -58,12 +58,12 @@ public static class DataGenerator
     private const double IconProbability = 0.35;
 
     // Positions an icon can be anchored to, picked at random per icon.
-    private static readonly BarIconPosition[] IconPositions =
+    private static readonly BlazorResourceTimelineBarIconPosition[] IconPositions =
     [
-        BarIconPosition.Start,
-        BarIconPosition.End,
-        BarIconPosition.Above,
-        BarIconPosition.Below
+        BlazorResourceTimelineBarIconPosition.Start,
+        BlazorResourceTimelineBarIconPosition.End,
+        BlazorResourceTimelineBarIconPosition.Above,
+        BlazorResourceTimelineBarIconPosition.Below
     ];
 
     // A small palette of inline SVG icons, exposed as ready-to-use data URIs.
@@ -86,11 +86,11 @@ public static class DataGenerator
     ];
 
     /// <summary>Builds resource rows from the provided names (or a default set).</summary>
-    public static List<Resource> GenerateResources(string[]? resourceNames = null)
+    public static List<BlazorResourceTimelineResource> GenerateResources(string[]? resourceNames = null)
     {
         var names = resourceNames ?? DefaultResourceNames;
         return names
-            .Select((name, index) => new Resource { Id = $"res-{index + 1}", Name = name })
+            .Select((name, index) => new BlazorResourceTimelineResource { Id = $"res-{index + 1}", Name = name })
             .ToList();
     }
 
@@ -99,7 +99,7 @@ public static class DataGenerator
     /// day (defaults to today) is placed randomly near the middle of the period so the
     /// timeline extends both into the past and the future.
     /// </summary>
-    public static TimeRange GenerateTimeRange(int days, DateTime? referenceDate = null, int? seed = null)
+    public static BlazorResourceTimelineTimeRange GenerateTimeRange(int days, DateTime? referenceDate = null, int? seed = null)
     {
         if (days < 1)
         {
@@ -121,7 +121,7 @@ public static class DataGenerator
         var end = start.AddDays(days - 1)
             .AddHours(23).AddMinutes(59).AddSeconds(59).AddMilliseconds(999);
 
-        return new TimeRange
+        return new BlazorResourceTimelineTimeRange
         {
             Start = new DateTimeOffset(start).ToUnixTimeMilliseconds(),
             End = new DateTimeOffset(end).ToUnixTimeMilliseconds()
@@ -132,9 +132,9 @@ public static class DataGenerator
     /// Distributes consumption bars for every resource across the time range,
     /// keeping a minimum gap between bars so the layout stays readable.
     /// </summary>
-    public static List<Consumption> GenerateConsumptions(
-        List<Resource> resources,
-        TimeRange timeRange,
+    public static List<BlazorResourceTimelineConsumption> GenerateConsumptions(
+        List<BlazorResourceTimelineResource> resources,
+        BlazorResourceTimelineTimeRange timeRange,
         int minConsumptionsPerDay = 3,
         int maxConsumptionsPerDay = 8,
         long minDuration = 30 * 60 * 1000,
@@ -142,7 +142,7 @@ public static class DataGenerator
         long minGap = 15 * 60 * 1000,
         int? seed = null)
     {
-        var consumptions = new List<Consumption>();
+        var consumptions = new List<BlazorResourceTimelineConsumption>();
         var random = seed.HasValue ? new Random(seed.Value) : new Random();
         var timeSpan = timeRange.End - timeRange.Start;
         var days = (int)Math.Ceiling(timeSpan / (double)OneDayMs);
@@ -164,9 +164,9 @@ public static class DataGenerator
     /// responsive, and observes <paramref name="cancellationToken"/> so an in-flight run can
     /// be abandoned the moment a newer request arrives.
     /// </summary>
-    public static async Task<List<Consumption>> GenerateConsumptionsAsync(
-        List<Resource> resources,
-        TimeRange timeRange,
+    public static async Task<List<BlazorResourceTimelineConsumption>> GenerateConsumptionsAsync(
+        List<BlazorResourceTimelineResource> resources,
+        BlazorResourceTimelineTimeRange timeRange,
         CancellationToken cancellationToken = default,
         int minConsumptionsPerDay = 3,
         int maxConsumptionsPerDay = 8,
@@ -175,7 +175,7 @@ public static class DataGenerator
         long minGap = 15 * 60 * 1000,
         int? seed = null)
     {
-        var consumptions = new List<Consumption>();
+        var consumptions = new List<BlazorResourceTimelineConsumption>();
         var random = seed.HasValue ? new Random(seed.Value) : new Random();
         var timeSpan = timeRange.End - timeRange.Start;
         var days = (int)Math.Ceiling(timeSpan / (double)OneDayMs);
@@ -201,9 +201,9 @@ public static class DataGenerator
     // Generates and appends the consumption bars for a single resource. Shared by the
     // synchronous and asynchronous generation paths to keep their behavior identical.
     private static void AddConsumptionsForResource(
-        List<Consumption> consumptions,
-        Resource resource,
-        TimeRange timeRange,
+        List<BlazorResourceTimelineConsumption> consumptions,
+        BlazorResourceTimelineResource resource,
+        BlazorResourceTimelineTimeRange timeRange,
         long timeSpan,
         int days,
         long nowMs,
@@ -249,7 +249,7 @@ public static class DataGenerator
             var isPast = startTime < nowMs;
             var color = isPast ? PastColor : FutureColor;
 
-            var consumption = new Consumption
+            var consumption = new BlazorResourceTimelineConsumption
             {
                 Id = $"cons-{resource.Id}-{i}",
                 ResourceId = resource.Id,
@@ -273,8 +273,8 @@ public static class DataGenerator
             {
                 var startDelay = (long)(minDuration * (0.3 + random.NextDouble() * 0.7));
                 var endDelay = (long)(minDuration * (0.3 + random.NextDouble() * 0.7));
-                consumption.StartBar = new EdgeBar { Duration = startDelay, Color = DelayColor };
-                consumption.EndBar = new EdgeBar { Duration = endDelay, Color = DelayColor };
+                consumption.StartBar = new BlazorResourceTimelineEdgeBar { Duration = startDelay, Color = DelayColor };
+                consumption.EndBar = new BlazorResourceTimelineEdgeBar { Duration = endDelay, Color = DelayColor };
             }
 
             // Randomly decorate some bars with one or two icons at random
@@ -282,10 +282,10 @@ public static class DataGenerator
             if (random.NextDouble() < IconProbability)
             {
                 var iconCount = random.Next(1, 3); // 1 or 2 icons
-                var icons = new List<BarIcon>(iconCount);
+                var icons = new List<BlazorResourceTimelineBarIcon>(iconCount);
                 for (var k = 0; k < iconCount; k++)
                 {
-                    icons.Add(new BarIcon
+                    icons.Add(new BlazorResourceTimelineBarIcon
                     {
                         Source = IconSources[random.Next(IconSources.Length)],
                         Position = IconPositions[random.Next(IconPositions.Length)],

@@ -8,7 +8,7 @@ namespace BlazorResourceTimeline.Demo.Data;
 /// </summary>
 public class TimelineData
 {
-    public required List<Resource> Resources { get; set; }
-    public required TimeRange TimeRange { get; set; }
-    public required List<Consumption> Consumptions { get; set; }
+    public required List<BlazorResourceTimelineResource> Resources { get; set; }
+    public required BlazorResourceTimelineTimeRange TimeRange { get; set; }
+    public required List<BlazorResourceTimelineConsumption> Consumptions { get; set; }
 }

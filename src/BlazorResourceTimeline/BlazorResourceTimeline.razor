@@ -33,7 +33,7 @@
     private const string ModulePath = "./_content/BlazorResourceTimeline/resource-timeline.js";
 
     // Default corner size; replaced with the renderer's actual layout after init.
-    private TimelineLayout _layout = new(150, 60, 40);
+    private BlazorResourceTimelineLayout _layout = new(150, 60, 40);
 
     private ElementReference _wrapperElement;
     private ElementReference _canvasElement;
@@ -46,18 +46,18 @@
 
     // References of the data last pushed to JS. Used to skip redundant (and
     // expensive) re-marshalling when the parent re-renders without data changes.
-    private List<Resource>? _loadedResources;
-    private TimeRange? _loadedTimeRange;
-    private List<Consumption>? _loadedConsumptions;
+    private List<BlazorResourceTimelineResource>? _loadedResources;
+    private BlazorResourceTimelineTimeRange? _loadedTimeRange;
+    private List<BlazorResourceTimelineConsumption>? _loadedConsumptions;
 
     /// <summary>Resource rows rendered along the vertical axis.</summary>
-    [Parameter] public List<Resource>? Resources { get; set; }
+    [Parameter] public List<BlazorResourceTimelineResource>? Resources { get; set; }
 
     /// <summary>Time window rendered along the horizontal axis.</summary>
-    [Parameter] public TimeRange? TimeRange { get; set; }
+    [Parameter] public BlazorResourceTimelineTimeRange? TimeRange { get; set; }
 
     /// <summary>Consumption bars to display.</summary>
-    [Parameter] public List<Consumption>? Consumptions { get; set; }
+    [Parameter] public List<BlazorResourceTimelineConsumption>? Consumptions { get; set; }
 
     /// <summary>
     /// Raised whenever the set of selected bars changes. The array contains every
@@ -66,7 +66,7 @@
     /// Selection supports click, Ctrl/Cmd-click to toggle individual bars, and
     /// click-and-drag to rubber-band select a region.
     /// </summary>
-    [Parameter] public EventCallback<Consumption[]> OnSelectionChanged { get; set; }
+    [Parameter] public EventCallback<BlazorResourceTimelineConsumption[]> OnSelectionChanged { get; set; }
 
     /// <summary>
     /// Optional custom content rendered in the top-start corner of the component
@@ -87,9 +87,6 @@
     /// </summary>
     [Parameter] public int LoadingMinDurationMs { get; set; } = 300;
 
-    /// <summary>Fixed layout dimensions (in pixels) reported by the renderer.</summary>
-    private readonly record struct TimelineLayout(int ResourceAxisWidth, int TimeAxisHeight, int ResourceHeight);
-
     private bool HasData => Resources is not null && TimeRange is not null && Consumptions is not null;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -102,7 +99,7 @@
 
             if (TopStartContent is not null)
             {
-                _layout = await _timelineInstance.InvokeAsync<TimelineLayout>("getLayout");
+                _layout = await _timelineInstance.InvokeAsync<BlazorResourceTimelineLayout>("getLayout");
                 StateHasChanged();
             }
 
@@ -192,14 +189,14 @@
     }
 
     /// <summary>Returns the currently selected bars, in selection order. Empty when nothing is selected.</summary>
-    public async Task<IReadOnlyList<Consumption>> GetSelectedBarsAsync()
+    public async Task<IReadOnlyList<BlazorResourceTimelineConsumption>> GetSelectedBarsAsync()
     {
         if (_timelineInstance is null || !_dataLoaded)
         {
-            return Array.Empty<Consumption>();
+            return Array.Empty<BlazorResourceTimelineConsumption>();
         }
 
-        return await _timelineInstance.InvokeAsync<Consumption[]>("getSelectedBars");
+        return await _timelineInstance.InvokeAsync<BlazorResourceTimelineConsumption[]>("getSelectedBars");
     }
 
     /// <summary>
@@ -232,7 +229,7 @@
     }
 
     [JSInvokable]
-    public async Task OnSelectionUpdated(Consumption[] bars)
+    public async Task OnSelectionUpdated(BlazorResourceTimelineConsumption[] bars)
     {
         if (OnSelectionChanged.HasDelegate)
         {

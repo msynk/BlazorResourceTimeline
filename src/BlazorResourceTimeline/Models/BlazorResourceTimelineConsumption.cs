@@ -4,12 +4,12 @@ namespace BlazorResourceTimeline.Models;
 /// A single consumption period drawn as a bar on a resource row.
 /// Times are expressed as Unix time in milliseconds to match the canvas renderer.
 /// </summary>
-public class Consumption
+public class BlazorResourceTimelineConsumption
 {
     /// <summary>Unique identifier for the consumption bar.</summary>
     public required string Id { get; set; }
 
-    /// <summary>Identifier of the owning <see cref="Resource"/>.</summary>
+    /// <summary>Identifier of the owning <see cref="BlazorResourceTimelineResource"/>.</summary>
     public required string ResourceId { get; set; }
 
     /// <summary>Start of the period as Unix time in milliseconds.</summary>
@@ -49,14 +49,14 @@ public class Consumption
     /// Shares the main bar's row and height. Commonly used to indicate a delay
     /// before the planned consumption began.
     /// </summary>
-    public EdgeBar? StartBar { get; set; }
+    public BlazorResourceTimelineEdgeBar? StartBar { get; set; }
 
     /// <summary>
     /// Optional decorative bar drawn immediately after the main bar's end edge.
     /// Shares the main bar's row and height. Commonly used to indicate a delay
     /// after the planned consumption ended.
     /// </summary>
-    public EdgeBar? EndBar { get; set; }
+    public BlazorResourceTimelineEdgeBar? EndBar { get; set; }
 
     /// <summary>
     /// Optional custom icons or small images rendered around the bar. Each icon
@@ -64,5 +64,5 @@ public class Consumption
     /// Multiple icons sharing a position are laid out next to one another,
     /// growing away from the bar in the order they appear in the list.
     /// </summary>
-    public List<BarIcon>? Icons { get; set; }
+    public List<BlazorResourceTimelineBarIcon>? Icons { get; set; }
 }
