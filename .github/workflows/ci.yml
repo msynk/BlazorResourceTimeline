@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET (8/9/10)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      # Needed to build the Blazor WebAssembly demo project.
+      - name: Install wasm-tools workload
+        run: dotnet workload install wasm-tools
+
+      - name: Restore
+        run: dotnet restore BlazorResourceTimeline.slnx
+
+      - name: Build
+        run: dotnet build BlazorResourceTimeline.slnx -c Release --no-restore
+
+      - name: Test
+        run: dotnet test BlazorResourceTimeline.slnx -c Release --no-build --verbosity normal
+
+      - name: Pack
+        run: dotnet pack src/BlazorResourceTimeline/BlazorResourceTimeline.csproj -c Release --no-build -o artifacts
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: artifacts/*.nupkg
+          if-no-files-found: error
+
+  publish:
+    name: Publish to NuGet
+    needs: build-test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET (8/9/10)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      # The version is taken from the tag (e.g. v1.2.3 -> 1.2.3), overriding
+      # the <Version> in the csproj so releases are driven by tags.
+      - name: Derive version from tag
+        run: echo "PKG_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Pack
+        run: dotnet pack src/BlazorResourceTimeline/BlazorResourceTimeline.csproj -c Release -p:Version=$PKG_VERSION -o artifacts
+
+      - name: Push to NuGet
+        run: dotnet nuget push "artifacts/*.nupkg" --api-key "${{ secrets.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate

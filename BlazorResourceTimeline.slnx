@@ -3,4 +3,7 @@
     <Project Path="src/BlazorResourceTimeline.Demo/BlazorResourceTimeline.Demo.csproj" />
     <Project Path="src/BlazorResourceTimeline/BlazorResourceTimeline.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/BlazorResourceTimeline.Tests/BlazorResourceTimeline.Tests.csproj" />
+  </Folder>
 </Solution>

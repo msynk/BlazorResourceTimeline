@@ -1,18 +1,49 @@
 <Project Sdk="Microsoft.NET.Sdk.Razor">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Multi-target so the package works on the current LTS/STS runtimes. -->
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Ship the XML docs (the public API is thoroughly documented) and treat
+         analyzer feedback as part of the build. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
   </PropertyGroup>
 
+  <!-- NuGet package metadata. Authoring/version/license values are the
+       maintainer's to confirm before the first publish. -->
+  <PropertyGroup>
+    <PackageId>BlazorResourceTimeline</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>msynk</Authors>
+    <Description>A high-performance, canvas-based resource-timeline / planner component for ASP.NET Core Blazor. Renders wide time ranges with large numbers of allocation bars, with zoom, marquee/keyboard selection, time-zone-aware axes, HiDPI rendering and streaming data load.</Description>
+    <PackageTags>blazor;timeline;scheduler;gantt;planning;resource;canvas;calendar;aviation;transport</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/msynk/BlazorResourceTimeline</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/msynk/BlazorResourceTimeline</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+  </PropertyGroup>
 
   <ItemGroup>
     <SupportedPlatform Include="browser" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="8.0.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0'">
+    <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="9.0.0" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
     <PackageReference Include="Microsoft.AspNetCore.Components.Web" Version="10.0.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
 </Project>

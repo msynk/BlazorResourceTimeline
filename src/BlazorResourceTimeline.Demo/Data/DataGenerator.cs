@@ -85,13 +85,54 @@ public static class DataGenerator
         SvgDataUri("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M13 2L4 14h6l-1 8 9-12h-6z' fill='#9c36b5'/></svg>")
     ];
 
-    /// <summary>Builds resource rows from the provided names (or a default set).</summary>
+    /// <summary>
+    /// Builds resource rows from the provided names (or a default set), organized
+    /// into a two-level hierarchy: a "Data Center" root, a group per resource type
+    /// (Servers, Databases, ...) and the individual resources as leaves. Group and
+    /// root rows carry no allocations of their own.
+    /// </summary>
     public static List<BlazorResourceTimelineResource> GenerateResources(string[]? resourceNames = null)
     {
         var names = resourceNames ?? DefaultResourceNames;
-        return names
-            .Select((name, index) => new BlazorResourceTimelineResource { Id = $"res-{index + 1}", Name = name })
-            .ToList();
+        var list = new List<BlazorResourceTimelineResource>();
+
+        const string rootId = "grp-root";
+        list.Add(new BlazorResourceTimelineResource { Id = rootId, Name = "Data Center" });
+
+        var groupIds = new Dictionary<string, string>();
+        for (var i = 0; i < names.Length; i++)
+        {
+            var name = names[i];
+            var prefix = TypePrefix(name);
+            if (!groupIds.TryGetValue(prefix, out var groupId))
+            {
+                groupId = $"grp-{prefix}";
+                groupIds[prefix] = groupId;
+                list.Add(new BlazorResourceTimelineResource
+                {
+                    Id = groupId,
+                    Name = $"{prefix}s",
+                    ParentId = rootId
+                });
+            }
+
+            list.Add(new BlazorResourceTimelineResource
+            {
+                Id = $"res-{i + 1}",
+                Name = name,
+                ParentId = groupId
+            });
+        }
+
+        return list;
+    }
+
+    // Type prefix of a resource name (everything before the trailing "-NN"),
+    // e.g. "Server-07" -> "Server", "Load-Balancer-01" -> "Load-Balancer".
+    private static string TypePrefix(string name)
+    {
+        var dash = name.LastIndexOf('-');
+        return dash > 0 ? name[..dash] : name;
     }
 
     /// <summary>
@@ -146,9 +187,12 @@ public static class DataGenerator
         var timeSpan = endMs - startMs;
         var days = (int)Math.Ceiling(timeSpan / (double)OneDayMs);
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var parentIds = ParentIds(resources);
 
         foreach (var resource in resources)
         {
+            if (parentIds.Contains(resource.Id)) continue; // skip group/root rows
+
             AddAllocationsForResource(
                 allocations, resource, startMs, endMs, timeSpan, days, nowMs, random,
                 minAllocationsPerDay, maxAllocationsPerDay, minDuration, maxDuration, minGap);
@@ -156,6 +200,13 @@ public static class DataGenerator
 
         return allocations.OrderBy(c => c.StartTime).ToList();
     }
+
+    // Ids of resources that have at least one child (group/root rows), so the
+    // allocation generators can skip them.
+    private static HashSet<string> ParentIds(IEnumerable<BlazorResourceTimelineResource> resources) =>
+        resources.Where(r => r.ParentId != null)
+            .Select(r => r.ParentId!)
+            .ToHashSet();
 
     /// <summary>
     /// Asynchronous, cooperative variant of <see cref="GenerateAllocations"/>. It yields to
@@ -182,10 +233,13 @@ public static class DataGenerator
         var timeSpan = endMs - startMs;
         var days = (int)Math.Ceiling(timeSpan / (double)OneDayMs);
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var parentIds = ParentIds(resources);
 
         foreach (var resource in resources)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            if (parentIds.Contains(resource.Id)) continue; // skip group/root rows
 
             AddAllocationsForResource(
                 allocations, resource, startMs, endMs, timeSpan, days, nowMs, random,
@@ -256,8 +310,8 @@ public static class DataGenerator
             {
                 Id = $"cons-{resource.Id}-{i}",
                 ResourceId = resource.Id,
-                StartTime = startTime,
-                EndTime = endTime,
+                StartTime = DateTimeOffset.FromUnixTimeMilliseconds(startTime),
+                EndTime = DateTimeOffset.FromUnixTimeMilliseconds(endTime),
                 Color = color,
                 // Short, abbreviated labels around each bar:
                 //   above -> resource abbreviation + number     (e.g. "SRV01")
@@ -276,8 +330,8 @@ public static class DataGenerator
             {
                 var startDelay = (long)(minDuration * (0.3 + random.NextDouble() * 0.7));
                 var endDelay = (long)(minDuration * (0.3 + random.NextDouble() * 0.7));
-                allocation.StartBar = new BlazorResourceTimelineEdgeBar { Duration = startDelay, Color = DelayColor };
-                allocation.EndBar = new BlazorResourceTimelineEdgeBar { Duration = endDelay, Color = DelayColor };
+                allocation.StartBar = new BlazorResourceTimelineEdgeBar { Duration = TimeSpan.FromMilliseconds(startDelay), Color = DelayColor };
+                allocation.EndBar = new BlazorResourceTimelineEdgeBar { Duration = TimeSpan.FromMilliseconds(endDelay), Color = DelayColor };
             }
 
             // Randomly decorate some bars with one or two icons at random

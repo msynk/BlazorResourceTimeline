@@ -13,6 +13,17 @@
     background-color: #ffffff;
 }
 
+/* Keyboard focus indicator only (not shown on mouse/touch), inset so it isn't
+   hidden under the sticky canvas. */
+.timeline-wrapper:focus {
+    outline: none;
+}
+
+.timeline-wrapper:focus-visible {
+    outline: 2px solid #1971c2;
+    outline-offset: -2px;
+}
+
 canvas {
     display: block;
     cursor: pointer;
@@ -39,6 +50,66 @@ canvas {
     background-color: #f8f9fa;
     border-right: 1px solid #dee2e6;
     border-bottom: 1px solid #dee2e6;
+}
+
+/* HTML overlay for the resource-column template. Sits above the canvas over the
+   resource axis; its inner element is translated by JS to follow vertical scroll.
+   Background is transparent so the canvas-drawn axis (and any theme colors) shows
+   through; the template controls its own appearance. */
+.timeline-resource-overlay {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    z-index: 15;
+    overflow: hidden;
+    box-sizing: border-box;
+    pointer-events: auto;
+}
+
+.timeline-resource-overlay-inner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    will-change: transform;
+}
+
+.timeline-resource-row {
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-right: 8px;
+    overflow: hidden;
+}
+
+.timeline-resource-content {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: 13px sans-serif;
+    color: #212529;
+}
+
+.timeline-resource-chevron {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 10px;
+    line-height: 1;
+    color: #495057;
+}
+
+.timeline-resource-chevron:hover {
+    color: #1971c2;
 }
 
 .timeline-loading {

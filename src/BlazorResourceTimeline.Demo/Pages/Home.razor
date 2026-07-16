@@ -10,8 +10,6 @@
     <header class="demo-header">
         <div class="demo-title">
             <h1>Resource Timeline</h1>
-            <p>Canvas-based visualization of resource allocation over time. Scroll in both
-               directions and click a bar to inspect it.</p>
         </div>
 
         <div class="demo-controls">
@@ -30,6 +28,35 @@
                        @bind="_barHeight" @bind:event="oninput" @bind:after="ApplyBarHeightAsync" />
                 <span class="bar-height-value">@_barHeight px</span>
             </label>
+            <label class="editable-control">
+                <input type="checkbox" @bind="_editable" @bind:after="ApplyOptions" />
+                Editable
+            </label>
+            <label class="editable-control" title="Serve only the visible window on demand instead of loading all bars up front">
+                <input type="checkbox" @bind="_windowed" @bind:after="ToggleWindowed" />
+                On-demand loading
+            </label>
+            <label class="editable-control" title="Render the resource column with a custom HTML template">
+                <input type="checkbox" @bind="_customColumn" />
+                Custom column
+            </label>
+            <label>
+                Time zone
+                <select @bind="_timeZone" @bind:after="ApplyOptions">
+                    <option value="">Local</option>
+                    <option value="UTC">UTC (Zulu)</option>
+                    <option value="America/New_York">New York</option>
+                    <option value="Europe/London">London</option>
+                    <option value="Europe/Berlin">Berlin</option>
+                    <option value="Asia/Tokyo">Tokyo</option>
+                </select>
+            </label>
+            <span class="zoom-controls">
+                Zoom
+                <button class="btn-zoom" @onclick="ZoomOutAsync" title="Zoom out">&minus;</button>
+                <button class="btn-zoom" @onclick="ZoomInAsync" title="Zoom in">+</button>
+                <button class="btn-zoom" @onclick="ResetZoomAsync" title="Reset zoom">Reset</button>
+            </span>
             <button class="btn-today" @onclick="GoToTodayAsync">Go to Today</button>
             <button class="btn-regenerate" @onclick="RegenerateAsync">Regenerate</button>
             <button class="btn-code" @onclick="ToggleCode">
@@ -39,14 +66,18 @@
     </header>
 
     <section class="demo-stats">
-        <span><strong>@(_config?.Resources.Count ?? 0)</strong> resources</span>
+        <span><strong>@LeafResourceCount</strong> resources</span>
         <span><strong>@(_config?.Allocations.Count ?? 0)</strong> allocations</span>
         <span><strong>@_days</strong> days</span>
+        @if (_lastEdit is not null)
+        {
+            <span class="last-edit">Last edit: @_lastEdit</span>
+        }
         @if (_selectedBars.Count > 1)
         {
             <span class="selection">
                 <strong>@_selectedBars.Count</strong> bars selected
-                (@FormatDuration(_selectedBars.Sum(b => b.EndTime - b.StartTime)) total)
+                (@FormatDuration(_selectedBars.Aggregate(TimeSpan.Zero, (acc, b) => acc + (b.EndTime - b.StartTime))) total)
             </span>
             <button class="btn-clear" @onclick="ClearSelectionAsync">Clear</button>
         }
@@ -69,8 +100,13 @@
         @if (_config is not null)
         {
             <BlazorResourceTimeline @ref="_timeline"
+                              @key="_customColumn"
                               Config="_config"
-                              OnSelectionChanged="HandleSelectionChanged">
+                              Options="_options"
+                              LoadAllocationsAsync="@(_windowed ? LoadWindowAsync : null)"
+                              ResourceTemplate="@(_customColumn ? ColumnTemplate : null)"
+                              OnSelectionChanged="HandleSelectionChanged"
+                              OnAllocationChanged="HandleAllocationChanged">
                 <TopStartContent>
                     <div class="corner">
                         <span class="corner-title">Resources</span>
@@ -107,6 +143,29 @@
     private IReadOnlyList<BlazorResourceTimelineAllocation> _selectedBars = Array.Empty<BlazorResourceTimelineAllocation>();
     private int _days = 100;
     private int _barHeight = 4;
+    private string _timeZone = "";
+    private bool _editable;
+    private bool _windowed;
+    private bool _customColumn;
+    private string? _lastEdit;
+
+    // Custom resource-column template: a colored dot + bold name, and a "group"
+    // badge on parent rows (the chevron is added by the component automatically).
+    private RenderFragment<BlazorResourceTimelineRowContext> ColumnTemplate => row =>
+        @<span class="res-cell">
+            <span class="res-dot" style="background:@DotColor(row)"></span>
+            <span class="res-name">@row.Resource.Name</span>
+            @if (row.HasChildren)
+            {
+                <span class="res-badge">group</span>
+            }
+        </span>;
+
+    private static string DotColor(BlazorResourceTimelineRowContext row) =>
+        row.HasChildren ? "#adb5bd" : "#1971c2";
+    // A new Options instance is assigned on change so the component re-applies
+    // it (Options is compared by reference, like Config).
+    private BlazorResourceTimelineOptions? _options;
     private bool _isGenerating;
     private bool _showCode;
     private bool _codeCopied;
@@ -198,7 +257,11 @@
         }
         """;
 
-    protected override Task OnInitializedAsync() => RegenerateAsync();
+    protected override Task OnInitializedAsync()
+    {
+        _options = BuildOptions();
+        return RegenerateAsync();
+    }
 
     private async Task RegenerateAsync()
     {
@@ -217,7 +280,9 @@
         _selectedBars = Array.Empty<BlazorResourceTimelineAllocation>();
         _isGenerating = true;
         StateHasChanged();
-        await Task.Yield();
+        // Task.Yield flushes the render batch but doesn't reliably yield a browser
+        // paint on WebAssembly; a 1 ms delay does, so the overlay shows first.
+        await Task.Delay(1);
 
         try
         {
@@ -255,6 +320,30 @@
         }
     }
 
+    private async Task ZoomInAsync()
+    {
+        if (_timeline is not null)
+        {
+            await _timeline.ZoomInAsync();
+        }
+    }
+
+    private async Task ZoomOutAsync()
+    {
+        if (_timeline is not null)
+        {
+            await _timeline.ZoomOutAsync();
+        }
+    }
+
+    private async Task ResetZoomAsync()
+    {
+        if (_timeline is not null)
+        {
+            await _timeline.ResetZoomAsync();
+        }
+    }
+
     // Applies the current bar height to every allocation in the loaded data.
     // Heights are mutated in place, so a ReloadAsync is needed to push the
     // change to the renderer.
@@ -278,6 +367,58 @@
         {
             await _timeline.ReloadAsync();
         }
+    }
+
+    // Assigns a fresh Options instance so the component picks up the change
+    // (Options is compared by reference). Rebuilt from all current selections.
+    private void ApplyOptions() => _options = BuildOptions();
+
+    // Toggling on-demand loading changes which data path the component uses.
+    // Assigning a new Config reference makes it reload (after the updated
+    // LoadAllocationsAsync parameter has been applied).
+    private void ToggleWindowed()
+    {
+        if (_config is not null)
+        {
+            _config = CloneConfig(_config);
+        }
+    }
+
+    private static BlazorResourceTimelineConfig CloneConfig(BlazorResourceTimelineConfig c) => new()
+    {
+        Resources = c.Resources,
+        StartDate = c.StartDate,
+        EndDate = c.EndDate,
+        Allocations = c.Allocations,
+    };
+
+    // Demo "backend" for on-demand loading: returns every allocation whose time
+    // span overlaps the requested window. A real app would query a database or
+    // service here instead of filtering an in-memory list.
+    private Task<IReadOnlyList<BlazorResourceTimelineAllocation>> LoadWindowAsync(BlazorResourceTimelineWindow window)
+    {
+        IReadOnlyList<BlazorResourceTimelineAllocation> result = _config is null
+            ? Array.Empty<BlazorResourceTimelineAllocation>()
+            : _config.Allocations
+                .Where(a => a.EndTime >= window.Start && a.StartTime <= window.End)
+                .ToList();
+        return Task.FromResult(result);
+    }
+
+    // An empty time-zone selection means "use the viewer's local zone" (null).
+    private BlazorResourceTimelineOptions BuildOptions() => new()
+    {
+        TimeZone = string.IsNullOrEmpty(_timeZone) ? null : _timeZone,
+        Editable = _editable
+    };
+
+    // The component has already applied the move/resize to this instance in
+    // place; a real app would persist it here. We just surface it in the UI.
+    private void HandleAllocationChanged(BlazorResourceTimelineAllocation allocation)
+    {
+        _lastEdit = $"{ResourceNameFor(allocation.ResourceId)} " +
+            $"{FormatTime(allocation.StartTime)} \u2013 {FormatTime(allocation.EndTime)}";
+        StateHasChanged();
     }
 
     private async Task ClearSelectionAsync()
@@ -312,14 +453,25 @@
     private string ResourceNameFor(string resourceId) =>
         _config?.Resources.FirstOrDefault(r => r.Id == resourceId)?.Name ?? resourceId;
 
-    private static string FormatTime(long unixMs) =>
-        DateTimeOffset.FromUnixTimeMilliseconds(unixMs).LocalDateTime.ToString("MMM d, HH:mm");
-
-    private static string FormatDuration(long ms)
+    // Leaf resources only (exclude the group/root rows that organize the tree).
+    private int LeafResourceCount
     {
-        var span = TimeSpan.FromMilliseconds(ms);
-        return span.TotalHours >= 1
+        get
+        {
+            if (_config is null) return 0;
+            var parents = _config.Resources
+                .Where(r => r.ParentId is not null)
+                .Select(r => r.ParentId!)
+                .ToHashSet();
+            return _config.Resources.Count(r => !parents.Contains(r.Id));
+        }
+    }
+
+    private static string FormatTime(DateTimeOffset time) =>
+        time.LocalDateTime.ToString("MMM d, HH:mm");
+
+    private static string FormatDuration(TimeSpan span) =>
+        span.TotalHours >= 1
             ? $"{(int)span.TotalHours}h {span.Minutes}m"
             : $"{span.Minutes}m";
-    }
 }

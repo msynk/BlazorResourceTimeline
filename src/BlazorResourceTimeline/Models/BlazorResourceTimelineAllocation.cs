@@ -1,8 +1,10 @@
+using System.Text.Json.Serialization;
+using BlazorResourceTimeline.Json;
+
 namespace BlazorResourceTimeline.Models;
 
 /// <summary>
 /// A single allocation period drawn as a bar on a resource row.
-/// Times are expressed as Unix time in milliseconds to match the canvas renderer.
 /// </summary>
 public class BlazorResourceTimelineAllocation
 {
@@ -12,11 +14,13 @@ public class BlazorResourceTimelineAllocation
     /// <summary>Identifier of the owning <see cref="BlazorResourceTimelineResource"/>.</summary>
     public required string ResourceId { get; set; }
 
-    /// <summary>Start of the period as Unix time in milliseconds.</summary>
-    public long StartTime { get; set; }
+    /// <summary>Start of the period.</summary>
+    [JsonConverter(typeof(UnixTimeMillisecondsJsonConverter))]
+    public DateTimeOffset StartTime { get; set; }
 
-    /// <summary>End of the period as Unix time in milliseconds.</summary>
-    public long EndTime { get; set; }
+    /// <summary>End of the period.</summary>
+    [JsonConverter(typeof(UnixTimeMillisecondsJsonConverter))]
+    public DateTimeOffset EndTime { get; set; }
 
     /// <summary>
     /// Optional CSS color for the bar fill (for example <c>"#e8590c"</c> or <c>"tomato"</c>).
@@ -43,6 +47,14 @@ public class BlazorResourceTimelineAllocation
 
     /// <summary>Optional label rendered just after the bar's end edge.</summary>
     public string? TextEnd { get; set; }
+
+    /// <summary>
+    /// Optional tooltip text shown when hovering the bar (requires
+    /// <see cref="BlazorResourceTimelineOptions.ShowTooltips"/>). When null, a
+    /// default tooltip is built from the bar's labels, resource name and time
+    /// range. Use <c>"\n"</c> to separate lines.
+    /// </summary>
+    public string? Tooltip { get; set; }
 
     /// <summary>
     /// Optional decorative bar drawn immediately before the main bar's start edge.

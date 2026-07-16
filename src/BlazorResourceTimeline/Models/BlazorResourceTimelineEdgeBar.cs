@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using BlazorResourceTimeline.Json;
+
 namespace BlazorResourceTimeline.Models;
 
 /// <summary>
@@ -10,11 +13,12 @@ namespace BlazorResourceTimeline.Models;
 public class BlazorResourceTimelineEdgeBar
 {
     /// <summary>
-    /// Length of the edge bar as a duration in milliseconds. A start edge bar
-    /// extends backwards from the main bar's start; an end edge bar extends
-    /// forwards from the main bar's end. Values of zero or less are not drawn.
+    /// Length of the edge bar. A start edge bar extends backwards from the main
+    /// bar's start; an end edge bar extends forwards from the main bar's end.
+    /// Durations of zero or less are not drawn.
     /// </summary>
-    public long Duration { get; set; }
+    [JsonConverter(typeof(MillisecondsTimeSpanJsonConverter))]
+    public TimeSpan Duration { get; set; }
 
     /// <summary>
     /// CSS color for the edge bar fill (for example <c>"red"</c> or <c>"#e03131"</c>).

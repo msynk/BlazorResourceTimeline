@@ -3,14 +3,42 @@
 @implements IAsyncDisposable
 
 <div class="timeline-container">
-    <div class="timeline-wrapper" @ref="_wrapperElement">
-        <canvas @ref="_canvasElement" id="@_canvasId"></canvas>
+    <div class="timeline-wrapper" @ref="_wrapperElement"
+         tabindex="0" role="application" aria-label="@AriaLabel"
+         aria-roledescription="Resource timeline"
+         aria-keyshortcuts="@KeyShortcuts">
+        <canvas @ref="_canvasElement"></canvas>
     </div>
     @if (TopStartContent is not null)
     {
         <div class="timeline-top-start"
              style="width:@(_layout.ResourceAxisWidth)px;height:@(_layout.TimeAxisHeight)px;">
             @TopStartContent
+        </div>
+    }
+    @if (ResourceTemplate is not null)
+    {
+        <div class="timeline-resource-overlay"
+             style="top:@(_layout.TimeAxisHeight)px;width:@(_layout.ResourceAxisWidth)px;">
+            <div class="timeline-resource-overlay-inner" @ref="_resourceOverlayInner">
+                @foreach (var row in _resourceRows)
+                {
+                    <div class="timeline-resource-row"
+                         style="height:@(_layout.ResourceHeight)px;padding-left:@(8 + row.Depth * _layout.ResourceIndent)px;">
+                        @if (row.HasChildren)
+                        {
+                            <button type="button" class="timeline-resource-chevron"
+                                    @onclick="() => ToggleGroupAsync(row.Id)"
+                                    aria-label="@((row.Collapsed ? "Expand" : "Collapse") + " " + row.Name)">
+                                @(row.Collapsed ? "\u25B6" : "\u25BC")
+                            </button>
+                        }
+                        <div class="timeline-resource-content">
+                            @ResourceTemplate(ContextFor(row))
+                        </div>
+                    </div>
+                }
+            </div>
         </div>
     }
     @if (_isLoading)
@@ -37,16 +65,36 @@
 
     private ElementReference _wrapperElement;
     private ElementReference _canvasElement;
+    private ElementReference _resourceOverlayInner;
+
+    // Visible rows reported by the renderer, used to render the resource-column
+    // template overlay. Kept in sync via OnResourceRowsChanged.
+    private IReadOnlyList<ResourceRow> _resourceRows = Array.Empty<ResourceRow>();
+    private Dictionary<string, BlazorResourceTimelineResource> _resourcesById = new();
     private IJSObjectReference? _jsModule;
     private IJSObjectReference? _timelineInstance;
     private DotNetObjectReference<BlazorResourceTimeline>? _selfRef;
-    private readonly string _canvasId = $"timeline-{Guid.NewGuid():N}";
     private bool _dataLoaded;
     private bool _isLoading;
+
+    // Serializes data loads so rapid Config swaps can't interleave two loads
+    // and race _isLoading/_loadedConfig.
+    private readonly SemaphoreSlim _loadGate = new(1, 1);
 
     // Reference of the config last pushed to JS. Used to skip redundant (and
     // expensive) re-marshalling when the parent re-renders without data changes.
     private BlazorResourceTimelineConfig? _loadedConfig;
+
+    // Reference of the options last pushed to JS, compared the same way so
+    // re-renders without an options change don't re-marshal them.
+    private BlazorResourceTimelineOptions? _loadedOptions;
+
+    // Lookup for resolving allocation ids reported by the renderer back to the
+    // caller's own instances. Selection interop only exchanges ids: it keeps
+    // payloads small (large marquee selections would otherwise exceed Blazor
+    // Server's SignalR message size limit) and lets consumers compare selected
+    // bars by reference against their own data.
+    private Dictionary<string, BlazorResourceTimelineAllocation> _allocationsById = new();
 
     /// <summary>
     /// Data the timeline renders: the resource rows, the visible time window and
@@ -56,19 +104,57 @@
     [Parameter] public BlazorResourceTimelineConfig? Config { get; set; }
 
     /// <summary>
+    /// Optional visual configuration (dimensions, fonts and colors). Any value
+    /// left <c>null</c> keeps the renderer's default. Assign a new instance to
+    /// re-apply (for example to switch themes at runtime).
+    /// </summary>
+    [Parameter] public BlazorResourceTimelineOptions? Options { get; set; }
+
+    /// <summary>
+    /// Accessible name for the timeline, exposed as the <c>aria-label</c> of the
+    /// focusable region. Screen-reader users hear this when the component gains
+    /// focus. Defaults to "Resource timeline".
+    /// </summary>
+    [Parameter] public string AriaLabel { get; set; } = "Resource timeline";
+
+    /// <summary>
     /// Raised whenever the set of selected bars changes. The array contains every
     /// currently selected bar, in selection order, and is empty when nothing is selected.
-    /// For a single click the array will contain exactly one element.
+    /// For a single click the array will contain exactly one element. Elements are
+    /// the same instances supplied in <see cref="Config"/>, so they can be compared
+    /// by reference against the caller's own data.
     /// Selection supports click, Ctrl/Cmd-click to toggle individual bars, and
     /// click-and-drag to rubber-band select a region.
     /// </summary>
     [Parameter] public EventCallback<BlazorResourceTimelineAllocation[]> OnSelectionChanged { get; set; }
 
     /// <summary>
+    /// Raised after an allocation is moved or resized in the canvas (only when
+    /// editing is enabled via <see cref="BlazorResourceTimelineOptions.Editable"/>).
+    /// The argument is the same instance supplied in <see cref="Config"/>, already
+    /// updated in place with its new <see cref="BlazorResourceTimelineAllocation.StartTime"/>,
+    /// <see cref="BlazorResourceTimelineAllocation.EndTime"/> and
+    /// <see cref="BlazorResourceTimelineAllocation.ResourceId"/>, so the handler
+    /// only needs to persist the change. The renderer updates optimistically; to
+    /// reject an edit, restore the instance and call <see cref="ReloadAsync"/>.
+    /// </summary>
+    [Parameter] public EventCallback<BlazorResourceTimelineAllocation> OnAllocationChanged { get; set; }
+
+    /// <summary>
     /// Optional custom content rendered in the top-start corner of the component
     /// (the otherwise blank cell where the time axis and resource axis meet).
     /// </summary>
     [Parameter] public RenderFragment? TopStartContent { get; set; }
+
+    /// <summary>
+    /// Optional template for each row in the sticky resource column. When set, the
+    /// canvas stops drawing the resource labels and an HTML overlay renders this
+    /// template per visible row instead, enabling rich, interactive content
+    /// (badges, links, avatars, etc.). Group rows automatically get an
+    /// expand/collapse chevron before the template. The overlay follows vertical
+    /// scroll. The context exposes the resource, its depth and its group state.
+    /// </summary>
+    [Parameter] public RenderFragment<BlazorResourceTimelineRowContext>? ResourceTemplate { get; set; }
 
     /// <summary>
     /// Optional custom content shown as an overlay while the renderer is
@@ -78,12 +164,52 @@
 
     /// <summary>
     /// Minimum time (in milliseconds) the loading overlay stays visible. Rendering
-    /// often completes within a frame or two, which is too brief to perceive; this
-    /// keeps the overlay on screen long enough to be seen. Set to 0 to disable.
+    /// often completes within a frame or two, which is too brief to perceive; set
+    /// this to a small value (for example 300) to keep the overlay on screen long
+    /// enough to be seen. Defaults to 0 (no artificial delay).
     /// </summary>
-    [Parameter] public int LoadingMinDurationMs { get; set; } = 300;
+    [Parameter] public int LoadingMinDurationMs { get; set; }
+
+    /// <summary>
+    /// Maximum number of allocations sent per interop call. Datasets larger
+    /// than this are streamed to the renderer in batches of this size instead
+    /// of one large call, which keeps individual interop messages bounded (so a
+    /// single multi-megabyte payload doesn't block the SignalR circuit on
+    /// Blazor Server) and lets the circuit breathe between batches. Set to 0 (or
+    /// a negative value) to always send everything in a single call.
+    /// </summary>
+    [Parameter] public int LoadBatchSize { get; set; } = 10000;
+
+    /// <summary>
+    /// Enables on-demand (windowed) data loading. When set, the timeline does not
+    /// take its bars from <see cref="BlazorResourceTimelineConfig.Allocations"/>;
+    /// instead it calls this delegate with the time window currently needed (the
+    /// visible range plus a buffer) and expects every allocation overlapping that
+    /// window, across all resources. It is called again as the user scrolls or
+    /// zooms near the edge of the loaded window. This keeps memory and interop
+    /// bounded for effectively unbounded datasets. <see cref="Config"/> still
+    /// supplies the resources and overall <c>StartDate</c>/<c>EndDate</c>.
+    /// Leave <c>null</c> to load all allocations up front (the default).
+    /// </summary>
+    [Parameter]
+    public Func<BlazorResourceTimelineWindow, Task<IReadOnlyList<BlazorResourceTimelineAllocation>>>? LoadAllocationsAsync { get; set; }
 
     private bool HasData => Config is not null;
+
+    private bool IsWindowed => LoadAllocationsAsync is not null;
+
+    // Serializes host window fetches and tracks the newest request id so a slow
+    // fetch that has been superseded is discarded instead of pushed to the JS.
+    private readonly SemaphoreSlim _windowGate = new(1, 1);
+    private long _latestWindowRequestId;
+
+    // Base navigation/selection shortcuts, plus the editing shortcuts when
+    // editing is enabled, advertised to assistive tech via aria-keyshortcuts.
+    private const string BaseKeyShortcuts =
+        "ArrowLeft ArrowRight ArrowUp ArrowDown Home End PageUp PageDown Enter Escape";
+    private string KeyShortcuts => Options?.Editable == true
+        ? BaseKeyShortcuts + " Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowLeft Alt+Shift+ArrowRight Alt+Shift+ArrowUp Alt+Shift+ArrowDown"
+        : BaseKeyShortcuts;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -91,12 +217,20 @@
         {
             _selfRef = DotNetObjectReference.Create(this);
             _jsModule = await JS.InvokeAsync<IJSObjectReference>("import", ModulePath);
-            _timelineInstance = await _jsModule.InvokeAsync<IJSObjectReference>("createTimeline", _canvasId, _selfRef);
+            _timelineInstance = await _jsModule.InvokeAsync<IJSObjectReference>(
+                "createTimeline", _canvasElement, _selfRef, Options);
+            _loadedOptions = Options;
 
-            if (TopStartContent is not null)
+            // Read the effective layout back so the top-start corner overlay is
+            // sized correctly (and the C# defaults never drift from the JS ones).
+            _layout = await _timelineInstance.InvokeAsync<BlazorResourceTimelineLayout>("getLayout");
+            StateHasChanged();
+
+            // Enable the HTML resource-column overlay before loading data, so the
+            // canvas suppresses its own labels and the renderer reports its rows.
+            if (ResourceTemplate is not null)
             {
-                _layout = await _timelineInstance.InvokeAsync<BlazorResourceTimelineLayout>("getLayout");
-                StateHasChanged();
+                await _timelineInstance.InvokeVoidAsync("enableResourceTemplate", _resourceOverlayInner);
             }
 
             if (HasData)
@@ -108,7 +242,20 @@
 
     protected override async Task OnParametersSetAsync()
     {
-        if (_timelineInstance is not null && HasData && DataChanged())
+        if (_timelineInstance is null)
+        {
+            return;
+        }
+
+        if (OptionsChanged())
+        {
+            _loadedOptions = Options;
+            await _timelineInstance.InvokeVoidAsync("setOptions", Options);
+            _layout = await _timelineInstance.InvokeAsync<BlazorResourceTimelineLayout>("getLayout");
+            StateHasChanged();
+        }
+
+        if (HasData && DataChanged())
         {
             await LoadDataAsync();
         }
@@ -119,6 +266,11 @@
     // Config (or call ReloadAsync) when the contents change.
     private bool DataChanged() => !ReferenceEquals(_loadedConfig, Config);
 
+    // As with Config, only the reference is compared: assign a new Options
+    // instance to re-apply. Mutating the existing instance in place will not
+    // trigger a re-apply.
+    private bool OptionsChanged() => !ReferenceEquals(_loadedOptions, Options);
+
     private async Task LoadDataAsync()
     {
         if (_timelineInstance is null || !HasData)
@@ -126,22 +278,91 @@
             return;
         }
 
+        // Capture the target now; another load may be requested while we wait
+        // on the gate, in which case this (older) one is skipped below.
+        var config = Config!;
+
+        // Serialize loads so a rapid Config swap can't interleave two runs.
+        await _loadGate.WaitAsync();
+        try
+        {
+            // A newer Config superseded this one while we were queued; its own
+            // load will run, so drop this stale one.
+            if (!ReferenceEquals(Config, config))
+            {
+                return;
+            }
+
+            await LoadDataCoreAsync(_timelineInstance, config);
+        }
+        finally
+        {
+            _loadGate.Release();
+        }
+    }
+
+    private async Task LoadDataCoreAsync(IJSObjectReference timeline, BlazorResourceTimelineConfig config)
+    {
         _isLoading = true;
         StateHasChanged();
-        // Yield so Blazor actually paints the overlay before the synchronous
-        // JS rendering work begins; otherwise the overlay can be skipped.
-        await Task.Yield();
+        // A short delay reliably lets the overlay paint before the synchronous
+        // JS rendering work begins. Task.Yield alone flushes the render batch
+        // but doesn't guarantee a browser paint on WebAssembly.
+        await Task.Delay(1);
 
-        var config = Config!;
         var startedAt = DateTime.UtcNow;
         try
         {
-            await _timelineInstance.InvokeVoidAsync(
-                "setData", config.Resources, config.StartDate.ToUnixTimeMilliseconds(),
-                config.EndDate.ToUnixTimeMilliseconds(), config.Allocations);
+            var allocations = config.Allocations;
+            var start = config.StartDate.ToUnixTimeMilliseconds();
+            var end = config.EndDate.ToUnixTimeMilliseconds();
+
+            if (IsWindowed)
+            {
+                // Set the rows and overall range, then fetch just the initial
+                // visible window; further windows arrive via RequestAllocationWindow.
+                await timeline.InvokeVoidAsync("beginWindowed", config.Resources, start, end);
+                var window = await timeline.InvokeAsync<long[]>("getVisibleWindow");
+                _latestWindowRequestId = 0;
+                await FetchAndApplyWindowAsync(timeline, 0, window[0], window[1]);
+                await timeline.InvokeVoidAsync("whenRendered");
+                _loadedConfig = config;
+                _dataLoaded = true;
+                return;
+            }
+
+            if (LoadBatchSize > 0 && allocations.Count > LoadBatchSize)
+            {
+                // Stream large datasets in bounded batches so a single
+                // multi-megabyte interop message doesn't block the circuit or
+                // stall the main thread serializing/parsing it all at once.
+                await timeline.InvokeVoidAsync(
+                    "beginData", config.Resources, start, end, allocations.Count);
+
+                for (var i = 0; i < allocations.Count; i += LoadBatchSize)
+                {
+                    var count = Math.Min(LoadBatchSize, allocations.Count - i);
+                    var batch = allocations.GetRange(i, count);
+                    await timeline.InvokeVoidAsync("appendAllocations", batch);
+                }
+
+                await timeline.InvokeVoidAsync("endData");
+            }
+            else
+            {
+                await timeline.InvokeVoidAsync(
+                    "setData", config.Resources, start, end, allocations);
+            }
 
             // Wait until the renderer has painted the bars before hiding the overlay.
-            await _timelineInstance.InvokeVoidAsync("whenRendered");
+            await timeline.InvokeVoidAsync("whenRendered");
+
+            var byId = new Dictionary<string, BlazorResourceTimelineAllocation>(allocations.Count);
+            foreach (var allocation in allocations)
+            {
+                byId[allocation.Id] = allocation;
+            }
+            _allocationsById = byId;
 
             _loadedConfig = config;
             _dataLoaded = true;
@@ -187,7 +408,8 @@
             return Array.Empty<BlazorResourceTimelineAllocation>();
         }
 
-        return await _timelineInstance.InvokeAsync<BlazorResourceTimelineAllocation[]>("getSelectedBars");
+        var ids = await _timelineInstance.InvokeAsync<string[]>("getSelectedBarIds");
+        return ResolveAllocations(ids);
     }
 
     /// <summary>
@@ -219,13 +441,227 @@
         return await _timelineInstance.InvokeAsync<bool>("scrollToTime", unixMs);
     }
 
+    /// <summary>
+    /// Zooms in around the viewport center. Returns the new scale in pixels per
+    /// hour (0 if the timeline is not ready).
+    /// </summary>
+    public async Task<double> ZoomInAsync()
+    {
+        if (_timelineInstance is null)
+        {
+            return 0;
+        }
+
+        return await _timelineInstance.InvokeAsync<double>("zoomIn");
+    }
+
+    /// <summary>Zooms out around the viewport center. Returns the new scale in pixels per hour.</summary>
+    public async Task<double> ZoomOutAsync()
+    {
+        if (_timelineInstance is null)
+        {
+            return 0;
+        }
+
+        return await _timelineInstance.InvokeAsync<double>("zoomOut");
+    }
+
+    /// <summary>
+    /// Sets an explicit horizontal scale in pixels per hour (clamped to the
+    /// configured bounds), or pass <c>null</c> to return to auto/config scale.
+    /// Returns the new effective scale.
+    /// </summary>
+    public async Task<double> SetPixelsPerHourAsync(double? pixelsPerHour)
+    {
+        if (_timelineInstance is null)
+        {
+            return 0;
+        }
+
+        return await _timelineInstance.InvokeAsync<double>("setPixelsPerHour", pixelsPerHour);
+    }
+
+    /// <summary>Returns to the auto/config scale. Returns the new effective scale.</summary>
+    public async Task<double> ResetZoomAsync()
+    {
+        if (_timelineInstance is null)
+        {
+            return 0;
+        }
+
+        return await _timelineInstance.InvokeAsync<double>("resetZoom");
+    }
+
+    /// <summary>Returns the current horizontal scale in pixels per hour.</summary>
+    public async Task<double> GetPixelsPerHourAsync()
+    {
+        if (_timelineInstance is null)
+        {
+            return 0;
+        }
+
+        return await _timelineInstance.InvokeAsync<double>("getPixelsPerHour");
+    }
+
+    // Invoked by the renderer (windowed mode) when scrolling/zooming needs a
+    // wider window than is currently loaded. requestId is monotonically
+    // increasing; a fetch is discarded if a newer request arrives while it runs.
     [JSInvokable]
-    public async Task OnSelectionUpdated(BlazorResourceTimelineAllocation[] bars)
+    public async Task RequestAllocationWindow(long requestId, long startMs, long endMs)
+    {
+        if (_timelineInstance is null || LoadAllocationsAsync is null)
+        {
+            return;
+        }
+
+        _latestWindowRequestId = Math.Max(_latestWindowRequestId, requestId);
+        await FetchAndApplyWindowAsync(_timelineInstance, requestId, startMs, endMs);
+    }
+
+    // Fetches the allocations for a window from the host and pushes them to the
+    // renderer, unless a newer request has superseded this one in the meantime.
+    private async Task FetchAndApplyWindowAsync(
+        IJSObjectReference timeline, long requestId, long startMs, long endMs)
+    {
+        if (LoadAllocationsAsync is null)
+        {
+            return;
+        }
+
+        await _windowGate.WaitAsync();
+        try
+        {
+            // Superseded while queued behind the gate: skip the (now stale) fetch.
+            if (requestId < _latestWindowRequestId)
+            {
+                return;
+            }
+
+            var window = new BlazorResourceTimelineWindow
+            {
+                Start = DateTimeOffset.FromUnixTimeMilliseconds(startMs),
+                End = DateTimeOffset.FromUnixTimeMilliseconds(endMs),
+            };
+
+            var allocations = await LoadAllocationsAsync(window) ?? Array.Empty<BlazorResourceTimelineAllocation>();
+
+            // A newer request arrived while the host was working; drop this result.
+            if (requestId < _latestWindowRequestId)
+            {
+                return;
+            }
+
+            var byId = new Dictionary<string, BlazorResourceTimelineAllocation>(allocations.Count);
+            foreach (var allocation in allocations)
+            {
+                byId[allocation.Id] = allocation;
+            }
+            _allocationsById = byId;
+
+            await timeline.InvokeVoidAsync(
+                "applyAllocationWindow", requestId, allocations, startMs, endMs);
+        }
+        finally
+        {
+            _windowGate.Release();
+        }
+    }
+
+    // Invoked by the renderer whenever the set/order of visible rows changes
+    // (data load or a group collapse/expand), so the resource-column template
+    // overlay can re-render. Rows are bounded, so this stays cheap.
+    [JSInvokable]
+    public void OnResourceRowsChanged(ResourceRow[] rows)
+    {
+        _resourceRows = rows;
+        if (Config is not null)
+        {
+            _resourcesById = new Dictionary<string, BlazorResourceTimelineResource>(Config.Resources.Count);
+            foreach (var resource in Config.Resources)
+            {
+                _resourcesById[resource.Id] = resource;
+            }
+        }
+        StateHasChanged();
+    }
+
+    // Collapses/expands a group from the overlay's chevron.
+    private async Task ToggleGroupAsync(string id)
+    {
+        if (_timelineInstance is not null)
+        {
+            await _timelineInstance.InvokeVoidAsync("toggleGroup", id);
+        }
+    }
+
+    // Builds the template context for a row, resolving its full resource instance.
+    private BlazorResourceTimelineRowContext ContextFor(ResourceRow row)
+    {
+        _resourcesById.TryGetValue(row.Id, out var resource);
+        return new BlazorResourceTimelineRowContext
+        {
+            Resource = resource ?? new BlazorResourceTimelineResource { Id = row.Id, Name = row.Name },
+            Depth = row.Depth,
+            HasChildren = row.HasChildren,
+            Collapsed = row.Collapsed,
+        };
+    }
+
+    // Row descriptor marshaled from the renderer (camelCase over interop).
+    public sealed class ResourceRow
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public int Depth { get; set; }
+        public bool HasChildren { get; set; }
+        public bool Collapsed { get; set; }
+    }
+
+    [JSInvokable]
+    public async Task OnSelectionUpdated(string[] selectedIds)
     {
         if (OnSelectionChanged.HasDelegate)
         {
-            await OnSelectionChanged.InvokeAsync(bars);
+            await OnSelectionChanged.InvokeAsync(ResolveAllocations(selectedIds));
         }
+    }
+
+    // Invoked by the renderer when a bar is moved/resized. The times/resource are
+    // applied to the caller's own instance (resolved by id) so the change is
+    // reflected in Config without a reload, then the change callback fires.
+    [JSInvokable]
+    public async Task OnAllocationEdited(string id, string resourceId, long startTime, long endTime)
+    {
+        if (!_allocationsById.TryGetValue(id, out var allocation))
+        {
+            return;
+        }
+
+        allocation.ResourceId = resourceId;
+        allocation.StartTime = DateTimeOffset.FromUnixTimeMilliseconds(startTime);
+        allocation.EndTime = DateTimeOffset.FromUnixTimeMilliseconds(endTime);
+
+        if (OnAllocationChanged.HasDelegate)
+        {
+            await OnAllocationChanged.InvokeAsync(allocation);
+        }
+    }
+
+    // Maps allocation ids reported by the renderer to the instances supplied
+    // in the loaded Config, preserving order. Unknown ids (e.g. from a config
+    // swapped mid-callback) are skipped.
+    private BlazorResourceTimelineAllocation[] ResolveAllocations(string[] ids)
+    {
+        var result = new List<BlazorResourceTimelineAllocation>(ids.Length);
+        foreach (var id in ids)
+        {
+            if (_allocationsById.TryGetValue(id, out var allocation))
+            {
+                result.Add(allocation);
+            }
+        }
+
+        return result.ToArray();
     }
 
     public async ValueTask DisposeAsync()
@@ -250,6 +686,8 @@
         finally
         {
             _selfRef?.Dispose();
+            _loadGate.Dispose();
+            _windowGate.Dispose();
         }
     }
 }
