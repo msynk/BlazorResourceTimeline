@@ -27,7 +27,15 @@
 
 .demo-controls {
     display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
+}
+
+.demo-controls-row {
+    display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 0.75rem;
 }
 
@@ -311,4 +319,63 @@
     background: #f1f3f5;
     border-radius: 3px;
     padding: 0.05rem 0.3rem;
+}
+
+/* Dummy context menu for the OnContextMenu showcase */
+.ctx-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+}
+
+.ctx-menu {
+    position: fixed;
+    z-index: 1001;
+    min-width: 220px;
+    max-width: 300px;
+    padding: 0.25rem;
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
+    font-size: 0.88rem;
+}
+
+.ctx-menu-header {
+    padding: 0.4rem 0.6rem;
+    margin-bottom: 0.25rem;
+    border-bottom: 1px solid #f1f3f5;
+    font-size: 0.75rem;
+    color: #868e96;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ctx-menu button {
+    display: block;
+    width: 100%;
+    padding: 0.4rem 0.6rem;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    text-align: left;
+    color: #212529;
+    cursor: pointer;
+}
+
+.ctx-menu button:hover {
+    background: #f1f3f5;
+}
+
+.ctx-menu .ctx-menu-danger {
+    color: #e03131;
+}
+
+.ctx-menu .ctx-menu-danger:hover {
+    background: #fff5f5;
+}
+
+.ctx-menu:focus {
+    outline: none;
 }

@@ -31,6 +31,16 @@ public class BlazorResourceTimelineOptions
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? BarHeight { get; set; }
 
+    /// <summary>
+    /// Vertical distance (in pixels) between allocation bars that overlap in time
+    /// on the same resource row. Overlapping bars are stacked apart around the
+    /// row's center line instead of being drawn on top of each other; this sets
+    /// the gap between them (<c>0</c> stacks them touching). Bars that overlap
+    /// nothing stay centered in their row. Defaults to 2.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? BarMargin { get; set; }
+
     /// <summary>Minimum drawn bar width so very short allocations stay visible, in pixels.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? MinBarWidth { get; set; }

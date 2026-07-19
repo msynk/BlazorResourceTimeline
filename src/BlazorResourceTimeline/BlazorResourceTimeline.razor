@@ -141,6 +141,16 @@
     [Parameter] public EventCallback<BlazorResourceTimelineAllocation> OnAllocationChanged { get; set; }
 
     /// <summary>
+    /// Raised when the user right-clicks the timeline (the native browser menu
+    /// is suppressed either way). The args identify what was under the pointer —
+    /// the bar (if any), the resource row and the time — plus the viewport
+    /// coordinates of the click, so the handler can render its own context menu
+    /// at that position. Fires for bars, empty content slots and resource-axis
+    /// rows; not for the time axis. Right-clicking does not change the selection.
+    /// </summary>
+    [Parameter] public EventCallback<BlazorResourceTimelineContextMenuArgs> OnContextMenu { get; set; }
+
+    /// <summary>
     /// Optional custom content rendered in the top-start corner of the component
     /// (the otherwise blank cell where the time axis and resource axis meet).
     /// </summary>
@@ -645,6 +655,37 @@
         {
             await OnAllocationChanged.InvokeAsync(allocation);
         }
+    }
+
+    // Invoked by the renderer on right-click. Ids are resolved back to the
+    // caller's own instances (as with selection) before the callback fires.
+    [JSInvokable]
+    public async Task OnTimelineContextMenu(
+        string? allocationId, string? resourceId, long? time, double clientX, double clientY)
+    {
+        if (!OnContextMenu.HasDelegate)
+        {
+            return;
+        }
+
+        BlazorResourceTimelineAllocation? allocation = null;
+        if (allocationId is not null)
+        {
+            _allocationsById.TryGetValue(allocationId, out allocation);
+        }
+
+        var resource = resourceId is null
+            ? null
+            : Config?.Resources.FirstOrDefault(r => r.Id == resourceId);
+
+        await OnContextMenu.InvokeAsync(new BlazorResourceTimelineContextMenuArgs
+        {
+            Allocation = allocation,
+            Resource = resource,
+            Time = time is { } t ? DateTimeOffset.FromUnixTimeMilliseconds(t) : null,
+            ClientX = clientX,
+            ClientY = clientY,
+        });
     }
 
     // Maps allocation ids reported by the renderer to the instances supplied

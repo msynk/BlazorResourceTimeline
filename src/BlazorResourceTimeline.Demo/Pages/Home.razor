@@ -13,63 +13,73 @@
         </div>
 
         <div class="demo-controls">
-            <label>
-                Days
-                <select @bind="_days" @bind:after="RegenerateAsync">
-                    <option value="7">7</option>
-                    <option value="30">30</option>
-                    <option value="100">100</option>
-                    <option value="365">365</option>
-                </select>
-            </label>
-            <label class="bar-height-control">
-                Bar height
-                <input type="range" min="2" max="32" step="1"
-                       @bind="_barHeight" @bind:event="oninput" @bind:after="ApplyBarHeightAsync" />
-                <span class="bar-height-value">@_barHeight px</span>
-            </label>
-            <label class="editable-control">
-                <input type="checkbox" @bind="_editable" @bind:after="ApplyOptions" />
-                Editable
-            </label>
-            <label class="editable-control" title="Serve only the visible window on demand instead of loading all bars up front">
-                <input type="checkbox" @bind="_windowed" @bind:after="ToggleWindowed" />
-                On-demand loading
-            </label>
-            <label class="editable-control" title="Render the resource column with a custom HTML template">
-                <input type="checkbox" @bind="_customColumn" />
-                Custom column
-            </label>
-            <label title="Which technology paints the timeline; behavior is identical across renderers">
-                Renderer
-                <select @bind="_renderer" @bind:after="ApplyOptions">
-                    <option value="canvas">Canvas</option>
-                    <option value="svg">SVG</option>
-                    <option value="html">HTML</option>
-                </select>
-            </label>
-            <label>
-                Time zone
-                <select @bind="_timeZone" @bind:after="ApplyOptions">
-                    <option value="">Local</option>
-                    <option value="UTC">UTC (Zulu)</option>
-                    <option value="America/New_York">New York</option>
-                    <option value="Europe/London">London</option>
-                    <option value="Europe/Berlin">Berlin</option>
-                    <option value="Asia/Tokyo">Tokyo</option>
-                </select>
-            </label>
-            <span class="zoom-controls">
-                Zoom
-                <button class="btn-zoom" @onclick="ZoomOutAsync" title="Zoom out">&minus;</button>
-                <button class="btn-zoom" @onclick="ZoomInAsync" title="Zoom in">+</button>
-                <button class="btn-zoom" @onclick="ResetZoomAsync" title="Reset zoom">Reset</button>
-            </span>
-            <button class="btn-today" @onclick="GoToTodayAsync">Go to Today</button>
-            <button class="btn-regenerate" @onclick="RegenerateAsync">Regenerate</button>
-            <button class="btn-code" @onclick="ToggleCode">
-                @(_showCode ? "Hide Code" : "Show Code")
-            </button>
+            <div class="demo-controls-row">
+                <label>
+                    Days
+                    <select @bind="_days" @bind:after="RegenerateAsync">
+                        <option value="7">7</option>
+                        <option value="30">30</option>
+                        <option value="100">100</option>
+                        <option value="365">365</option>
+                    </select>
+                </label>
+                <label class="bar-height-control">
+                    Bar height
+                    <input type="range" min="2" max="32" step="1"
+                           @bind="_barHeight" @bind:event="oninput" @bind:after="ApplyOptions" />
+                    <span class="bar-height-value">@_barHeight px</span>
+                </label>
+                <label class="bar-height-control" title="Vertical distance between bars that overlap in time on the same row">
+                    Bar margin
+                    <input type="range" min="0" max="16" step="1"
+                           @bind="_barMargin" @bind:event="oninput" @bind:after="ApplyOptions" />
+                    <span class="bar-height-value">@_barMargin px</span>
+                </label>
+                <label class="editable-control">
+                    <input type="checkbox" @bind="_editable" @bind:after="ApplyOptions" />
+                    Editable
+                </label>
+                <label class="editable-control" title="Serve only the visible window on demand instead of loading all bars up front">
+                    <input type="checkbox" @bind="_windowed" @bind:after="ToggleWindowed" />
+                    On-demand loading
+                </label>
+                <label class="editable-control" title="Render the resource column with a custom HTML template">
+                    <input type="checkbox" @bind="_customColumn" />
+                    Custom column
+                </label>
+            </div>
+            <div class="demo-controls-row">
+                <label title="Which technology paints the timeline; behavior is identical across renderers">
+                    Renderer
+                    <select @bind="_renderer" @bind:after="ApplyOptions">
+                        <option value="canvas">Canvas</option>
+                        <option value="svg">SVG</option>
+                        <option value="html">HTML</option>
+                    </select>
+                </label>
+                <label>
+                    Time zone
+                    <select @bind="_timeZone" @bind:after="ApplyOptions">
+                        <option value="">Local</option>
+                        <option value="UTC">UTC (Zulu)</option>
+                        <option value="America/New_York">New York</option>
+                        <option value="Europe/London">London</option>
+                        <option value="Europe/Berlin">Berlin</option>
+                        <option value="Asia/Tokyo">Tokyo</option>
+                    </select>
+                </label>
+                <span class="zoom-controls">
+                    Zoom
+                    <button class="btn-zoom" @onclick="ZoomOutAsync" title="Zoom out">&minus;</button>
+                    <button class="btn-zoom" @onclick="ZoomInAsync" title="Zoom in">+</button>
+                    <button class="btn-zoom" @onclick="ResetZoomAsync" title="Reset zoom">Reset</button>
+                </span>
+                <button class="btn-today" @onclick="GoToTodayAsync">Go to Today</button>
+                <button class="btn-regenerate" @onclick="RegenerateAsync">Regenerate</button>
+                <button class="btn-code" @onclick="ToggleCode">
+                    @(_showCode ? "Hide Code" : "Show Code")
+                </button>
+            </div>
         </div>
     </header>
 
@@ -80,6 +90,10 @@
         @if (_lastEdit is not null)
         {
             <span class="last-edit">Last edit: @_lastEdit</span>
+        }
+        @if (_lastMenuAction is not null)
+        {
+            <span class="last-edit">Menu action: @_lastMenuAction</span>
         }
         @if (_selectedBars.Count > 1)
         {
@@ -114,7 +128,8 @@
                               LoadAllocationsAsync="@(_windowed ? LoadWindowAsync : null)"
                               ResourceTemplate="@(_customColumn ? ColumnTemplate : null)"
                               OnSelectionChanged="HandleSelectionChanged"
-                              OnAllocationChanged="HandleAllocationChanged">
+                              OnAllocationChanged="HandleAllocationChanged"
+                              OnContextMenu="ShowContextMenu">
                 <TopStartContent>
                     <div class="corner">
                         <span class="corner-title">Resources</span>
@@ -145,18 +160,81 @@
     </div>
 </div>
 
+@* Dummy context menu showcasing OnContextMenu: rendered at the reported
+   viewport position; the items only surface the chosen action in the stats
+   bar. The transparent backdrop closes it on any click outside. *@
+@if (_contextMenu is not null)
+{
+    <div class="ctx-backdrop"
+         @onclick="CloseContextMenu"
+         @oncontextmenu="CloseContextMenu" @oncontextmenu:preventDefault></div>
+    @* min() keeps the menu inside the viewport when the click lands near the
+       right/bottom edge; the offsets roughly cover the menu's max size. The
+       menu takes focus when it opens so Escape can close it. *@
+    <div class="ctx-menu" tabindex="-1" @ref="_ctxMenuElement" @onkeydown="HandleMenuKeyDown"
+         style="left:min(@((int)_contextMenu.ClientX)px, calc(100vw - 250px));top:min(@((int)_contextMenu.ClientY)px, calc(100vh - 200px))">
+        @if (_contextMenu.Allocation is { } bar)
+        {
+            <div class="ctx-menu-header">
+                @ResourceNameFor(bar.ResourceId) &middot;
+                @FormatTime(bar.StartTime) &ndash; @FormatTime(bar.EndTime)
+            </div>
+            <button @onclick="@(() => RunMenuAction($"Edit {DescribeBar(bar)}"))">
+                Edit allocation&hellip;
+            </button>
+            <button @onclick="@(() => RunMenuAction($"Duplicate {DescribeBar(bar)}"))">
+                Duplicate allocation
+            </button>
+            <button class="ctx-menu-danger"
+                    @onclick="@(() => RunMenuAction($"Delete {DescribeBar(bar)}"))">
+                Delete allocation
+            </button>
+        }
+        else if (_contextMenu.Time is { } time)
+        {
+            <div class="ctx-menu-header">
+                @(_contextMenu.Resource?.Name ?? "Timeline") &middot; @FormatTime(time)
+            </div>
+            <button @onclick="@(() => RunMenuAction($"New allocation at {FormatTime(time)} on {_contextMenu.Resource?.Name ?? "timeline"}"))">
+                New allocation here&hellip;
+            </button>
+            <button @onclick="@(() => RunMenuAction($"Paste at {FormatTime(time)}"))">
+                Paste
+            </button>
+        }
+        else if (_contextMenu.Resource is { } resource)
+        {
+            <div class="ctx-menu-header">@resource.Name</div>
+            <button @onclick="@(() => RunMenuAction($"Rename resource {resource.Name}"))">
+                Rename resource&hellip;
+            </button>
+            <button @onclick="@(() => RunMenuAction($"Add child resource under {resource.Name}"))">
+                Add child resource
+            </button>
+        }
+    </div>
+}
+
 @code {
     private BlazorResourceTimeline? _timeline;
     private BlazorResourceTimelineConfig? _config;
     private IReadOnlyList<BlazorResourceTimelineAllocation> _selectedBars = Array.Empty<BlazorResourceTimelineAllocation>();
     private int _days = 100;
     private int _barHeight = 4;
+    private int _barMargin = 2;
     private string _renderer = "canvas";
     private string _timeZone = "";
     private bool _editable;
     private bool _windowed;
     private bool _customColumn;
     private string? _lastEdit;
+
+    // Right-click state: the args of the open context menu (null when closed)
+    // and the last dummy action chosen, surfaced in the stats bar.
+    private BlazorResourceTimelineContextMenuArgs? _contextMenu;
+    private string? _lastMenuAction;
+    private ElementReference _ctxMenuElement;
+    private bool _ctxMenuFocusPending;
 
     // Custom resource-column template: a colored dot + bold name, and a "group"
     // badge on parent rows (the chevron is added by the component automatically).
@@ -186,7 +264,8 @@
         @using BlazorResourceTimeline.Models
 
         <BlazorResourceTimeline Config="_config"
-                                OnSelectionChanged="HandleSelectionChanged" />
+                                OnSelectionChanged="HandleSelectionChanged"
+                                OnContextMenu="HandleContextMenu" />
 
         @code {
             // All render data is bundled into a single Config instance. Assign a
@@ -263,6 +342,14 @@
                     Console.WriteLine($"Selected {bar.Id} on {bar.ResourceId}");
                 }
             }
+
+            private void HandleContextMenu(BlazorResourceTimelineContextMenuArgs args)
+            {
+                // Raised on right-click (the native browser menu is suppressed).
+                // args identifies what was hit — Allocation (null on empty space),
+                // Resource and Time — plus ClientX/ClientY to position your menu.
+                Console.WriteLine($"Context menu on {args.Allocation?.Id ?? args.Resource?.Id}");
+            }
         }
         """;
 
@@ -304,7 +391,6 @@
             }
 
             _config = config;
-            ApplyBarHeightToData();
         }
         catch (OperationCanceledException)
         {
@@ -353,31 +439,6 @@
         }
     }
 
-    // Applies the current bar height to every allocation in the loaded data.
-    // Heights are mutated in place, so a ReloadAsync is needed to push the
-    // change to the renderer.
-    private void ApplyBarHeightToData()
-    {
-        if (_config is null)
-        {
-            return;
-        }
-
-        foreach (var allocation in _config.Allocations)
-        {
-            allocation.Height = _barHeight;
-        }
-    }
-
-    private async Task ApplyBarHeightAsync()
-    {
-        ApplyBarHeightToData();
-        if (_timeline is not null)
-        {
-            await _timeline.ReloadAsync();
-        }
-    }
-
     // Assigns a fresh Options instance so the component picks up the change
     // (Options is compared by reference). Rebuilt from all current selections.
     private void ApplyOptions() => _options = BuildOptions();
@@ -419,6 +480,8 @@
     {
         TimeZone = string.IsNullOrEmpty(_timeZone) ? null : _timeZone,
         Editable = _editable,
+        BarHeight = _barHeight,
+        BarMargin = _barMargin,
         Renderer = _renderer switch
         {
             "svg" => BlazorResourceTimelineRendererType.Svg,
@@ -445,6 +508,49 @@
     }
 
     private void HandleSelectionChanged(BlazorResourceTimelineAllocation[] bars) => _selectedBars = bars;
+
+    private void ShowContextMenu(BlazorResourceTimelineContextMenuArgs args)
+    {
+        _contextMenu = args;
+        _ctxMenuFocusPending = true;
+    }
+
+    private void CloseContextMenu() => _contextMenu = null;
+
+    private void HandleMenuKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            CloseContextMenu();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Focus the freshly opened menu so Escape (and tabbing to the items)
+        // works without an extra click.
+        if (_ctxMenuFocusPending && _contextMenu is not null)
+        {
+            _ctxMenuFocusPending = false;
+            await _ctxMenuElement.FocusAsync();
+        }
+    }
+
+    // Identifies a bar in the menu-action text by its own data: label (falling
+    // back to id), id, time range and duration.
+    private static string DescribeBar(BlazorResourceTimelineAllocation bar)
+    {
+        var label = bar.TextAbove ?? bar.TextStart ?? bar.TextEnd ?? bar.TextBelow ?? bar.Id;
+        return $"\"{label}\" (id {bar.Id}, {FormatTime(bar.StartTime)} – {FormatTime(bar.EndTime)}, {FormatDuration(bar.EndTime - bar.StartTime)})";
+    }
+
+    // The demo menu items don't mutate anything; the chosen action is just
+    // echoed in the stats bar so the round trip is visible.
+    private void RunMenuAction(string action)
+    {
+        _lastMenuAction = action;
+        _contextMenu = null;
+    }
 
     private void ToggleCode()
     {

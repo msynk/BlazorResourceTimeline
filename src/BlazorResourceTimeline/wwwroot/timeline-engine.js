@@ -37,6 +37,11 @@ export class TimelineEngine {
             resourceIndent: 16,
             dateRowHeight: 22,
             barHeight: 4,
+            // Vertical gap (px) between bars that overlap in time on the same
+            // row. Overlapping bars are stacked apart around the row's center
+            // line instead of drawn on top of each other; this is the distance
+            // between them (0 stacks them touching).
+            barMargin: 2,
             minBarWidth: 2,
             // Decorations are skipped when the main bar's drawn width falls
             // below this threshold, keeping dense timelines readable.
@@ -271,7 +276,7 @@ export class TimelineEngine {
         this._onPointerCancel = (e) => this.handlePointerCancel(e);
         this._onPointerLeave = () => { this._hideTooltip(); this._setCursor(''); };
         this._onWheel = (e) => this.handleWheel(e);
-        this._onContextMenu = (e) => e.preventDefault();
+        this._onContextMenu = (e) => this.handleContextMenu(e);
         this._onKeyDown = (e) => this.handleKeyDown(e);
         this._onFocusIn = () => { this._hasFocus = true; this.render(); };
         this._onFocusOut = () => { this._hasFocus = false; this.render(); };
@@ -908,10 +913,13 @@ export class TimelineEngine {
                 if (this._effectiveEndTime(alloc) < visStart) continue;
                 if (this._effectiveStartTime(alloc) > visEnd) continue;
 
-                // Per-bar height (falls back to the configured default), kept
-                // vertically centered within the resource row.
+                // Per-bar height (falls back to the configured default),
+                // centered on the row's center line — offset when the bar is
+                // part of an overlapping cluster, so stacked bars are drawn
+                // barMargin apart instead of on top of each other.
                 const barHeight = alloc.height && alloc.height > 0 ? alloc.height : c.barHeight;
-                const barTop = barCenterY - barHeight / 2;
+                const stackCenterY = barCenterY + this._stackOffset(alloc);
+                const barTop = stackCenterY - barHeight / 2;
 
                 const barX = this.getTimeToX(alloc.startTime);
                 const barEndX = this.getTimeToX(alloc.endTime);
@@ -988,7 +996,7 @@ export class TimelineEngine {
                 // overlapping text on dense timelines.
                 const hasDecorations = alloc.icons?.length || alloc.textAbove || alloc.textBelow || alloc.textStart || alloc.textEnd;
                 if (hasDecorations && (barEndX - barX) >= c.minBarWidthForLabels) {
-                    this._buildBarDecorations(alloc, node, barX, barEndX, drawStartX, drawEndX, barTop, barCenterY, barHeight, c);
+                    this._buildBarDecorations(alloc, node, barX, barEndX, drawStartX, drawEndX, barTop, stackCenterY, barHeight, c);
                 }
 
                 scene.bars.push(node);
@@ -1105,7 +1113,8 @@ export class TimelineEngine {
         const c = this.config;
         const resourceY = this.getResourceToY(ed.previewResourceIndex);
         const barHeight = ed.alloc.height && ed.alloc.height > 0 ? ed.alloc.height : c.barHeight;
-        const barTop = resourceY + c.resourceHeight / 2 - barHeight / 2;
+        // The ghost keeps the bar's committed stack lane; lanes recompute on commit.
+        const barTop = resourceY + c.resourceHeight / 2 + this._stackOffset(ed.alloc) - barHeight / 2;
         const x1 = this.getTimeToX(ed.previewStart);
         const x2 = this.getTimeToX(ed.previewEnd);
 
@@ -1365,6 +1374,41 @@ export class TimelineEngine {
             baseSelection: new Map(this.selectedBars),
             moved: false
         };
+    }
+
+    // Right-click (or long-press, where the browser maps it to contextmenu):
+    // the native browser menu is always suppressed — it would cover the
+    // timeline — and the hit under the pointer is reported to .NET so the host
+    // can show its own menu. Reports the bar (when one is hit), the resource
+    // row and the time under the pointer; on the resource axis only the row.
+    // Clicks on the time axis or the corner report nothing.
+    handleContextMenu(e) {
+        e.preventDefault();
+        if (!this.dotNetRef) return;
+        this._hideTooltip();
+
+        const { x, y } = this._eventToCanvas(e);
+        let allocId = null;
+        let resourceId = null;
+        let time = null;
+
+        if (this._isInContentArea(x, y)) {
+            const rowIndex = this.getYToResource(y);
+            if (rowIndex !== -1) resourceId = this._rows[rowIndex].resource.id;
+            const hit = this._barAt(x, y);
+            if (hit) allocId = hit.alloc.id;
+            time = Math.round(this.getXToTime(x));
+        } else if (x < this.config.resourceAxisWidth && y >= this.config.timeAxisHeight) {
+            const rowIndex = this.getYToResource(y);
+            if (rowIndex === -1) return;
+            resourceId = this._rows[rowIndex].resource.id;
+        } else {
+            return;
+        }
+
+        this.dotNetRef.invokeMethodAsync(
+            'OnTimelineContextMenu', allocId, resourceId, time, e.clientX, e.clientY)
+            .catch((error) => console.error('BlazorResourceTimeline context menu callback failed:', error));
     }
 
     handlePointerMove(e) {
@@ -1860,8 +1904,10 @@ export class TimelineEngine {
         const minBarWidth = this.config.minBarWidth;
         const clickTime = this.getXToTime(canvasX);
         const firstIndex = this._firstVisibleAllocationIndex(list, clickTime);
+        const rowCenterY = this.getResourceToY(resourceIndex) + this.config.resourceHeight / 2;
         let best = null;
-        let minDistance = Infinity;
+        let bestDy = Infinity;
+        let bestDx = Infinity;
         for (let i = firstIndex; i < list.length; i++) {
             const alloc = list[i];
             const barX = this.getTimeToX(alloc.startTime);
@@ -1870,9 +1916,19 @@ export class TimelineEngine {
             const barEndX = this.getTimeToX(alloc.endTime);
             const endPx = Math.max(this.getTimeToX(this._effectiveEndTime(alloc)), barX + minBarWidth);
             if (canvasX < startPx - tolerance || canvasX > endPx + tolerance) continue;
-            const distance = Math.abs(canvasX - (barX + barEndX) / 2);
-            if (distance < minDistance) {
-                minDistance = distance;
+            // Vertical distance to the bar's drawn band (0 inside it) is the
+            // primary criterion so stacked overlapping bars are told apart by
+            // which one is under the pointer; horizontal mid distance breaks
+            // ties so clicks on empty row space still pick the nearest bar.
+            const barHeight = alloc.height && alloc.height > 0 ? alloc.height : this.config.barHeight;
+            const barTop = rowCenterY + this._stackOffset(alloc) - barHeight / 2;
+            const dy = canvasY < barTop ? barTop - canvasY
+                : canvasY > barTop + barHeight ? canvasY - barTop - barHeight
+                : 0;
+            const dx = Math.abs(canvasX - (barX + barEndX) / 2);
+            if (dy < bestDy || (dy === bestDy && dx < bestDx)) {
+                bestDy = dy;
+                bestDx = dx;
                 best = alloc;
             }
         }
@@ -2373,11 +2429,98 @@ export class TimelineEngine {
             if (span > maxEffectiveSpanMs) maxEffectiveSpanMs = span;
         }
         // Each resource's list inherits global sort order, so it is already
-        // sorted by startTime.
+        // sorted by startTime (which the lane assignment relies on).
+        for (const list of index.values()) {
+            this._assignStackLanes(list);
+        }
         this.allocationsByResource = index;
         this._maxStartEdgeMs = maxStartEdgeMs;
         this._maxEndEdgeMs = maxEndEdgeMs;
         this._maxEffectiveSpanMs = maxEffectiveSpanMs;
+    }
+
+    // Assigns vertical stacking lanes within one row's startTime-sorted
+    // allocation list so bars that overlap in time are drawn apart instead of
+    // on top of each other (see the barMargin option). Bars are grouped into
+    // clusters (maximal runs of transitively-overlapping bars); within a
+    // cluster each bar takes the first lane free at its start time, and every
+    // member points at a shared cluster record so rendering can center the
+    // whole stack on the row's center line. Bars that overlap nothing form
+    // single-lane clusters and stay centered exactly as before. Touching bars
+    // (one ends the instant the next starts) do not count as overlapping.
+    //
+    // Each lane also records the tallest explicit per-bar height it holds (0
+    // when every bar in it uses the configured default), so _stackOffset can
+    // lay lanes out by their real heights. Only lane membership is decided
+    // here — the pixel offsets depend on barHeight/barMargin, which can change
+    // via setOptions without reloading data, so they are derived lazily.
+    _assignStackLanes(list) {
+        let clusterStart = 0;
+        let clusterMaxEnd = -Infinity;
+        let laneEnds = [];
+        let laneHeights = [];
+
+        const closeCluster = (endIndex) => {
+            const cluster = { laneHeights, offsets: null, key: null };
+            for (let j = clusterStart; j < endIndex; j++) {
+                list[j]._cluster = cluster;
+            }
+        };
+
+        for (let i = 0; i < list.length; i++) {
+            const alloc = list[i];
+            if (i > clusterStart && alloc.startTime >= clusterMaxEnd) {
+                closeCluster(i);
+                clusterStart = i;
+                laneEnds = [];
+                laneHeights = [];
+            }
+            let lane = 0;
+            while (lane < laneEnds.length && laneEnds[lane] > alloc.startTime) lane++;
+            const end = Math.max(alloc.endTime, alloc.startTime);
+            const height = alloc.height && alloc.height > 0 ? alloc.height : 0;
+            if (lane === laneEnds.length) {
+                laneEnds.push(end);
+                laneHeights.push(height);
+            } else {
+                laneEnds[lane] = end;
+                if (height > laneHeights[lane]) laneHeights[lane] = height;
+            }
+            alloc._lane = lane;
+            if (end > clusterMaxEnd) clusterMaxEnd = end;
+        }
+        closeCluster(list.length);
+    }
+
+    // Vertical offset (in pixels) of a bar's center from its row's center line.
+    // Lanes in a multi-lane cluster are stacked by their actual heights plus
+    // barMargin between them, and the whole stack is centered on the row, so a
+    // cluster mixing bar heights still lays out without overlap. Offsets are
+    // computed once per cluster and cached until barHeight/barMargin change.
+    // Single-lane bars sit exactly on the center line (offset 0).
+    _stackOffset(alloc) {
+        const cluster = alloc._cluster;
+        if (!cluster || cluster.laneHeights.length <= 1) return 0;
+
+        const c = this.config;
+        const key = c.barHeight + '|' + c.barMargin;
+        if (cluster.key !== key) {
+            const heights = cluster.laneHeights;
+            const count = heights.length;
+            let total = c.barMargin * (count - 1);
+            for (let i = 0; i < count; i++) total += heights[i] || c.barHeight;
+
+            const offsets = new Array(count);
+            let y = -total / 2;
+            for (let i = 0; i < count; i++) {
+                const h = heights[i] || c.barHeight;
+                offsets[i] = y + h / 2;
+                y += h + c.barMargin;
+            }
+            cluster.offsets = offsets;
+            cluster.key = key;
+        }
+        return cluster.offsets[alloc._lane];
     }
 
     // Binary-searches a resource's startTime-sorted allocations for the first

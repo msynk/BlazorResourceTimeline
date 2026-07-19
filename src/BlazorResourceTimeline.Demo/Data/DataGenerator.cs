@@ -57,6 +57,10 @@ public static class DataGenerator
     // Fraction of bars that receive one or more decorative icons.
     private const double IconProbability = 0.35;
 
+    // Fraction of bars that get a second bar overlapping them in time, so the
+    // overlap stacking (the bar-margin option) has something to demonstrate.
+    private const double OverlapProbability = 0.15;
+
     // Positions an icon can be anchored to, picked at random per icon.
     private static readonly BlazorResourceTimelineBarIconPosition[] IconPositions =
     [
@@ -354,6 +358,31 @@ public static class DataGenerator
 
             allocations.Add(allocation);
             lastEndTime = endTime;
+
+            // Occasionally add a companion bar overlapping this one. It starts
+            // partway into the bar and runs about as long, so the pair overlaps
+            // without swallowing the neighbouring slots.
+            if (random.NextDouble() < OverlapProbability)
+            {
+                var overlapStart = startTime + (long)(duration * (0.2 + random.NextDouble() * 0.5));
+                var overlapEnd = Math.Min(overlapStart + duration, endMs);
+                if (overlapEnd - overlapStart >= minDuration)
+                {
+                    allocations.Add(new BlazorResourceTimelineAllocation
+                    {
+                        Id = $"cons-{resource.Id}-{i}-ovl",
+                        ResourceId = resource.Id,
+                        StartTime = DateTimeOffset.FromUnixTimeMilliseconds(overlapStart),
+                        EndTime = DateTimeOffset.FromUnixTimeMilliseconds(overlapEnd),
+                        Color = overlapStart < nowMs ? PastColor : FutureColor,
+                        TextAbove = $"{abbrev}{resourceNum}",
+                        TextBelow = AbbreviateDuration(overlapEnd - overlapStart),
+                        TextStart = AbbreviateTime(overlapStart),
+                        TextEnd = AbbreviateTime(overlapEnd)
+                    });
+                    lastEndTime = Math.Max(lastEndTime, overlapEnd);
+                }
+            }
         }
     }
 
