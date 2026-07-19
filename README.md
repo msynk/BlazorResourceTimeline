@@ -1,6 +1,7 @@
 # BlazorResourceTimeline
 
-A high-performance, canvas-based **resource-timeline / planner** component for ASP.NET Core Blazor.
+A high-performance **resource-timeline / planner** component for ASP.NET Core Blazor,
+with pluggable canvas, SVG and HTML renderers (canvas by default).
 
 It renders a wide time window along the horizontal axis and a list of resources
 along the vertical axis, drawing allocation bars in the grid between them. It is
@@ -10,8 +11,13 @@ lot of data must stay readable and interactive.
 
 ## Features
 
-- **Canvas rendering** with HiDPI/Retina crispness (`ResizeObserver` +
-  `device-pixel-content-box`) and per-frame culling for large datasets.
+- **Pluggable renderers**: one engine (data, layout, interaction) driving your
+  choice of renderer via `Options.Renderer` — **Canvas** (default; HiDPI/Retina
+  crispness via `ResizeObserver` + `device-pixel-content-box`, fastest for dense
+  data), **SVG** (resolution-independent, inspectable, print friendly) or
+  **HTML** (each bar is a real, CSS-styleable element). Per-frame culling keeps
+  all three bounded by what is visible, and the renderer can be switched at
+  runtime.
 - **Zoom** from a multi-day overview down to hour-level detail
   (`Ctrl`/`Cmd` + mouse wheel, trackpad pinch, or the programmatic API), with
   adaptive tick/label density.
@@ -27,7 +33,7 @@ lot of data must stay readable and interactive.
 - **On-demand (windowed) loading**: for effectively unbounded datasets, serve
   only the visible time window (plus a buffer) via a callback; the renderer
   refetches as the user scrolls/zooms.
-- **Resource-column template**: replace the canvas-drawn resource labels with a
+- **Resource-column template**: replace the renderer-drawn resource labels with a
   rich, interactive HTML template per row (badges, links, avatars, …).
 - **Keyboard & screen-reader accessible**: focusable region with `role`/
   `aria-label`, arrow-key bar navigation, keyboard selection, and live-region
@@ -125,7 +131,7 @@ instance to re-apply at runtime (e.g. to switch themes or time zone):
 ## Editing
 
 Set `Options.Editable = true` to let users move and resize allocations directly
-on the canvas (mouse/pen):
+on the timeline (mouse/pen):
 
 - **Move** – drag a bar's body to shift it in time. Unless
   `AllowResourceChange` is `false`, dragging vertically also reassigns it to the
@@ -165,8 +171,8 @@ reject an edit, revert the instance in your handler and call `ReloadAsync()`.
 
 ## Resource-column template
 
-By default the sticky resource column is drawn on the canvas (fast, plain text).
-For richer, interactive content set `ResourceTemplate`: the canvas then stops
+By default the sticky resource column is drawn by the renderer (fast, plain text).
+For richer, interactive content set `ResourceTemplate`: the renderer then stops
 drawing the labels and an HTML overlay renders your template once per visible row
 (row counts are bounded, so this stays cheap). Group rows automatically get an
 expand/collapse chevron before your content, and the overlay follows vertical

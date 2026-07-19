@@ -3,11 +3,12 @@
 @implements IAsyncDisposable
 
 <div class="timeline-container">
+    @* The active renderer (canvas/SVG/HTML) creates its surface element
+       inside this wrapper when the JS module initializes. *@
     <div class="timeline-wrapper" @ref="_wrapperElement"
          tabindex="0" role="application" aria-label="@AriaLabel"
          aria-roledescription="Resource timeline"
          aria-keyshortcuts="@KeyShortcuts">
-        <canvas @ref="_canvasElement"></canvas>
     </div>
     @if (TopStartContent is not null)
     {
@@ -64,7 +65,6 @@
     private BlazorResourceTimelineLayout _layout = new(150, 60, 40);
 
     private ElementReference _wrapperElement;
-    private ElementReference _canvasElement;
     private ElementReference _resourceOverlayInner;
 
     // Visible rows reported by the renderer, used to render the resource-column
@@ -129,7 +129,7 @@
     [Parameter] public EventCallback<BlazorResourceTimelineAllocation[]> OnSelectionChanged { get; set; }
 
     /// <summary>
-    /// Raised after an allocation is moved or resized in the canvas (only when
+    /// Raised after an allocation is moved or resized in the timeline (only when
     /// editing is enabled via <see cref="BlazorResourceTimelineOptions.Editable"/>).
     /// The argument is the same instance supplied in <see cref="Config"/>, already
     /// updated in place with its new <see cref="BlazorResourceTimelineAllocation.StartTime"/>,
@@ -148,7 +148,7 @@
 
     /// <summary>
     /// Optional template for each row in the sticky resource column. When set, the
-    /// canvas stops drawing the resource labels and an HTML overlay renders this
+    /// renderer stops drawing the resource labels and an HTML overlay renders this
     /// template per visible row instead, enabling rich, interactive content
     /// (badges, links, avatars, etc.). Group rows automatically get an
     /// expand/collapse chevron before the template. The overlay follows vertical
@@ -218,7 +218,7 @@
             _selfRef = DotNetObjectReference.Create(this);
             _jsModule = await JS.InvokeAsync<IJSObjectReference>("import", ModulePath);
             _timelineInstance = await _jsModule.InvokeAsync<IJSObjectReference>(
-                "createTimeline", _canvasElement, _selfRef, Options);
+                "createTimeline", _wrapperElement, _selfRef, Options);
             _loadedOptions = Options;
 
             // Read the effective layout back so the top-start corner overlay is
@@ -227,7 +227,7 @@
             StateHasChanged();
 
             // Enable the HTML resource-column overlay before loading data, so the
-            // canvas suppresses its own labels and the renderer reports its rows.
+            // renderer suppresses its own labels and the engine reports its rows.
             if (ResourceTemplate is not null)
             {
                 await _timelineInstance.InvokeVoidAsync("enableResourceTemplate", _resourceOverlayInner);

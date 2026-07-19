@@ -30,14 +30,16 @@ public class ComponentTests : BunitContext
     };
 
     [Fact]
-    public void Renders_Container_And_Canvas()
+    public void Renders_Container_And_Wrapper()
     {
         JSInterop.Mode = JSRuntimeMode.Loose;
 
         var cut = Render<TimelineComponent>(p => p.Add(c => c.Config, SampleConfig()));
 
+        // The renderer's surface element (canvas/svg/div) is created by JS at
+        // runtime, so only the container and the wrapper exist in the markup.
         Assert.NotNull(cut.Find(".timeline-container"));
-        Assert.NotNull(cut.Find("canvas"));
+        Assert.NotNull(cut.Find(".timeline-wrapper"));
     }
 
     [Fact]

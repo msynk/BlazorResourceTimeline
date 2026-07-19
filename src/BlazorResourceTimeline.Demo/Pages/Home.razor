@@ -40,6 +40,14 @@
                 <input type="checkbox" @bind="_customColumn" />
                 Custom column
             </label>
+            <label title="Which technology paints the timeline; behavior is identical across renderers">
+                Renderer
+                <select @bind="_renderer" @bind:after="ApplyOptions">
+                    <option value="canvas">Canvas</option>
+                    <option value="svg">SVG</option>
+                    <option value="html">HTML</option>
+                </select>
+            </label>
             <label>
                 Time zone
                 <select @bind="_timeZone" @bind:after="ApplyOptions">
@@ -143,6 +151,7 @@
     private IReadOnlyList<BlazorResourceTimelineAllocation> _selectedBars = Array.Empty<BlazorResourceTimelineAllocation>();
     private int _days = 100;
     private int _barHeight = 4;
+    private string _renderer = "canvas";
     private string _timeZone = "";
     private bool _editable;
     private bool _windowed;
@@ -409,7 +418,13 @@
     private BlazorResourceTimelineOptions BuildOptions() => new()
     {
         TimeZone = string.IsNullOrEmpty(_timeZone) ? null : _timeZone,
-        Editable = _editable
+        Editable = _editable,
+        Renderer = _renderer switch
+        {
+            "svg" => BlazorResourceTimelineRendererType.Svg,
+            "html" => BlazorResourceTimelineRendererType.Html,
+            _ => BlazorResourceTimelineRendererType.Canvas,
+        },
     };
 
     // The component has already applied the move/resize to this instance in

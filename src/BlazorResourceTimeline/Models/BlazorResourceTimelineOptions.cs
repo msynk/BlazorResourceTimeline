@@ -7,7 +7,7 @@ namespace BlazorResourceTimeline.Models;
 /// sizing, fonts and colors. Every property is nullable; those left <c>null</c>
 /// keep the renderer's defaults, so a partial instance overrides only what it
 /// sets. Assign to the component's <c>Options</c> parameter. Assigning a new
-/// instance re-applies the options (and re-lays-out the canvas).
+/// instance re-applies the options (and re-lays-out the timeline).
 /// </summary>
 public class BlazorResourceTimelineOptions
 {
@@ -98,7 +98,7 @@ public class BlazorResourceTimelineOptions
     public double? MaxPixelsPerHour { get; set; }
 
     /// <summary>
-    /// Enables in-canvas editing: allocations can be dragged to move them in time
+    /// Enables in-timeline editing: allocations can be dragged to move them in time
     /// (and, unless <see cref="AllowResourceChange"/> is <c>false</c>, onto another
     /// resource row) or grabbed near an edge to resize their start/end. Commits
     /// are reported via the component's <c>OnAllocationChanged</c> callback.
@@ -175,6 +175,18 @@ public class BlazorResourceTimelineOptions
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? WindowDebounceMs { get; set; }
+
+    /// <summary>
+    /// Which renderer paints the timeline:
+    /// <see cref="BlazorResourceTimelineRendererType.Canvas"/> (the default),
+    /// <see cref="BlazorResourceTimelineRendererType.Svg"/> or
+    /// <see cref="BlazorResourceTimelineRendererType.Html"/>. All renderers share
+    /// the same engine, so data, interaction and events behave identically.
+    /// Assigning a new Options instance with a different value switches the
+    /// renderer at runtime.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public BlazorResourceTimelineRendererType? Renderer { get; set; }
 
     /// <summary>Color overrides. Individual colors left <c>null</c> keep their defaults.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
