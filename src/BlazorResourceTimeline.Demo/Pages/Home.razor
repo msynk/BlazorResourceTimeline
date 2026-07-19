@@ -346,8 +346,8 @@
             private void HandleContextMenu(BlazorResourceTimelineContextMenuArgs args)
             {
                 // Raised on right-click (the native browser menu is suppressed).
-                // args identifies what was hit — Allocation (null on empty space),
-                // Resource and Time — plus ClientX/ClientY to position your menu.
+                // args identifies what was hit - Allocation (null on empty space),
+                // Resource and Time - plus ClientX/ClientY to position your menu.
                 Console.WriteLine($"Context menu on {args.Allocation?.Id ?? args.Resource?.Id}");
             }
         }

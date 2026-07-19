@@ -25,7 +25,7 @@
 }
 
 /* The renderer's surface element (canvas, svg or div depending on the active
-   renderer), created by JS inside the wrapper — hence ::deep. Sticky so it
+   renderer), created by JS inside the wrapper - hence ::deep. Sticky so it
    stays pinned over the viewport while the wrapper scrolls the spacer. */
 ::deep .timeline-surface {
     display: block;

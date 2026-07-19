@@ -5,14 +5,14 @@ with pluggable canvas, SVG and HTML renderers (canvas by default).
 
 It renders a wide time window along the horizontal axis and a list of resources
 along the vertical axis, drawing allocation bars in the grid between them. It is
-built for dense, glanceable planning boards — flight/gate planning, train
-scheduling, fleet and crew rostering, and similar transport use-cases — where a
+built for dense, glanceable planning boards - flight/gate planning, train
+scheduling, fleet and crew rostering, and similar transport use-cases - where a
 lot of data must stay readable and interactive.
 
 ## Features
 
 - **Pluggable renderers**: one engine (data, layout, interaction) driving your
-  choice of renderer via `Options.Renderer` — **Canvas** (default; HiDPI/Retina
+  choice of renderer via `Options.Renderer` - **Canvas** (default; HiDPI/Retina
   crispness via `ResizeObserver` + `device-pixel-content-box`, fastest for dense
   data), **SVG** (resolution-independent, inspectable, print friendly) or
   **HTML** (each bar is a real, CSS-styleable element). Per-frame culling keeps
@@ -27,8 +27,8 @@ lot of data must stay readable and interactive.
   resource), or grab an edge to resize it, with configurable snapping and a
   change callback back to .NET.
 - **Context menu (right-click)**: the native browser menu is suppressed and a
-  callback reports what was hit — the bar, the resource row, the time under the
-  pointer and the click's viewport coordinates — so you can render your own menu.
+  callback reports what was hit - the bar, the resource row, the time under the
+  pointer and the click's viewport coordinates - so you can render your own menu.
 - **Overlap stacking**: allocations that overlap in time on the same row are
   automatically stacked apart instead of drawn on top of each other, with the
   gap controlled by `Options.BarMargin`.
@@ -191,7 +191,7 @@ was under the pointer and where the click happened on screen:
 | `ClientX` / `ClientY` | Viewport coordinates of the click, suited to a `position: fixed` menu. |
 
 It fires for bars, for empty space in the content area, and for resource-axis
-rows — but not for the time axis. Right-clicking never changes the selection, so
+rows - but not for the time axis. Right-clicking never changes the selection, so
 an existing multi-selection survives opening a menu.
 
 ```razor
@@ -219,7 +219,7 @@ an existing multi-selection survives opening a menu.
 ```
 
 Remember to close the menu yourself (for example from a backdrop click or
-`Escape`) — the component only reports the event.
+`Escape`) - the component only reports the event.
 
 ## Overlapping allocations
 
@@ -231,7 +231,7 @@ keeps sitting exactly on that line, so simple rows look unchanged.
 
 `Options.BarMargin` (default `2`) sets the vertical gap between stacked bars;
 `0` stacks them touching. Lane positions account for the **actual height** of the
-bars in each lane — `Options.BarHeight` or an allocation's own `Height` — so a
+bars in each lane - `Options.BarHeight` or an allocation's own `Height` - so a
 cluster mixing bar heights still lays out without overlap. Bars that merely touch
 (one ends the instant the next starts) are not treated as overlapping.
 
@@ -363,25 +363,25 @@ Capture the component with `@ref` to drive it from code:
 
 ## Notable parameters
 
-- `Config` — resources, time window, and allocation bars.
-- `Options` — visual/behavioral configuration.
-- `OnSelectionChanged` — raised with the selected allocations (your own instances).
-- `OnAllocationChanged` — raised after a move/resize (editing) with the updated instance.
-- `OnContextMenu` — raised on right-click with the bar/resource/time under the
+- `Config` - resources, time window, and allocation bars.
+- `Options` - visual/behavioral configuration.
+- `OnSelectionChanged` - raised with the selected allocations (your own instances).
+- `OnAllocationChanged` - raised after a move/resize (editing) with the updated instance.
+- `OnContextMenu` - raised on right-click with the bar/resource/time under the
   pointer and the click's viewport coordinates.
-- `AriaLabel` — accessible name (default `"Resource timeline"`).
-- `LoadBatchSize` — allocations per interop call for streaming large datasets
+- `AriaLabel` - accessible name (default `"Resource timeline"`).
+- `LoadBatchSize` - allocations per interop call for streaming large datasets
   (default `10000`; `0` sends everything at once).
-- `LoadingMinDurationMs` — minimum time the loading overlay stays visible
+- `LoadingMinDurationMs` - minimum time the loading overlay stays visible
   (default `0`).
-- `TopStartContent` / `LoadingContent` — custom render fragments for the
+- `TopStartContent` / `LoadingContent` - custom render fragments for the
   top-start corner and the loading overlay.
 
 ## Repository layout
 
-- `src/BlazorResourceTimeline` — the component library.
-- `src/BlazorResourceTimeline.Demo` — a Blazor WebAssembly demo.
-- `tests/BlazorResourceTimeline.Tests` — unit tests.
+- `src/BlazorResourceTimeline` - the component library.
+- `src/BlazorResourceTimeline.Demo` - a Blazor WebAssembly demo.
+- `tests/BlazorResourceTimeline.Tests` - unit tests.
 
 ## Building
 

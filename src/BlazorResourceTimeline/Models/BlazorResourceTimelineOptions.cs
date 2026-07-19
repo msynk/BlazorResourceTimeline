@@ -73,7 +73,7 @@ public class BlazorResourceTimelineOptions
     public int? HitTolerance { get; set; }
 
     /// <summary>
-    /// IANA time zone id the time axis is drawn in — day and hour boundaries and
+    /// IANA time zone id the time axis is drawn in - day and hour boundaries and
     /// their labels are computed in this zone (for example <c>"UTC"</c> for
     /// aviation/Zulu time, or <c>"Europe/Berlin"</c>). <c>null</c> uses the
     /// viewer's local zone. Allocation times themselves are absolute instants and

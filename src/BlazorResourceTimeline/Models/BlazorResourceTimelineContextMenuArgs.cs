@@ -15,7 +15,7 @@ public sealed class BlazorResourceTimelineContextMenuArgs
     public BlazorResourceTimelineAllocation? Allocation { get; init; }
 
     /// <summary>
-    /// The resource row under the pointer — set for clicks on bars, on empty
+    /// The resource row under the pointer - set for clicks on bars, on empty
     /// content slots and on resource-axis rows; <c>null</c> below the last row.
     /// </summary>
     public BlazorResourceTimelineResource? Resource { get; init; }

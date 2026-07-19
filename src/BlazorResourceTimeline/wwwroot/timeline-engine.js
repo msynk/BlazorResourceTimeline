@@ -1,11 +1,11 @@
 // Rendering-agnostic engine for the BlazorResourceTimeline component.
 //
-// The engine owns all timeline behavior — data and hierarchy indexing,
+// The engine owns all timeline behavior - data and hierarchy indexing,
 // scroll/zoom and virtual-scroll math, pointer/keyboard interaction,
 // hit-testing, selection, editing, tooltips, on-demand (windowed) loading and
 // the .NET interop surface. What it does NOT do is paint: every frame it
 // builds a viewport-culled scene (a plain display list, see buildScene) and
-// hands it to a pluggable renderer (canvas, SVG or HTML — see ./renderers).
+// hands it to a pluggable renderer (canvas, SVG or HTML - see ./renderers).
 //
 // The renderer contract:
 //   surface            root element; the engine binds pointer/wheel events to
@@ -675,7 +675,7 @@ export class TimelineEngine {
     //
     // The scene is a plain display list for one frame, already culled to the
     // viewport, with every coordinate in CSS pixels of viewport space. It is
-    // semantic (bars, ticks, rows — not raw rects) so retained-mode renderers
+    // semantic (bars, ticks, rows - not raw rects) so retained-mode renderers
     // (SVG/HTML) can produce meaningful elements, while the canvas renderer
     // paints it immediate-mode. Draw order for renderers:
     //   background -> grid -> bars -> now line -> sticky axes -> marquee -> ghost
@@ -914,7 +914,7 @@ export class TimelineEngine {
                 if (this._effectiveStartTime(alloc) > visEnd) continue;
 
                 // Per-bar height (falls back to the configured default),
-                // centered on the row's center line — offset when the bar is
+                // centered on the row's center line - offset when the bar is
                 // part of an overlapping cluster, so stacked bars are drawn
                 // barMargin apart instead of on top of each other.
                 const barHeight = alloc.height && alloc.height > 0 ? alloc.height : c.barHeight;
@@ -1377,8 +1377,8 @@ export class TimelineEngine {
     }
 
     // Right-click (or long-press, where the browser maps it to contextmenu):
-    // the native browser menu is always suppressed — it would cover the
-    // timeline — and the hit under the pointer is reported to .NET so the host
+    // the native browser menu is always suppressed - it would cover the
+    // timeline - and the hit under the pointer is reported to .NET so the host
     // can show its own menu. Reports the bar (when one is hit), the resource
     // row and the time under the pointer; on the resource axis only the row.
     // Clicks on the time axis or the corner report nothing.
@@ -2452,7 +2452,7 @@ export class TimelineEngine {
     // Each lane also records the tallest explicit per-bar height it holds (0
     // when every bar in it uses the configured default), so _stackOffset can
     // lay lanes out by their real heights. Only lane membership is decided
-    // here — the pixel offsets depend on barHeight/barMargin, which can change
+    // here - the pixel offsets depend on barHeight/barMargin, which can change
     // via setOptions without reloading data, so they are derived lazily.
     _assignStackLanes(list) {
         let clusterStart = 0;
