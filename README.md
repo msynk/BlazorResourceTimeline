@@ -26,6 +26,12 @@ lot of data must stay readable and interactive.
 - **Editing** (opt-in): drag a bar to move it in time (or onto another
   resource), or grab an edge to resize it, with configurable snapping and a
   change callback back to .NET.
+- **Context menu (right-click)**: the native browser menu is suppressed and a
+  callback reports what was hit — the bar, the resource row, the time under the
+  pointer and the click's viewport coordinates — so you can render your own menu.
+- **Overlap stacking**: allocations that overlap in time on the same row are
+  automatically stacked apart instead of drawn on top of each other, with the
+  gap controlled by `Options.BarMargin`.
 - **Hover tooltips**: per-bar tooltips (custom text or an auto-generated
   default), on by default and configurable.
 - **Resource hierarchy**: nest resources into multi-level, collapsible groups
@@ -123,6 +129,8 @@ instance to re-apply at runtime (e.g. to switch themes or time zone):
     {
         TimeZone = "UTC",
         ResourceHeight = 44,
+        BarHeight = 8,
+        BarMargin = 2, // gap between bars that overlap in time on the same row
         Colors = new() { Bar = "#74c0fc", Now = "#e03131" },
     };
 }
@@ -168,6 +176,81 @@ start edge, and `Alt`+`↑`/`↓` to change resource.
 
 The renderer applies edits optimistically (the bar updates immediately). To
 reject an edit, revert the instance in your handler and call `ReloadAsync()`.
+
+## Context menu (right-click)
+
+Right-clicking the timeline suppresses the browser's own menu and raises
+`OnContextMenu` with everything needed to show your own. The args identify what
+was under the pointer and where the click happened on screen:
+
+| Property | Description |
+| --- | --- |
+| `Allocation` | The bar under the pointer, or `null` when the click missed every bar. Your own instance from `Config`. |
+| `Resource` | The row under the pointer; `null` below the last row. |
+| `Time` | The time at the pointer's horizontal position; `null` on the resource axis (which has no time coordinate). |
+| `ClientX` / `ClientY` | Viewport coordinates of the click, suited to a `position: fixed` menu. |
+
+It fires for bars, for empty space in the content area, and for resource-axis
+rows — but not for the time axis. Right-clicking never changes the selection, so
+an existing multi-selection survives opening a menu.
+
+```razor
+<BlazorResourceTimeline Config="_config" OnContextMenu="ShowMenu" />
+
+@if (_menu is { } menu)
+{
+    <div class="my-menu" style="position:fixed;left:@((int)menu.ClientX)px;top:@((int)menu.ClientY)px">
+        @if (menu.Allocation is { } bar)
+        {
+            <button @onclick="() => Delete(bar)">Delete @bar.Id</button>
+        }
+        else if (menu.Time is { } time)
+        {
+            <button @onclick="() => Create(menu.Resource, time)">New allocation here…</button>
+        }
+    </div>
+}
+
+@code {
+    private BlazorResourceTimelineContextMenuArgs? _menu;
+
+    private void ShowMenu(BlazorResourceTimelineContextMenuArgs args) => _menu = args;
+}
+```
+
+Remember to close the menu yourself (for example from a backdrop click or
+`Escape`) — the component only reports the event.
+
+## Overlapping allocations
+
+Allocations that overlap in time on the same resource row are laid out in
+vertical **lanes** rather than drawn on top of each other. Overlapping bars are
+grouped into clusters, each bar takes the first lane free at its start time, and
+the cluster is centered on the row's center line. A bar that overlaps nothing
+keeps sitting exactly on that line, so simple rows look unchanged.
+
+`Options.BarMargin` (default `2`) sets the vertical gap between stacked bars;
+`0` stacks them touching. Lane positions account for the **actual height** of the
+bars in each lane — `Options.BarHeight` or an allocation's own `Height` — so a
+cluster mixing bar heights still lays out without overlap. Bars that merely touch
+(one ends the instant the next starts) are not treated as overlapping.
+
+```razor
+<BlazorResourceTimeline Config="_config" Options="_options" />
+
+@code {
+    private BlazorResourceTimelineOptions _options = new()
+    {
+        BarHeight = 10,
+        BarMargin = 4, // 4 px between bars that overlap in time
+    };
+}
+```
+
+> **Note:** a tall stack can outgrow its row. A cluster needs
+> `sum(bar heights) + BarMargin × (lanes − 1)` pixels; raise
+> `Options.ResourceHeight` (or lower `BarHeight`/`BarMargin`) when dense overlaps
+> would otherwise spill into the neighbouring row.
 
 ## Resource-column template
 
@@ -284,6 +367,8 @@ Capture the component with `@ref` to drive it from code:
 - `Options` — visual/behavioral configuration.
 - `OnSelectionChanged` — raised with the selected allocations (your own instances).
 - `OnAllocationChanged` — raised after a move/resize (editing) with the updated instance.
+- `OnContextMenu` — raised on right-click with the bar/resource/time under the
+  pointer and the click's viewport coordinates.
 - `AriaLabel` — accessible name (default `"Resource timeline"`).
 - `LoadBatchSize` — allocations per interop call for streaming large datasets
   (default `10000`; `0` sends everything at once).
