@@ -1,9 +1,9 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/BlazorResourceTimeline.Demo/BlazorResourceTimeline.Demo.csproj" />
-    <Project Path="src/BlazorResourceTimeline/BlazorResourceTimeline.csproj" />
+    <Project Path="BlazorResourceTimeline.Demo/BlazorResourceTimeline.Demo.csproj" />
+    <Project Path="BlazorResourceTimeline/BlazorResourceTimeline.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/BlazorResourceTimeline.Tests/BlazorResourceTimeline.Tests.csproj" />
+    <Project Path="BlazorResourceTimeline.Tests/BlazorResourceTimeline.Tests.csproj" />
   </Folder>
 </Solution>

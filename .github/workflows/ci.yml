@@ -28,13 +28,13 @@ jobs:
         run: dotnet workload install wasm-tools
 
       - name: Restore
-        run: dotnet restore BlazorResourceTimeline.slnx
+        run: dotnet restore src/BlazorResourceTimeline.slnx
 
       - name: Build
-        run: dotnet build BlazorResourceTimeline.slnx -c Release --no-restore
+        run: dotnet build src/BlazorResourceTimeline.slnx -c Release --no-restore
 
       - name: Test
-        run: dotnet test BlazorResourceTimeline.slnx -c Release --no-build --verbosity normal
+        run: dotnet test src/BlazorResourceTimeline.slnx -c Release --no-build --verbosity normal
 
       - name: Pack
         run: dotnet pack src/BlazorResourceTimeline/BlazorResourceTimeline.csproj -c Release --no-build -o artifacts
