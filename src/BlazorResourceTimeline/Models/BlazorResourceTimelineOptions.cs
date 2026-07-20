@@ -64,6 +64,34 @@ public class BlazorResourceTimelineOptions
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? BarIconSize { get; set; }
 
+    /// <summary>
+    /// CSS font shorthand for the day labels on the time axis (default <c>"12px sans-serif"</c>).
+    /// The component measures day labels in this font to pin them while a day scrolls past, so
+    /// it must match what is actually drawn.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? DateLabelFont { get; set; }
+
+    /// <summary>CSS font shorthand for the hour-of-day labels on the time axis (default <c>"12px sans-serif"</c>).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? HourLabelFont { get; set; }
+
+    /// <summary>CSS font shorthand for leaf resource names in the resource column (default <c>"13px sans-serif"</c>).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ResourceLabelFont { get; set; }
+
+    /// <summary>CSS font shorthand for group (parent) resource names (default <c>"bold 13px sans-serif"</c>).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ResourceGroupFont { get; set; }
+
+    /// <summary>CSS font shorthand for the group expand/collapse chevron (default <c>"10px sans-serif"</c>).</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ResourceChevronFont { get; set; }
+
+    /// <summary>Horizontal gap between a group row's chevron and its name, in pixels.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ResourceChevronGap { get; set; }
+
     /// <summary>Pointer movement (in pixels) before a press becomes a marquee drag rather than a click.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? DragThreshold { get; set; }

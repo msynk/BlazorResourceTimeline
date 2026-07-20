@@ -95,11 +95,12 @@ export class CanvasRenderer {
         if (this.surface.width === 0 || this.surface.height === 0) return;
         const ctx = this.ctx;
 
-        // Clear in device pixels, then draw in CSS pixels: the transform maps
-        // CSS-pixel drawing onto the (possibly higher-resolution) device-pixel
-        // backing store.
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.clearRect(0, 0, this.surface.width, this.surface.height);
+        // Draw in CSS pixels: the transform maps CSS-pixel drawing onto the
+        // (possibly higher-resolution) device-pixel backing store.
+        //
+        // No clearRect: the context is opaque (alpha: false) and _drawBackground
+        // immediately fills the entire viewport, so clearing first was a wasted
+        // full-surface fill - on a 4K display at 2x that is ~33M pixels a frame.
         ctx.setTransform(this._scaleX, 0, 0, this._scaleY, 0, 0);
 
         // z-order: background -> grid -> bars -> now line -> sticky axes ->
@@ -129,29 +130,37 @@ export class CanvasRenderer {
         this.ctx.fillRect(v.axisWidth, 0, contentWidth, v.axisHeight);
     }
 
+    // All grid lines share one style, so they go into a single path with one
+    // stroke instead of a begin/stroke pair each - dozens of rasterizer setups
+    // per frame otherwise. The half-pixel offset puts a 1px line inside a pixel
+    // row rather than straddling two, which is what made the grid look blurry.
     _drawGrid(scene) {
         const ctx = this.ctx;
         const v = scene.viewport;
         ctx.strokeStyle = scene.config.colors.grid;
         ctx.lineWidth = 1;
 
+        ctx.beginPath();
         for (const y of scene.gridH) {
-            ctx.beginPath();
-            ctx.moveTo(v.axisWidth, y);
-            ctx.lineTo(v.width, y);
-            ctx.stroke();
+            const py = Math.round(y) + 0.5;
+            ctx.moveTo(v.axisWidth, py);
+            ctx.lineTo(v.width, py);
         }
         for (const x of scene.gridV) {
-            ctx.beginPath();
-            ctx.moveTo(x, v.axisHeight);
-            ctx.lineTo(x, v.height);
-            ctx.stroke();
+            const px = Math.round(x) + 0.5;
+            ctx.moveTo(px, v.axisHeight);
+            ctx.lineTo(px, v.height);
         }
+        ctx.stroke();
     }
 
     _drawBars(scene) {
         const ctx = this.ctx;
         const c = scene.config;
+        // Assigning ctx.font re-parses the font string, so it is set once for
+        // the whole pass rather than per labelled bar. fillStyle cannot be
+        // hoisted the same way - each bar's fill overwrites it.
+        let fontSet = false;
 
         for (const bar of scene.bars) {
             if (bar.edges) {
@@ -190,7 +199,10 @@ export class CanvasRenderer {
             }
 
             if (bar.labels) {
-                ctx.font = c.barLabelFont;
+                if (!fontSet) {
+                    ctx.font = c.barLabelFont;
+                    fontSet = true;
+                }
                 ctx.fillStyle = c.colors.barLabel;
                 for (const label of bar.labels) {
                     ctx.textAlign = label.align;
@@ -250,36 +262,41 @@ export class CanvasRenderer {
         ctx.lineTo(visibleEndX, dateRowHeight);
         ctx.stroke();
 
-        // Date row: separators and pinned labels.
-        ctx.font = '12px sans-serif';
-        ctx.textBaseline = 'middle';
+        // Date row: separators batched into one stroke, then the pinned labels.
+        ctx.strokeStyle = colors.axisBorder;
+        ctx.beginPath();
         for (const day of scene.days) {
-            if (day.sepX != null) {
-                ctx.strokeStyle = colors.axisBorder;
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.moveTo(day.sepX, 0);
-                ctx.lineTo(day.sepX, dateRowHeight);
-                ctx.stroke();
-            }
+            if (day.sepX == null) continue;
+            const px = Math.round(day.sepX) + 0.5;
+            ctx.moveTo(px, 0);
+            ctx.lineTo(px, dateRowHeight);
+        }
+        ctx.stroke();
+
+        ctx.font = scene.config.dateLabelFont;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = colors.dateLabel;
+        for (const day of scene.days) {
             if (day.label != null) {
-                ctx.fillStyle = colors.dateLabel;
-                ctx.textAlign = 'left';
                 ctx.fillText(day.label, day.labelX, day.labelY);
             }
         }
 
-        // Hour row: ticks and hour-of-day labels.
-        ctx.textAlign = 'center';
+        // Hour row: ticks batched into one stroke, then the hour-of-day labels.
+        ctx.strokeStyle = colors.tick;
+        ctx.beginPath();
         for (const tick of scene.hourTicks) {
-            ctx.strokeStyle = colors.tick;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(tick.x, axisHeight - 8);
-            ctx.lineTo(tick.x, axisHeight);
-            ctx.stroke();
+            const px = Math.round(tick.x) + 0.5;
+            ctx.moveTo(px, axisHeight - 8);
+            ctx.lineTo(px, axisHeight);
+        }
+        ctx.stroke();
 
-            ctx.fillStyle = colors.label;
+        ctx.textAlign = 'center';
+        ctx.font = scene.config.hourLabelFont;
+        ctx.fillStyle = colors.label;
+        for (const tick of scene.hourTicks) {
             ctx.fillText(tick.label, tick.x, tick.labelY);
         }
     }
@@ -315,22 +332,22 @@ export class CanvasRenderer {
         ctx.rect(0, startY, axisWidth - 1, visibleEndY - startY);
         ctx.clip();
 
+        const c = scene.config;
+        ctx.textAlign = 'left';
         for (const row of scene.resourceRows) {
             if (row.hasChildren) {
                 // Chevron: ▸ collapsed, ▾ expanded. Drawn left-aligned at the
                 // row's indent; clicking this band toggles the group.
                 ctx.fillStyle = colors.label;
-                ctx.textAlign = 'left';
-                ctx.font = '10px sans-serif';
+                ctx.font = c.resourceChevronFont;
                 ctx.fillText(row.collapsed ? '▶' : '▼', row.leftPad, row.midY);
 
                 ctx.fillStyle = colors.dateLabel;
-                ctx.font = 'bold 13px sans-serif';
-                ctx.fillText(row.name, row.leftPad + 14, row.midY);
+                ctx.font = c.resourceGroupFont;
+                ctx.fillText(row.name, row.leftPad + c.resourceChevronGap, row.midY);
             } else {
                 ctx.fillStyle = colors.label;
-                ctx.textAlign = 'left';
-                ctx.font = '13px sans-serif';
+                ctx.font = c.resourceLabelFont;
                 ctx.fillText(row.name, row.leftPad, row.midY);
             }
         }

@@ -36,6 +36,16 @@ jobs:
       - name: Test
         run: dotnet test src/BlazorResourceTimeline.slnx -c Release --no-build --verbosity normal
 
+      # The rendering engine is JavaScript; its layout, time-zone and indexing
+      # logic is covered by node's built-in test runner (no npm dependencies).
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Test (rendering engine)
+        run: node --test "tests/js/**/*.test.mjs"
+
       - name: Pack
         run: dotnet pack src/BlazorResourceTimeline/BlazorResourceTimeline.csproj -c Release --no-build -o artifacts
 

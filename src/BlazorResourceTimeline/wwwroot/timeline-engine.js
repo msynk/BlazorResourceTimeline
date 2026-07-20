@@ -16,6 +16,23 @@
 // Renderers receive a host object ({ requestRender, getImage }) for async
 // needs such as icon images finishing loading.
 
+import { ZonedTime } from './zoned-time.js';
+import { Tooltip } from './tooltip.js';
+
+// Consecutive render failures logged before the engine goes quiet about them.
+const MAX_RENDER_ERROR_LOGS = 3;
+
+// Upper bound on cached bar-icon images. Icons are drawn from a small, stable
+// set in practice; the cap only matters for hosts that mint per-bar image URLs,
+// where an unbounded cache would grow without limit.
+const MAX_IMAGE_CACHE = 256;
+
+// Shared empty row index, returned for resources with no allocations so hot
+// scan paths never have to null-check. Never mutated.
+const EMPTY_ROW_INDEX = Object.freeze({
+    items: Object.freeze([]), maxStartEdgeMs: 0, maxSpanMs: 0
+});
+
 export class TimelineEngine {
     constructor(wrapper, dotNetRef, options, rendererRegistry) {
         // The wrapper (scroll viewport) element is passed directly from Blazor
@@ -49,6 +66,17 @@ export class TimelineEngine {
             barLabelFont: '11px sans-serif',
             barLabelGap: 3,
             barIconSize: 16,
+            // Axis typography. These are read by every renderer *and* by the
+            // engine when it measures a day label to pin it, so they have to
+            // live in one place - a renderer drawing at a different size than
+            // the engine measured would mis-pin the label.
+            dateLabelFont: '12px sans-serif',
+            hourLabelFont: '12px sans-serif',
+            resourceLabelFont: '13px sans-serif',
+            resourceGroupFont: 'bold 13px sans-serif',
+            resourceChevronFont: '10px sans-serif',
+            // Gap between a group row's chevron and its label, in pixels.
+            resourceChevronGap: 14,
             colors: {
                 contentBg: '#ffffff',
                 axisBg: '#f8f9fa',
@@ -124,6 +152,13 @@ export class TimelineEngine {
             renderer: 'canvas'
         };
 
+        // Bumped on every config change, invalidating the frozen scene config
+        // snapshot (see _configSnapshot). Initialized before the first
+        // _applyOptions call, which bumps it.
+        this._configGen = 0;
+        this._configSnap = null;
+        this._configSnapGen = -1;
+
         // Apply caller overrides before anything derived from config is read,
         // then build the (zone-aware) date/time formatters used by the axis.
         this._applyOptions(options);
@@ -142,15 +177,17 @@ export class TimelineEngine {
         this._rowIndexById = new Map();   // resourceId -> index into _rows
         this.timeRange = { start: null, end: null };
         this.allocations = [];
-        // Persistent index: resourceId -> allocations[] (sorted by startTime).
-        // Built once when data is set, reused for rendering and hit-testing.
+        // Persistent index: resourceId -> row index, where a row index is
+        // { items, maxStartEdgeMs, maxSpanMs } - the row's allocations sorted
+        // by startTime plus the bounds its scans need. See _indexAllocations,
+        // and _firstVisibleAllocationIndex for how the bounds are used.
         this.allocationsByResource = new Map();
-        // Longest start/end edge (delay) bar durations and the widest
-        // effective span in the data; see _indexAllocations and
-        // _visibleAllocationRange for how sorted scans use them.
-        this._maxStartEdgeMs = 0;
-        this._maxEndEdgeMs = 0;
-        this._maxEffectiveSpanMs = 0;
+
+        // Stacking lane per allocation, as { cluster, lane }. Held in a side
+        // table rather than written onto the allocation objects themselves:
+        // those come from the host over interop and are not ours to decorate.
+        // Weak, so entries disappear with the allocations they describe.
+        this._laneInfo = new WeakMap();
 
         // Cache of loaded <img> elements keyed by source, used to lay out and
         // draw bar icons. Images load asynchronously; a re-render is triggered
@@ -159,10 +196,11 @@ export class TimelineEngine {
         this.imageCache = new Map();
 
         // State
-        // Selected bars keyed by allocation id, preserving the order in which
-        // they were selected. The most recently selected bar is treated as the
-        // "primary" selection for single-selection consumers.
-        this.selectedBars = new Map();
+        // Ids of the selected bars, in the order they were selected (Set
+        // preserves insertion order). Ids rather than allocation objects: only
+        // membership is ever needed, and holding objects meant a windowed
+        // refetch left stale instances behind.
+        this.selectedBars = new Set();
         this.scrollX = 0;
         this.scrollY = 0;
 
@@ -171,6 +209,9 @@ export class TimelineEngine {
         // the user scrolls mid-drag. Only mouse and pen pointers start a drag;
         // touch is reserved for native scrolling (see _touch below).
         this.drag = null;
+        // Set when the marquee rectangle has changed and the selection it
+        // implies has not been recomputed yet; consumed by the paint frame.
+        this._marqueeDirty = false;
 
         // In-progress edit (move/resize) of a single allocation via mouse/pen.
         // null when idle. Holds the original and previewed start/end/resource so
@@ -178,15 +219,9 @@ export class TimelineEngine {
         // pointer up. See handlePointerDown/Move/Up and _buildGhostScene.
         this.edit = null;
 
-        // Hover tooltip state. The tooltip is a single DOM element (created
-        // lazily, appended to <body>, position: fixed) reused across hovers.
-        this._tooltipEl = null;
-        this._tooltipTimer = null;
-        this._tooltipAlloc = null;   // allocation currently described
-        this._tooltipContent = '';
-        this._tooltipVisible = false;
-        this._hoverClientX = 0;
-        this._hoverClientY = 0;
+        // Hover tooltip, created on first hover (see _ensureTooltip). Owns its
+        // own element, timer and positioning - see ./tooltip.js.
+        this._tooltip = null;
 
         // On-demand (windowed) loading state. When _windowed, allocations are
         // fetched per time window from .NET rather than supplied all at once.
@@ -225,6 +260,15 @@ export class TimelineEngine {
         this._loadBuffer = null;
         this._loadExpected = 0;
 
+        // Bumped whenever barHeight/barMargin change, invalidating the cached
+        // per-cluster stacking offsets (see _stackOffset).
+        this._barLayoutGen = 1;
+
+
+        // Last x the "now" indicator was painted at, so the once-a-minute tick
+        // can skip repaints that would not move it (see _nowTimer).
+        this._lastNowX = NaN;
+
         // Performance helpers
         this.visibleTimeRange = null;
         this.animationFrame = null;
@@ -233,6 +277,13 @@ export class TimelineEngine {
         // Cached viewport metrics, maintained by the ResizeObserver so the
         // render path never calls getBoundingClientRect (which can force
         // synchronous layout) inside hot loops.
+        //
+        // The surface's viewport rect is cached for the same reason: pointer
+        // coordinates are mapped through it, and pointermove fires at >120Hz on
+        // modern trackpads. It is invalidated whenever anything could have moved
+        // the surface (resize, any ancestor scroll, renderer swap) and re-read at
+        // the start of each gesture, so a stale rect can never affect a click.
+        this._surfaceRect = null;
         this._viewportW = 0;   // wrapper width in CSS pixels
         this._viewportH = 0;   // wrapper height in CSS pixels
         this._visibleWidth = 0; // viewport width minus the resource axis
@@ -248,6 +299,12 @@ export class TimelineEngine {
         // larger virtual space. scrollX below is always the *virtual* horizontal
         // offset (in content pixels); _scrollScaleX is virtual-per-real, and is
         // 1 whenever the content fits within the cap (the common case).
+        // Scroll spacer element and the dimensions last written to it, so
+        // _relayout can skip redundant style writes.
+        this._contentDiv = null;
+        this._spacerW = -1;
+        this._spacerH = -1;
+
         this._virtualWidth = 0;     // full content width in px (uncapped)
         this._virtualScrollMaxX = 0; // max virtual scrollX (virtualWidth - viewport)
         this._scrollScaleX = 1;     // virtual px per real (spacer) px, >= 1
@@ -268,13 +325,19 @@ export class TimelineEngine {
         this._renderPending = false;
 
         // Bound handlers so we can remove them on dispose
-        this._onResize = () => this._relayout();
+        this._onResize = () => { this._surfaceRect = null; this._relayout(); };
         this._onScroll = () => this._handleScroll();
+        // Capture phase so scrolling in *any* ancestor is seen (scroll events
+        // do not bubble). Only drops the cached rect; no layout is read here.
+        this._onAnyScroll = () => { this._surfaceRect = null; };
         this._onPointerDown = (e) => this.handlePointerDown(e);
         this._onPointerMove = (e) => this.handlePointerMove(e);
         this._onPointerUp = (e) => this.handlePointerUp(e);
         this._onPointerCancel = (e) => this.handlePointerCancel(e);
         this._onPointerLeave = () => { this._hideTooltip(); this._setCursor(''); };
+        // Entering the surface starts a fresh gesture: re-read the rect once so
+        // the whole hover/drag that follows maps through an accurate cache.
+        this._onPointerEnter = () => { this._surfaceRect = null; };
         this._onWheel = (e) => this.handleWheel(e);
         this._onContextMenu = (e) => this.handleContextMenu(e);
         this._onKeyDown = (e) => this.handleKeyDown(e);
@@ -298,8 +361,17 @@ export class TimelineEngine {
         // milliseconds, negligible at this frequency.
         this._nowTimer = setInterval(() => {
             if (!this._hasTimeRange()) return;
+            // Nothing is presented while the tab is hidden; the next tick after
+            // it becomes visible repaints with the correct time anyway.
+            if (typeof document !== 'undefined' && document.hidden) return;
             const now = Date.now();
             if (now < this.timeRange.start || now > this.timeRange.end) return;
+            // Only repaint when the indicator would actually land on a different
+            // pixel. Zoomed out far enough, a minute is well under one pixel and
+            // the whole frame would be identical.
+            const x = Math.round(this.getTimeToX(now));
+            if (x === this._lastNowX) return;
+            this._lastNowX = x;
             this.render();
         }, 60 * 1000);
     }
@@ -314,11 +386,27 @@ export class TimelineEngine {
         if (!Renderer) {
             throw new Error(`BlazorResourceTimeline: no renderer registered for '${key}'`);
         }
-        this.renderer = new Renderer(this.wrapper, {
+        const renderer = new Renderer(this.wrapper, {
             // Icon images finish loading after the frame that laid them out.
             requestRender: () => { if (this._hasTimeRange()) this.render(); },
             getImage: (src) => this._getImage(src)
         });
+
+        // Validate the contract up front. Without this, a renderer missing a
+        // method fails much later, mid-frame, with an error that points at the
+        // engine rather than at the renderer that is actually incomplete.
+        for (const method of ['resize', 'render', 'dispose']) {
+            if (typeof renderer[method] !== 'function') {
+                throw new TypeError(
+                    `BlazorResourceTimeline: renderer '${key}' does not implement ${method}().`);
+            }
+        }
+        if (!renderer.surface || typeof renderer.surface.addEventListener !== 'function') {
+            throw new TypeError(
+                `BlazorResourceTimeline: renderer '${key}' did not expose a DOM element as 'surface'.`);
+        }
+
+        this.renderer = renderer;
     }
 
     // Swaps the active renderer at runtime (setOptions with a new renderer
@@ -329,6 +417,8 @@ export class TimelineEngine {
         this.renderer.dispose();
         this._createRenderer(name);
         this._bindSurfaceEvents();
+        // The cached rect belonged to the old surface element.
+        this._surfaceRect = null;
     }
 
     _setCursor(cursor) {
@@ -341,23 +431,40 @@ export class TimelineEngine {
     // keys it sets). Colors are merged one level deeper. Keys are expected to
     // already be camelCased (Blazor's JSON interop does this for .NET models).
     _applyOptions(options) {
+        // Bump unconditionally: callers treat this as "the config may have
+        // changed", and the snapshot is cheap to rebuild once.
+        this._configGen++;
         if (!options) return;
         const c = this.config;
         for (const key of Object.keys(options)) {
             if (key === 'colors') continue;
             const value = options[key];
-            if (value !== null && value !== undefined) c[key] = value;
+            if (value === null || value === undefined) continue;
+            // Only keys the default config declares are accepted. An unknown key
+            // is a typo or a stale option name: silently writing it onto the
+            // config would do nothing visible and be near-impossible to spot.
+            if (!Object.prototype.hasOwnProperty.call(c, key)) {
+                console.warn(`BlazorResourceTimeline: ignoring unknown option '${key}'`);
+                continue;
+            }
+            c[key] = value;
         }
         if (options.colors) {
             for (const key of Object.keys(options.colors)) {
                 const value = options.colors[key];
-                if (value !== null && value !== undefined) c.colors[key] = value;
+                if (value === null || value === undefined) continue;
+                if (!Object.prototype.hasOwnProperty.call(c.colors, key)) {
+                    console.warn(`BlazorResourceTimeline: ignoring unknown color '${key}'`);
+                    continue;
+                }
+                c.colors[key] = value;
             }
         }
     }
 
     _setupEventListeners() {
         window.addEventListener('resize', this._onResize);
+        window.addEventListener('scroll', this._onAnyScroll, { passive: true, capture: true });
         this.wrapper.addEventListener('scroll', this._onScroll, { passive: true });
         this._bindSurfaceEvents();
         // Keyboard interaction is bound to the focusable wrapper (role
@@ -379,6 +486,7 @@ export class TimelineEngine {
         s.addEventListener('pointerup', this._onPointerUp);
         s.addEventListener('pointercancel', this._onPointerCancel);
         s.addEventListener('pointerleave', this._onPointerLeave);
+        s.addEventListener('pointerenter', this._onPointerEnter);
         // Ctrl/Cmd + wheel (and trackpad pinch, which browsers report as a
         // ctrl-wheel) zooms around the cursor. Non-passive so it can preventDefault.
         s.addEventListener('wheel', this._onWheel, { passive: false });
@@ -393,6 +501,7 @@ export class TimelineEngine {
         s.removeEventListener('pointerup', this._onPointerUp);
         s.removeEventListener('pointercancel', this._onPointerCancel);
         s.removeEventListener('pointerleave', this._onPointerLeave);
+        s.removeEventListener('pointerenter', this._onPointerEnter);
         s.removeEventListener('wheel', this._onWheel);
         s.removeEventListener('contextmenu', this._onContextMenu);
     }
@@ -441,6 +550,7 @@ export class TimelineEngine {
                 this._viewportW = size ? size.inlineSize : entry.contentRect.width;
                 this._viewportH = size ? size.blockSize : entry.contentRect.height;
             }
+            this._surfaceRect = null;
             this._relayout();
         });
         this._resizeObserver.observe(this.wrapper);
@@ -452,17 +562,18 @@ export class TimelineEngine {
         this.scrollX = this.wrapper.scrollLeft * this._scrollScaleX;
         this.scrollY = this.wrapper.scrollTop;
 
-        // Keep the HTML resource-column overlay aligned with vertical scroll.
-        this._syncResourceOverlay();
-
         // The tooltip is anchored to a screen point that no longer matches the
-        // bar once the content scrolls, so dismiss it.
+        // bar once the content scrolls, so dismiss it. Cheap and must not wait
+        // for a frame, or it visibly lags behind the content.
         this._hideTooltip();
 
         // In windowed mode, scrolling may bring the visible range near the edge
         // of the loaded window; schedule a (debounced) fetch check.
         this._scheduleWindowCheck();
 
+        // Everything else (the overlay transform, the repaint) is a write that
+        // only has to land once per frame, so it is deferred to the rAF below
+        // rather than run per scroll event.
         if (this._scrollRaf) {
             cancelAnimationFrame(this._scrollRaf);
         }
@@ -475,7 +586,11 @@ export class TimelineEngine {
                     cancelAnimationFrame(this.animationFrame);
                     this.animationFrame = null;
                 }
+                // _paintFrame syncs the resource overlay itself.
                 this._paintFrame();
+            } else {
+                // Nothing to paint, but the overlay still has to track scroll.
+                this._syncResourceOverlay();
             }
             this._scrollRaf = null;
         });
@@ -535,6 +650,12 @@ export class TimelineEngine {
             return;
         }
 
+        // Read the scroll position BEFORE any style is written below. Reading
+        // it afterwards would force a synchronous reflow, and _relayout runs on
+        // every wheel tick of a pinch-zoom. The new position is clamped against
+        // the new spacer further down, exactly as the browser would.
+        const rawScrollLeft = this.wrapper.scrollLeft;
+
         this._updateScale();
 
         // The surface is sticky-positioned over the viewport; the renderer
@@ -557,9 +678,10 @@ export class TimelineEngine {
             ? this._virtualScrollMaxX / realScrollMax
             : 1;
 
-        // A spacer element defines the scrollable area inside the wrapper.
-        let contentDiv = this.wrapper.querySelector('.timeline-content');
-        if (!contentDiv) {
+        // A spacer element defines the scrollable area inside the wrapper. The
+        // reference is cached; re-querying it on every relayout was pure waste.
+        let contentDiv = this._contentDiv;
+        if (!contentDiv || !contentDiv.isConnected) {
             contentDiv = document.createElement('div');
             contentDiv.className = 'timeline-content';
             contentDiv.style.position = 'absolute';
@@ -567,13 +689,27 @@ export class TimelineEngine {
             contentDiv.style.left = '0';
             contentDiv.style.pointerEvents = 'none';
             this.wrapper.appendChild(contentDiv);
+            this._contentDiv = contentDiv;
+            this._spacerW = -1;
+            this._spacerH = -1;
         }
-        contentDiv.style.width = spacerWidth + 'px';
-        contentDiv.style.height = totalHeight + 'px';
+        // Skip the style writes when the spacer already has these dimensions;
+        // most relayouts (a plain resize, a repeat zoom at the clamp) change
+        // neither, and a no-op style write still dirties layout.
+        if (spacerWidth !== this._spacerW) {
+            contentDiv.style.width = spacerWidth + 'px';
+            this._spacerW = spacerWidth;
+        }
+        if (totalHeight !== this._spacerH) {
+            contentDiv.style.height = totalHeight + 'px';
+            this._spacerH = totalHeight;
+        }
 
         // Keep the virtual offset consistent with the (possibly re-scaled)
-        // native scroll position after a resize/zoom/layout change.
-        this.scrollX = this.wrapper.scrollLeft * this._scrollScaleX;
+        // native scroll position after a resize/zoom/layout change, clamping
+        // the pre-write reading to what the new spacer actually allows.
+        const clampedScrollLeft = Math.max(0, Math.min(rawScrollLeft, Math.max(0, spacerWidth - cssW)));
+        this.scrollX = clampedScrollLeft * this._scrollScaleX;
 
         this.render();
     }
@@ -648,14 +784,31 @@ export class TimelineEngine {
         // Keep the HTML resource overlay aligned (covers keyboard/programmatic
         // scroll that sets scrollY without a scroll event).
         this._syncResourceOverlay();
+        // Marquee selection is recomputed at most once per frame (see
+        // handlePointerMove). Doing it here also keeps the selection tracking
+        // the data when the viewport scrolls mid-drag.
+        if (this._marqueeDirty && this.drag && this.drag.moved) {
+            this._marqueeDirty = false;
+            this._applyMarqueeSelection();
+        }
         try {
             this.visibleTimeRange = this.calculateVisibleTimeRange();
             if (!this.visibleTimeRange) {
                 return;
             }
             this.renderer.render(this.buildScene());
+            this._renderErrors = 0;
         } catch (error) {
-            console.error('BlazorResourceTimeline render error:', error);
+            // A persistent render failure recurs every frame. Log the first few
+            // with detail, then go quiet: at 60fps an unthrottled log buries the
+            // console (and the original error) within seconds.
+            this._renderErrors = (this._renderErrors || 0) + 1;
+            if (this._renderErrors <= MAX_RENDER_ERROR_LOGS) {
+                console.error('BlazorResourceTimeline render error:', error);
+                if (this._renderErrors === MAX_RENDER_ERROR_LOGS) {
+                    console.error('BlazorResourceTimeline: further render errors will be suppressed.');
+                }
+            }
         } finally {
             this._flushRenderedResolvers();
         }
@@ -682,29 +835,101 @@ export class TimelineEngine {
     // Bars may extend under the axes; the (opaque) axes are drawn after them,
     // exactly like the original canvas z-order. Marquee and ghost must be
     // clipped to the content area.
+    // The scene object, its arrays and the bar/day/tick nodes inside it are
+    // pooled and refilled in place each frame rather than reallocated. A dense
+    // frame builds hundreds of nodes, so at 60fps this was the bulk of the
+    // engine's garbage. Safe because a scene describes exactly one frame and is
+    // consumed synchronously by the renderer - which the contract already
+    // requires, since the next frame overwrites it either way.
+    _resetScene() {
+        let scene = this._scene;
+        if (!scene) {
+            scene = this._scene = {
+                config: null,
+                viewport: { width: 0, height: 0, axisWidth: 0, axisHeight: 0, dateRowHeight: 0 },
+                days: [],
+                hourTicks: [],
+                gridH: [],
+                gridV: [],
+                resourceRows: null,
+                bars: [],
+                nowX: null,
+                marquee: null,
+                ghost: null
+            };
+            // Node pools, indexed in build order and grown to the busiest frame.
+            this._barNodes = [];
+            this._dayNodes = [];
+            this._tickNodes = [];
+            this._rowNodes = [];
+            this._marqueeNode = { x: 0, y: 0, width: 0, height: 0 };
+            this._ghostNode = { x: 0, y: 0, width: 0, height: 0, color: '', label: null };
+        }
+        scene.days.length = 0;
+        scene.hourTicks.length = 0;
+        scene.gridH.length = 0;
+        scene.gridV.length = 0;
+        scene.bars.length = 0;
+        scene.resourceRows = null;
+        scene.nowX = null;
+        scene.marquee = null;
+        scene.ghost = null;
+        return scene;
+    }
+
+    // Pooled bar node, with every field reset so it never carries a decoration
+    // from whichever bar last used this slot.
+    _barNode(index) {
+        let node = this._barNodes[index];
+        if (node === undefined) {
+            node = this._barNodes[index] = {
+                id: '', x: 0, y: 0, width: 0, height: 0, color: '', selected: false,
+                edges: null, outline: null, focusRing: null, icons: null, labels: null,
+                // Reusable backing storage, attached to the public fields above
+                // only when this bar actually has that decoration.
+                _edges: [], _icons: [], _labels: [],
+                _outline: { x: 0, y: 0, width: 0, height: 0 },
+                _focusRing: { x: 0, y: 0, width: 0, height: 0 }
+            };
+        }
+        node.edges = null;
+        node.outline = null;
+        node.focusRing = null;
+        node.icons = null;
+        node.labels = null;
+        node._edges.length = 0;
+        node._icons.length = 0;
+        node._labels.length = 0;
+        return node;
+    }
+
     buildScene() {
         const c = this.config;
-        const scene = {
-            // Renderers read colors/fonts/dimensions from the live config.
-            config: c,
-            viewport: {
-                width: this._viewportW,
-                height: this._viewportH,
-                axisWidth: c.resourceAxisWidth,
-                axisHeight: c.timeAxisHeight,
-                dateRowHeight: c.dateRowHeight
-            },
-            days: [],          // [{ sepX|null, label, labelX, labelY }]
-            hourTicks: [],     // [{ x, label, labelY }]
-            gridH: [],         // horizontal grid line y positions
-            gridV: [],         // vertical grid line x positions
-            resourceRows: null, // null when the HTML template overlay is active
-            bars: [],
-            nowX: null,
-            marquee: null,
-            ghost: null
-        };
-        this._buildTimeAxisScene(scene);
+        // Contents:
+        //   days       [{ sepX|null, label, labelX, labelY }]
+        //   hourTicks  [{ x, label, labelY }]
+        //   gridH      horizontal grid line y positions
+        //   gridV      vertical grid line x positions
+        //   resourceRows  null when the HTML template overlay is active
+        const scene = this._resetScene();
+        // Renderers read colors/fonts/dimensions from here. This is a snapshot,
+        // not the live config object: a scene describes one frame, and a
+        // renderer that retains or defers one must not observe later option
+        // changes through it. Rebuilt only when the config actually changes
+        // (see _configSnapshot), so the common frame costs nothing.
+        scene.config = this._configSnapshot();
+        const viewport = scene.viewport;
+        viewport.width = this._viewportW;
+        viewport.height = this._viewportH;
+        viewport.axisWidth = c.resourceAxisWidth;
+        viewport.axisHeight = c.timeAxisHeight;
+        viewport.dateRowHeight = c.dateRowHeight;
+        // The zoned hour boundaries drive both the axis ticks and the vertical
+        // grid lines. They are the most expensive thing in the frame (zone
+        // lookups), so they are computed once here and shared.
+        const hours = this._time.hourBoundaries(
+            this.visibleTimeRange.start, this.visibleTimeRange.end, this._hourStep());
+        this._buildTimeAxisScene(scene, hours);
         this._buildGridScene(scene);
         this._buildBarsScene(scene);
         this._buildNowScene(scene);
@@ -714,27 +939,47 @@ export class TimelineEngine {
         return scene;
     }
 
+    // Frozen copy of the config for the scene to carry. Cached and only rebuilt
+    // when the config generation changes, so frames that don't change options
+    // (i.e. nearly all of them) reuse the same immutable object.
+    _configSnapshot() {
+        if (!this._configSnap || this._configSnapGen !== this._configGen) {
+            this._configSnap = Object.freeze({
+                ...this.config,
+                colors: Object.freeze({ ...this.config.colors })
+            });
+            this._configSnapGen = this._configGen;
+        }
+        return this._configSnap;
+    }
+
     // Top axis row: one label per day, pinned to stay visible while the day is
     // on screen (sticky-header style), with a separator at each midnight
     // boundary. Bottom row: hourly ticks/labels thinned to fit the zoom.
-    _buildTimeAxisScene(scene) {
+    _buildTimeAxisScene(scene, hours) {
         const c = this.config;
         const startX = c.resourceAxisWidth;
         const visibleEndX = this._viewportW;
         const dateRowHeight = c.dateRowHeight;
 
-        // Day labels are pinned within the day's visible span; measure with
-        // the axis font so the pinned position accounts for the text width.
+        // Day labels are pinned within the day's visible span; measure with the
+        // same font the renderer will draw with (config.dateLabelFont), or the
+        // pinned position would not match the rendered text width.
         const ctx = this._measureCtx;
-        ctx.font = '12px sans-serif';
+        ctx.font = c.dateLabelFont;
 
-        let dayStart = this._startOfZonedDay(this.visibleTimeRange.start);
+        let dayStart = this._time.startOfDay(this.visibleTimeRange.start);
         while (dayStart <= this.visibleTimeRange.end) {
-            const dayEnd = this._nextZonedDay(dayStart);
+            const dayEnd = this._time.nextDay(dayStart);
             const dayStartX = this.getTimeToX(dayStart);
             const dayEndX = this.getTimeToX(dayEnd);
 
-            const day = { sepX: null, label: null, labelX: 0, labelY: dateRowHeight / 2 };
+            let day = this._dayNodes[scene.days.length];
+            if (day === undefined) day = this._dayNodes[scene.days.length] = {};
+            day.sepX = null;
+            day.label = null;
+            day.labelX = 0;
+            day.labelY = dateRowHeight / 2;
 
             // Day separator at the start boundary.
             if (dayStartX >= startX && dayStartX <= visibleEndX) {
@@ -747,7 +992,7 @@ export class TimelineEngine {
             const segLeft = Math.max(dayStartX, startX);
             const segRight = Math.min(dayEndX, visibleEndX);
             if (segRight > segLeft) {
-                const label = this.formatDateLabel(dayStart);
+                const label = this._time.formatDate(dayStart);
                 const padding = 6;
                 const textWidth = ctx.measureText(label).width;
                 let labelX = segLeft + padding;
@@ -766,18 +1011,20 @@ export class TimelineEngine {
             dayStart = dayEnd;
         }
 
-        // Hour ticks/labels.
-        const step = this._hourStep();
-        if (step === 0) return;
+        // Hour ticks/labels, from the pre-computed boundaries.
         const labelY = (dateRowHeight + c.timeAxisHeight) / 2;
-        this._forEachZonedHour(this.visibleTimeRange.start, this.visibleTimeRange.end, (currentTime) => {
-            const hour = this._zonedParts(currentTime).hour;
-            if (hour % step !== 0) return;
-            const x = this.getTimeToX(currentTime);
+        for (let i = 0; i < hours.length; i++) {
+            const x = this.getTimeToX(hours[i].ts);
             if (x >= startX && x <= visibleEndX) {
-                scene.hourTicks.push({ x, label: hour.toString().padStart(2, '0'), labelY });
+                const n = scene.hourTicks.length;
+                let tick = this._tickNodes[n];
+                if (tick === undefined) tick = this._tickNodes[n] = {};
+                tick.x = x;
+                tick.label = hours[i].hour.toString().padStart(2, '0');
+                tick.labelY = labelY;
+                scene.hourTicks.push(tick);
             }
-        });
+        }
     }
 
     // Chooses how many hours to skip between hour ticks/labels so they stay
@@ -797,9 +1044,7 @@ export class TimelineEngine {
 
     _buildGridScene(scene) {
         const c = this.config;
-        const startX = c.resourceAxisWidth;
         const startY = c.timeAxisHeight;
-        const visibleEndX = this._viewportW;
         const visibleEndY = this._viewportH;
 
         const visibleStart = Math.max(0, Math.floor(this.scrollY / c.resourceHeight) - 1);
@@ -808,6 +1053,9 @@ export class TimelineEngine {
             Math.ceil((this.scrollY + this._viewportH - c.timeAxisHeight) / c.resourceHeight) + 1
         );
 
+        // Inclusive upper bound, unlike the bar/resource-axis row loops: a grid
+        // line is drawn at each row's *top*, so closing the bottom edge of the
+        // last row needs the line one index past it.
         for (let i = visibleStart; i <= visibleEnd; i++) {
             const y = this.getResourceToY(i);
             if (y >= startY && y <= visibleEndY) {
@@ -815,18 +1063,12 @@ export class TimelineEngine {
             }
         }
 
-        // Match the hour row's density so vertical lines align with the ticks
-        // and don't smear together when zoomed out.
-        const step = this._hourStep();
-        if (step === 0) return;
-
-        this._forEachZonedHour(this.visibleTimeRange.start, this.visibleTimeRange.end, (currentTime) => {
-            if (this._zonedParts(currentTime).hour % step !== 0) return;
-            const x = this.getTimeToX(currentTime);
-            if (x >= startX && x <= visibleEndX) {
-                scene.gridV.push(x);
-            }
-        });
+        // Vertical lines sit exactly under the hour ticks, which the time axis
+        // has already culled to the visible span - reuse them rather than
+        // repeating the (expensive) zoned-hour walk.
+        for (let i = 0; i < scene.hourTicks.length; i++) {
+            scene.gridV.push(scene.hourTicks[i].x);
+        }
     }
 
     // Vertical indicator at the current time, only when "now" falls within the
@@ -855,20 +1097,23 @@ export class TimelineEngine {
             Math.ceil((this.scrollY + this._viewportH - c.timeAxisHeight) / c.resourceHeight) + 1
         );
 
-        const rows = [];
+        const rows = this._rowNodes;
+        let count = 0;
         for (let i = visibleStart; i < visibleEnd; i++) {
             const y = this.getResourceToY(i);
             if (y < startY || y > visibleEndY) continue;
             const row = this._rows[i];
-            rows.push({
-                midY: y + c.resourceHeight / 2,
-                // Depth reserves room on the left; group rows get a chevron there.
-                leftPad: 8 + row.depth * indent,
-                name: row.resource.name,
-                hasChildren: row.hasChildren,
-                collapsed: row.hasChildren && this._collapsed.has(row.resource.id)
-            });
+            let node = rows[count];
+            if (node === undefined) node = rows[count] = {};
+            node.midY = y + c.resourceHeight / 2;
+            // Depth reserves room on the left; group rows get a chevron there.
+            node.leftPad = 8 + row.depth * indent;
+            node.name = row.resource.name;
+            node.hasChildren = row.hasChildren;
+            node.collapsed = row.hasChildren && this._collapsed.has(row.resource.id);
+            count++;
         }
+        rows.length = count;
         scene.resourceRows = rows;
     }
 
@@ -894,14 +1139,15 @@ export class TimelineEngine {
             if (resourceY + c.resourceHeight < startY || resourceY > visibleEndY) continue;
 
             const barCenterY = resourceY + c.resourceHeight / 2;
-            const resourceAllocations = this.allocationsByResource.get(resource.id);
-            if (!resourceAllocations) continue;
+            const row = this.allocationsByResource.get(resource.id);
+            if (!row) continue;
+            const resourceAllocations = row.items;
 
             // Binary-search the first allocation that can intersect the visible
             // window instead of linearly skipping everything before it. Any
-            // candidate has startTime >= visStart - maxEffectiveSpan, so the
-            // scan starts there and breaks once startTime passes the window.
-            const firstIndex = this._firstVisibleAllocationIndex(resourceAllocations, visStart);
+            // candidate has startTime >= visStart - the row's widest span, so
+            // the scan starts there and breaks once startTime passes the window.
+            const firstIndex = this._firstVisibleAllocationIndex(row, visStart);
             for (let i = firstIndex; i < resourceAllocations.length; i++) {
                 const alloc = resourceAllocations[i];
                 // Time-range culling on the effective span (edge bars
@@ -909,7 +1155,7 @@ export class TimelineEngine {
                 // edges. The list is sorted by startTime, so iteration can
                 // stop once even the longest possible start edge could no
                 // longer reach back into view.
-                if (alloc.startTime - this._maxStartEdgeMs > visEnd) break;
+                if (alloc.startTime - row.maxStartEdgeMs > visEnd) break;
                 if (this._effectiveEndTime(alloc) < visStart) continue;
                 if (this._effectiveStartTime(alloc) > visEnd) continue;
 
@@ -935,24 +1181,19 @@ export class TimelineEngine {
                 const barWidth = Math.max(c.minBarWidth, barEndX - barX);
                 const isSelected = this.selectedBars.has(alloc.id);
 
-                const node = {
-                    id: alloc.id,
-                    x: barX,
-                    y: barTop,
-                    width: barWidth,
-                    height: barHeight,
-                    color: alloc.color || (isSelected ? c.colors.barSelected : c.colors.bar),
-                    selected: isSelected,
-                    edges: null,
-                    outline: null,
-                    focusRing: null,
-                    icons: null,
-                    labels: null
-                };
+                const node = this._barNode(scene.bars.length);
+                node.id = alloc.id;
+                node.x = barX;
+                node.y = barTop;
+                node.width = barWidth;
+                node.height = barHeight;
+                node.color = alloc.color || (isSelected ? c.colors.barSelected : c.colors.bar);
+                node.selected = isSelected;
 
                 // Start edge bar: drawn immediately before the main bar's start.
                 if (startEdgeMs) {
-                    (node.edges = node.edges || []).push({
+                    node.edges = node._edges;
+                    node._edges.push({
                         x: drawStartX, y: barTop,
                         width: Math.max(c.minBarWidth, barX - drawStartX), height: barHeight,
                         color: alloc.startBar.color || c.colors.bar
@@ -960,7 +1201,8 @@ export class TimelineEngine {
                 }
                 // End edge bar: drawn immediately after the main bar's end.
                 if (endEdgeMs) {
-                    (node.edges = node.edges || []).push({
+                    node.edges = node._edges;
+                    node._edges.push({
                         x: barEndX, y: barTop,
                         width: Math.max(c.minBarWidth, drawEndX - barEndX), height: barHeight,
                         color: alloc.endBar.color || c.colors.bar
@@ -969,24 +1211,24 @@ export class TimelineEngine {
 
                 // The selection outline wraps the full span, edge bars included.
                 if (isSelected) {
-                    node.outline = {
-                        x: drawStartX - 1,
-                        y: barTop - 1,
-                        width: Math.max(barWidth, drawEndX - drawStartX) + 2,
-                        height: barHeight + 2
-                    };
+                    const outline = node._outline;
+                    outline.x = drawStartX - 1;
+                    outline.y = barTop - 1;
+                    outline.width = Math.max(barWidth, drawEndX - drawStartX) + 2;
+                    outline.height = barHeight + 2;
+                    node.outline = outline;
                 }
 
                 // Keyboard focus ring (dashed, distinct from the solid
                 // selection outline), only while the component holds focus so
                 // it never lingers after the user clicks away.
                 if (this._hasFocus && this._focusAlloc && this._focusAlloc.id === alloc.id) {
-                    node.focusRing = {
-                        x: drawStartX - 2,
-                        y: barTop - 2,
-                        width: Math.max(barWidth, drawEndX - drawStartX) + 4,
-                        height: barHeight + 4
-                    };
+                    const ring = node._focusRing;
+                    ring.x = drawStartX - 2;
+                    ring.y = barTop - 2;
+                    ring.width = Math.max(barWidth, drawEndX - drawStartX) + 4;
+                    ring.height = barHeight + 4;
+                    node.focusRing = ring;
                 }
 
                 // Per-bar labels and icons (only when present, to keep the
@@ -1064,11 +1306,12 @@ export class TimelineEngine {
                     y = barCenterY - h / 2;
                     startEdgeX = x;
                 }
-                (node.icons = node.icons || []).push({ source: icon.source, x, y, width: w, height: h });
+                node.icons = node._icons;
+                node._icons.push({ source: icon.source, x, y, width: w, height: h });
             }
         }
 
-        const labels = [];
+        const labels = node._labels;
         if (alloc.textAbove) {
             labels.push({ text: alloc.textAbove, x: barCenterX, y: aboveY, align: 'center', baseline: 'bottom' });
         }
@@ -1095,12 +1338,12 @@ export class TimelineEngine {
         const x2 = this.drag.currentX - this.scrollX + c.resourceAxisWidth;
         const y2 = this.drag.currentY - this.scrollY + c.timeAxisHeight;
 
-        scene.marquee = {
-            x: Math.min(x1, x2),
-            y: Math.min(y1, y2),
-            width: Math.abs(x2 - x1),
-            height: Math.abs(y2 - y1)
-        };
+        const marquee = this._marqueeNode;
+        marquee.x = Math.min(x1, x2);
+        marquee.y = Math.min(y1, y2);
+        marquee.width = Math.abs(x2 - x1);
+        marquee.height = Math.abs(y2 - y1);
+        scene.marquee = marquee;
     }
 
     // Semi-transparent preview of the allocation being edited at its proposed
@@ -1118,164 +1361,72 @@ export class TimelineEngine {
         const x1 = this.getTimeToX(ed.previewStart);
         const x2 = this.getTimeToX(ed.previewEnd);
 
-        scene.ghost = {
-            x: x1,
-            y: barTop,
-            width: Math.max(c.minBarWidth, x2 - x1),
-            height: barHeight,
-            color: ed.alloc.color || c.colors.barSelected,
-            // Time readout above the ghost for precise feedback while dragging.
-            label: this._announceDtf
-                ? `${this._announceDtf.format(ed.previewStart)} – ${this._announceDtf.format(ed.previewEnd)}`
-                : null
-        };
+        const ghost = this._ghostNode;
+        ghost.x = x1;
+        ghost.y = barTop;
+        ghost.width = Math.max(c.minBarWidth, x2 - x1);
+        ghost.height = barHeight;
+        ghost.color = ed.alloc.color || c.colors.barSelected;
+        // Time readout above the ghost for precise feedback while dragging.
+        ghost.label =
+            `${this._time.formatDateTime(ed.previewStart)} – ${this._time.formatDateTime(ed.previewEnd)}`;
+        scene.ghost = ghost;
     }
 
-    // ---- Zone-aware date/time helpers ----
+    // ---- Zone-aware date/time ----
+    //
+    // All wall-clock arithmetic lives in ./zoned-time.js; the engine only holds
+    // the instance and rebuilds it when the zone or locale option changes.
 
-    // (Re)creates the Intl formatters used to compute and label axis
-    // boundaries in the configured time zone (or the viewer's local zone when
-    // none is set). Cached because constructing an Intl.DateTimeFormat is
-    // comparatively expensive and the axis draws many boundaries per frame.
     _rebuildDateFormatters() {
-        const timeZone = this.config.timeZone || undefined;
-        // Locale for human-facing labels. The parts formatter stays 'en-US' so
-        // its numeric output remains parseable regardless of this setting.
-        const locale = this.config.locale || undefined;
-
-        // Numeric wall-clock parts in the zone, used for day/hour math and the
-        // hour label. en-US + h23 guarantees parseable 0-23 hour values.
-        const partsOpts = {
-            hourCycle: 'h23',
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', second: '2-digit'
-        };
-        if (timeZone) partsOpts.timeZone = timeZone;
-        this._partsDtf = new Intl.DateTimeFormat('en-US', partsOpts);
-
-        // Localized day label; configured (or viewer) locale for i18n, zone for
-        // correctness.
-        const dateOpts = { weekday: 'short', month: 'short', day: 'numeric' };
-        if (timeZone) dateOpts.timeZone = timeZone;
-        this._dateLabelDtf = new Intl.DateTimeFormat(locale, dateOpts);
-
-        // Spoken date+time used when announcing a focused bar to screen readers.
-        const announceOpts = {
-            month: 'short', day: 'numeric',
-            hour: '2-digit', minute: '2-digit'
-        };
-        if (timeZone) announceOpts.timeZone = timeZone;
-        this._announceDtf = new Intl.DateTimeFormat(locale, announceOpts);
+        this._time = new ZonedTime(this.config.timeZone, this.config.locale);
     }
 
-    // Wall-clock parts of a timestamp in the configured zone.
-    _zonedParts(ts) {
-        const parts = this._partsDtf.formatToParts(ts);
-        const map = {};
-        for (const p of parts) {
-            if (p.type !== 'literal') map[p.type] = p.value;
-        }
-        let hour = +map.hour;
-        if (hour === 24) hour = 0; // some engines emit '24' at midnight
-        return {
-            year: +map.year, month: +map.month, day: +map.day,
-            hour, minute: +map.minute, second: +map.second
-        };
-    }
-
-    // Offset (zone - UTC, in ms) in effect at the given instant.
-    _zoneOffsetMs(ts) {
-        const p = this._zonedParts(ts);
-        const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
-        return asUtc - Math.floor(ts / 1000) * 1000;
-    }
-
-    // Converts a wall-clock time in the configured zone to a UTC timestamp.
-    // Two-pass so it resolves correctly across DST offset changes.
-    _zonedWallClockToTs(year, month, day, hour, minute, second) {
-        const guess = Date.UTC(year, month - 1, day, hour, minute, second);
-        const offset1 = this._zoneOffsetMs(guess);
-        let ts = guess - offset1;
-        const offset2 = this._zoneOffsetMs(ts);
-        if (offset2 !== offset1) {
-            ts = guess - offset2;
-        }
-        return ts;
-    }
-
-    // Start-of-day (midnight) timestamp for the day containing the given time,
-    // in the configured zone.
-    _startOfZonedDay(time) {
-        const p = this._zonedParts(time);
-        return this._zonedWallClockToTs(p.year, p.month, p.day, 0, 0, 0);
-    }
-
-    // First midnight strictly after the given day start, in the configured zone.
-    // Uses Date.UTC to normalize month/year rollover.
-    _nextZonedDay(dayStart) {
-        const p = this._zonedParts(dayStart);
-        const next = new Date(Date.UTC(p.year, p.month - 1, p.day + 1));
-        return this._zonedWallClockToTs(
-            next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), 0, 0, 0);
-    }
-
-    // The hour boundary at or after the given hour boundary, in the configured
-    // zone. Wall-clock increment (normalized via Date.UTC) so it stays aligned
-    // across DST transitions.
-    _nextZonedHour(ts) {
-        const p = this._zonedParts(ts);
-        const next = new Date(Date.UTC(p.year, p.month - 1, p.day, p.hour + 1, 0, 0));
-        return this._zonedWallClockToTs(
-            next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), next.getUTCHours(), 0, 0);
-    }
-
-    // Calls back with each zoned hour boundary in [visibleStart, visibleEnd].
-    _forEachZonedHour(visibleStart, visibleEnd, callback) {
-        const p = this._zonedParts(visibleStart);
-        let ts = this._zonedWallClockToTs(p.year, p.month, p.day, p.hour, 0, 0);
-        if (ts < visibleStart) {
-            ts = this._nextZonedHour(ts);
-        }
-        // Guard against pathological non-advancing steps.
-        let guard = 0;
-        while (ts <= visibleEnd && guard++ < 1000) {
-            callback(ts);
-            ts = this._nextZonedHour(ts);
-        }
-    }
-
-    formatDateLabel(ts) {
-        return this._dateLabelDtf.format(ts);
-    }
-
-    formatTimeLabel(ts) {
-        return this._zonedParts(ts).hour.toString().padStart(2, '0');
-    }
 
     // Returns a cached <img> for the given source, creating and loading it on
     // first use. A completed load schedules a re-render so the icon appears as
     // soon as it is ready.
     _getImage(src) {
         let img = this.imageCache.get(src);
-        if (!img) {
-            img = new Image();
+        if (img) {
+            // Refresh recency: Map preserves insertion order, so re-inserting
+            // moves this entry to the newest position for the eviction below.
+            this.imageCache.delete(src);
             this.imageCache.set(src, img);
-            img.onload = () => {
-                if (this._hasTimeRange()) this.render();
-            };
-            // On error the image stays incomplete (naturalWidth === 0) and is
-            // simply skipped when laying out.
-            img.onerror = () => { };
-            img.src = src;
+            return img;
+        }
+
+        img = new Image();
+        this.imageCache.set(src, img);
+        img.onload = () => {
+            if (this._disposed) return;
+            if (this._hasTimeRange()) this.render();
+        };
+        // On error the image stays incomplete (naturalWidth === 0) and is
+        // simply skipped when laying out.
+        img.onerror = () => { };
+        img.src = src;
+
+        // Evict least-recently-used entries once over the cap.
+        while (this.imageCache.size > MAX_IMAGE_CACHE) {
+            const oldest = this.imageCache.keys().next().value;
+            const evicted = this.imageCache.get(oldest);
+            if (evicted) { evicted.onload = null; evicted.onerror = null; }
+            this.imageCache.delete(oldest);
         }
         return img;
     }
 
     // ---- Pointer interaction: click, Ctrl/Cmd-click, and marquee drag ----
 
-    // Converts a viewport pointer event to surface-local coordinates.
+    // Converts a viewport pointer event to surface-local coordinates, through
+    // the cached surface rect (see _surfaceRect: reading it per event would
+    // force a synchronous layout on every pointermove).
     _eventToCanvas(e) {
-        const rect = this.renderer.surface.getBoundingClientRect();
+        let rect = this._surfaceRect;
+        if (!rect) {
+            rect = this._surfaceRect = this.renderer.surface.getBoundingClientRect();
+        }
         return { x: e.clientX - rect.left, y: e.clientY - rect.top };
     }
 
@@ -1371,7 +1522,7 @@ export class TimelineEngine {
             currentY: content.y,
             // Snapshot of the selection at drag start, used as the base set
             // when the drag is additive (Ctrl/Cmd held).
-            baseSelection: new Map(this.selectedBars),
+            baseSelection: new Set(this.selectedBars),
             moved: false
         };
     }
@@ -1454,7 +1605,10 @@ export class TimelineEngine {
         }
 
         if (this.drag.moved) {
-            this._applyMarqueeSelection();
+            // Recomputing the selection scans every row the marquee covers, so
+            // it is deferred to the paint frame rather than run per pointermove
+            // (which fires several times per frame on a high-rate pointer).
+            this._marqueeDirty = true;
             this.render();
         }
     }
@@ -1506,10 +1660,13 @@ export class TimelineEngine {
         try { this.renderer.surface.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
         const drag = this.drag;
         this.drag = null;
+        this._marqueeDirty = false;
 
         if (drag.moved) {
-            // Marquee selection was already applied during the move; finalize it.
-            this._applyMarqueeSelection();
+            // Finalize synchronously against the drag's final rectangle: the
+            // notification below must carry the selection for where the marquee
+            // ended, not for the last frame that happened to paint.
+            this._applyMarqueeSelection(drag);
             this.render();
             this._notifySelection();
         } else {
@@ -1533,6 +1690,7 @@ export class TimelineEngine {
         if (this.drag && e.pointerId === this.drag.pointerId) {
             try { this.renderer.surface.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
             this.drag = null;
+            this._marqueeDirty = false;
             this.render();
         }
     }
@@ -1649,7 +1807,7 @@ export class TimelineEngine {
     _moveFocusHorizontal(dir) {
         if (!this._rows.length) return;
         if (this._focusResource < 0) this._focusResource = this._firstVisibleResourceIndex();
-        const list = this.allocationsByResource.get(this._rows[this._focusResource].resource.id) || [];
+        const list = this._rowIndexFor(this._rows[this._focusResource].resource.id).items;
         if (!list.length) { this._focusAlloc = null; this._announceFocus(); return; }
 
         let idx;
@@ -1673,7 +1831,7 @@ export class TimelineEngine {
         } else {
             this._focusResource = Math.max(0, Math.min(this._rows.length - 1, this._focusResource + dir));
         }
-        const list = this.allocationsByResource.get(this._rows[this._focusResource].resource.id) || [];
+        const list = this._rowIndexFor(this._rows[this._focusResource].resource.id).items;
         if (!list.length) {
             this._focusAlloc = null;
         } else {
@@ -1690,7 +1848,7 @@ export class TimelineEngine {
     _moveFocusToEdge(dir) {
         if (!this._rows.length) return;
         if (this._focusResource < 0) this._focusResource = this._firstVisibleResourceIndex();
-        const list = this.allocationsByResource.get(this._rows[this._focusResource].resource.id) || [];
+        const list = this._rowIndexFor(this._rows[this._focusResource].resource.id).items;
         if (list.length) this._focusAlloc = dir < 0 ? list[0] : list[list.length - 1];
         this._scrollFocusIntoView();
         this._announceFocus();
@@ -1715,11 +1873,11 @@ export class TimelineEngine {
             if (this.selectedBars.has(this._focusAlloc.id)) {
                 this.selectedBars.delete(this._focusAlloc.id);
             } else {
-                this.selectedBars.set(this._focusAlloc.id, this._focusAlloc);
+                this.selectedBars.add(this._focusAlloc.id);
             }
         } else {
             this.selectedBars.clear();
-            this.selectedBars.set(this._focusAlloc.id, this._focusAlloc);
+            this.selectedBars.add(this._focusAlloc.id);
         }
         this.render();
         this._notifySelection();
@@ -1769,7 +1927,7 @@ export class TimelineEngine {
             return;
         }
         const a = this._focusAlloc;
-        const range = `${this._announceDtf.format(a.startTime)} to ${this._announceDtf.format(a.endTime)}`;
+        const range = `${this._time.formatDateTime(a.startTime)} to ${this._time.formatDateTime(a.endTime)}`;
         const label = a.textAbove || a.textStart || a.textEnd || a.textBelow || '';
         const selected = this.selectedBars.has(a.id) ? ', selected' : '';
         this._announce(`${resource.name}: ${label ? label + ', ' : ''}${range}${selected}`);
@@ -1793,12 +1951,13 @@ export class TimelineEngine {
         // edge bars) widened by the minimum drawn width and a small tolerance.
         // A bar much shorter than minBarWidth paints more pixels than its time
         // span covers, so a time-space test would miss clicks on those pixels.
-        const resourceAllocations = this.allocationsByResource.get(resource.id) || [];
+        const row = this._rowIndexFor(resource.id);
+        const resourceAllocations = row.items;
         const tolerance = this.config.hitTolerance;
         const minBarWidth = this.config.minBarWidth;
         // Binary-search the first bar that could reach the click, then scan.
         const clickTime = this.getXToTime(canvasX);
-        const firstIndex = this._firstVisibleAllocationIndex(resourceAllocations, clickTime);
+        const firstIndex = this._firstVisibleAllocationIndex(row, clickTime);
         let clickedBar = null;
         let minDistance = Infinity;
         for (let i = firstIndex; i < resourceAllocations.length; i++) {
@@ -1806,7 +1965,7 @@ export class TimelineEngine {
             // Sorted by startTime: once even the longest possible start edge
             // starts right of the click, no later bar can be hit.
             const barX = this.getTimeToX(alloc.startTime);
-            if (barX - this._maxStartEdgeMs * this._pixelsPerMs - tolerance > canvasX) break;
+            if (barX - row.maxStartEdgeMs * this._pixelsPerMs - tolerance > canvasX) break;
 
             const startPx = this.getTimeToX(this._effectiveStartTime(alloc));
             const barEndX = this.getTimeToX(alloc.endTime);
@@ -1826,14 +1985,14 @@ export class TimelineEngine {
                 if (this.selectedBars.has(clickedBar.id)) {
                     this.selectedBars.delete(clickedBar.id);
                 } else {
-                    this.selectedBars.set(clickedBar.id, clickedBar);
+                    this.selectedBars.add(clickedBar.id);
                 }
             }
             // Additive click on empty space leaves the selection unchanged.
         } else {
             this.selectedBars.clear();
             if (clickedBar) {
-                this.selectedBars.set(clickedBar.id, clickedBar);
+                this.selectedBars.add(clickedBar.id);
             }
         }
 
@@ -1846,17 +2005,20 @@ export class TimelineEngine {
         return e.ctrlKey || e.metaKey;
     }
 
-    // Recomputes the selection from the current marquee rectangle, combining it
-    // with the snapshot taken at drag start when the drag is additive.
-    _applyMarqueeSelection() {
-        if (!this.drag) return;
+    // Recomputes the selection from a marquee rectangle, combining it with the
+    // snapshot taken at drag start when the drag is additive. Takes the drag
+    // explicitly so pointer-up can finalize against the completed gesture after
+    // this.drag has already been cleared.
+    _applyMarqueeSelection(drag) {
+        drag = drag || this.drag;
+        if (!drag) return;
 
-        const minX = Math.min(this.drag.startX, this.drag.currentX);
-        const maxX = Math.max(this.drag.startX, this.drag.currentX);
-        const minY = Math.min(this.drag.startY, this.drag.currentY);
-        const maxY = Math.max(this.drag.startY, this.drag.currentY);
+        const minX = Math.min(drag.startX, drag.currentX);
+        const maxX = Math.max(drag.startX, drag.currentX);
+        const minY = Math.min(drag.startY, drag.currentY);
+        const maxY = Math.max(drag.startY, drag.currentY);
 
-        const next = this.drag.additive ? new Map(this.drag.baseSelection) : new Map();
+        const next = drag.additive ? new Set(drag.baseSelection) : new Set();
 
         const c = this.config;
         // Only visit rows the marquee actually covers (content-space Y).
@@ -1868,20 +2030,21 @@ export class TimelineEngine {
 
         for (let resourceIndex = firstRow; resourceIndex <= lastRow; resourceIndex++) {
             const resource = this._rows[resourceIndex].resource;
-            const resourceAllocations = this.allocationsByResource.get(resource.id);
-            if (!resourceAllocations) continue;
+            const row = this.allocationsByResource.get(resource.id);
+            if (!row) continue;
+            const resourceAllocations = row.items;
 
-            const firstIndex = this._firstVisibleAllocationIndex(resourceAllocations, minTime);
+            const firstIndex = this._firstVisibleAllocationIndex(row, minTime);
             for (let i = firstIndex; i < resourceAllocations.length; i++) {
                 const alloc = resourceAllocations[i];
                 // Sorted by startTime: once even the longest start edge starts
                 // right of the marquee, no later bar can be inside it.
-                if (this._timeToContentX(alloc.startTime - this._maxStartEdgeMs) > maxX) break;
+                if (this._timeToContentX(alloc.startTime - row.maxStartEdgeMs) > maxX) break;
                 // Bar horizontal bounds in content space, including edge bars.
                 const barStartX = this._timeToContentX(this._effectiveStartTime(alloc));
                 const barEndX = Math.max(barStartX + c.minBarWidth, this._timeToContentX(this._effectiveEndTime(alloc)));
                 if (barEndX < minX || barStartX > maxX) continue;
-                next.set(alloc.id, alloc);
+                next.add(alloc.id);
             }
         }
 
@@ -1899,11 +2062,12 @@ export class TimelineEngine {
         if (resourceIndex === -1) return null;
 
         const resource = this._rows[resourceIndex].resource;
-        const list = this.allocationsByResource.get(resource.id) || [];
+        const row = this._rowIndexFor(resource.id);
+        const list = row.items;
         const tolerance = this.config.hitTolerance;
         const minBarWidth = this.config.minBarWidth;
         const clickTime = this.getXToTime(canvasX);
-        const firstIndex = this._firstVisibleAllocationIndex(list, clickTime);
+        const firstIndex = this._firstVisibleAllocationIndex(row, clickTime);
         const rowCenterY = this.getResourceToY(resourceIndex) + this.config.resourceHeight / 2;
         let best = null;
         let bestDy = Infinity;
@@ -1911,7 +2075,7 @@ export class TimelineEngine {
         for (let i = firstIndex; i < list.length; i++) {
             const alloc = list[i];
             const barX = this.getTimeToX(alloc.startTime);
-            if (barX - this._maxStartEdgeMs * this._pixelsPerMs - tolerance > canvasX) break;
+            if (barX - row.maxStartEdgeMs * this._pixelsPerMs - tolerance > canvasX) break;
             const startPx = this.getTimeToX(this._effectiveStartTime(alloc));
             const barEndX = this.getTimeToX(alloc.endTime);
             const endPx = Math.max(this.getTimeToX(this._effectiveEndTime(alloc)), barX + minBarWidth);
@@ -2013,12 +2177,13 @@ export class TimelineEngine {
             return;
         }
 
+        const prevResourceId = alloc.resourceId;
+        const prevStartTime = alloc.startTime;
         alloc.startTime = newStart;
         alloc.endTime = newEnd;
         if (newIndex !== this._focusResource) alloc.resourceId = this._rows[newIndex].resource.id;
 
-        this.allocations.sort((a, b) => a.startTime - b.startTime);
-        this._indexAllocations();
+        this._reindexAllocation(alloc, prevResourceId, prevStartTime);
         this._focusResource = newIndex;
         this._scrollFocusIntoView();
         this.render();
@@ -2027,8 +2192,7 @@ export class TimelineEngine {
     }
 
     _announceEdit(alloc, verb) {
-        if (!this._announceDtf) return;
-        const range = `${this._announceDtf.format(alloc.startTime)} to ${this._announceDtf.format(alloc.endTime)}`;
+        const range = `${this._time.formatDateTime(alloc.startTime)} to ${this._time.formatDateTime(alloc.endTime)}`;
         this._announce(`${verb}: ${range}`);
     }
 
@@ -2081,12 +2245,13 @@ export class TimelineEngine {
     _commitEdit(ed) {
         const alloc = ed.alloc;
         const newResource = this._rows[ed.previewResourceIndex] && this._rows[ed.previewResourceIndex].resource;
+        const prevResourceId = alloc.resourceId;
+        const prevStartTime = alloc.startTime;
         alloc.startTime = ed.previewStart;
         alloc.endTime = ed.previewEnd;
         if (newResource) alloc.resourceId = newResource.id;
 
-        this.allocations.sort((a, b) => a.startTime - b.startTime);
-        this._indexAllocations();
+        this._reindexAllocation(alloc, prevResourceId, prevStartTime);
         this.render();
         this._notifyEdit(alloc);
     }
@@ -2102,8 +2267,7 @@ export class TimelineEngine {
     // editable) and the hover tooltip (when enabled) for the bar under the
     // pointer. A single hit-test drives both to keep hover cheap.
     _onHoverMove(e) {
-        this._hoverClientX = e.clientX;
-        this._hoverClientY = e.clientY;
+        if (this._tooltip) this._tooltip.trackPointer(e.clientX, e.clientY);
 
         const { x, y } = this._eventToCanvas(e);
         const hit = this._isInContentArea(x, y) ? this._barAt(x, y) : null;
@@ -2117,20 +2281,10 @@ export class TimelineEngine {
         if (!hit) { this._hideTooltip(); return; }
 
         const resource = this._rows[hit.resourceIndex].resource;
-        if (hit.alloc !== this._tooltipAlloc) {
-            // Moved onto a different bar: rebuild the content and (re)arm the
-            // show timer, or swap immediately if a tooltip is already visible.
-            this._tooltipAlloc = hit.alloc;
-            this._tooltipContent = this._buildTooltip(hit.alloc, resource);
-            if (this._tooltipVisible) {
-                this._renderTooltip();
-            } else {
-                clearTimeout(this._tooltipTimer);
-                this._tooltipTimer = setTimeout(() => this._renderTooltip(), this.config.tooltipDelayMs || 0);
-            }
-        } else if (this._tooltipVisible) {
-            this._positionTooltip();
-        }
+        this._ensureTooltip().show(
+            hit.alloc,
+            this._buildTooltip(hit.alloc, resource),
+            this.config.tooltipDelayMs);
     }
 
     // Builds the tooltip text for an allocation: its explicit `tooltip` field if
@@ -2141,67 +2295,25 @@ export class TimelineEngine {
         const label = alloc.textAbove || alloc.textStart || alloc.textEnd || alloc.textBelow;
         if (label) parts.push(label);
         if (resource) parts.push(resource.name);
-        if (this._announceDtf) {
-            parts.push(`${this._announceDtf.format(alloc.startTime)} – ${this._announceDtf.format(alloc.endTime)}`);
-        }
+        parts.push(`${this._time.formatDateTime(alloc.startTime)} – ${this._time.formatDateTime(alloc.endTime)}`);
         return parts.join('\n');
     }
 
+    // Created on first hover: a timeline that is never hovered never puts an
+    // element on <body>.
     _ensureTooltip() {
-        if (this._tooltipEl) return this._tooltipEl;
-        const el = document.createElement('div');
-        const s = el.style;
-        s.position = 'fixed';
-        s.zIndex = '2147483647';
-        s.pointerEvents = 'none';
-        s.maxWidth = '320px';
-        s.padding = '6px 8px';
-        s.borderRadius = '4px';
-        s.font = this.config.barLabelFont;
-        s.lineHeight = '1.35';
-        s.whiteSpace = 'pre-line';
-        s.background = this.config.colors.tooltipBg;
-        s.color = this.config.colors.tooltipText;
-        s.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.25)';
-        s.display = 'none';
-        document.body.appendChild(el);
-        this._tooltipEl = el;
-        return el;
-    }
-
-    _renderTooltip() {
-        if (!this._tooltipContent) return;
-        const el = this._ensureTooltip();
-        el.textContent = this._tooltipContent;
-        el.style.display = 'block';
-        this._tooltipVisible = true;
-        this._positionTooltip();
-    }
-
-    // Positions the tooltip near the pointer, flipping to the opposite side when
-    // it would overflow the viewport.
-    _positionTooltip() {
-        const el = this._tooltipEl;
-        if (!el) return;
-        const pad = 12;
-        const rect = el.getBoundingClientRect();
-        let left = this._hoverClientX + pad;
-        let top = this._hoverClientY + pad;
-        if (left + rect.width > window.innerWidth - 4) left = this._hoverClientX - rect.width - pad;
-        if (top + rect.height > window.innerHeight - 4) top = this._hoverClientY - rect.height - pad;
-        el.style.left = Math.max(4, left) + 'px';
-        el.style.top = Math.max(4, top) + 'px';
+        if (!this._tooltip) {
+            this._tooltip = new Tooltip({
+                font: this.config.barLabelFont,
+                background: this.config.colors.tooltipBg,
+                color: this.config.colors.tooltipText
+            });
+        }
+        return this._tooltip;
     }
 
     _hideTooltip() {
-        clearTimeout(this._tooltipTimer);
-        this._tooltipTimer = null;
-        this._tooltipAlloc = null;
-        this._tooltipContent = '';
-        if (this._tooltipVisible && this._tooltipEl) {
-            this._tooltipEl.style.display = 'none';
-        }
-        this._tooltipVisible = false;
+        if (this._tooltip) this._tooltip.hide();
     }
 
     // Time -> content-space X (scroll-independent), mirroring getTimeToX.
@@ -2237,7 +2349,7 @@ export class TimelineEngine {
     _notifySelection() {
         if (!this.dotNetRef) return;
 
-        const ids = Array.from(this.selectedBars.keys());
+        const ids = Array.from(this.selectedBars);
         this.dotNetRef.invokeMethodAsync('OnSelectionUpdated', ids)
             .catch((error) => console.error('BlazorResourceTimeline selection callback failed:', error));
     }
@@ -2329,15 +2441,64 @@ export class TimelineEngine {
         const roots = [];
         const byId = new Map();
         for (const r of this.resources) byId.set(r.id, r);
+
+        // A resource whose parent chain loops back on itself is unreachable from
+        // any root and would silently vanish from the timeline, so cycle members
+        // are promoted to top-level rows instead.
+        //
+        // Each id is classified once and the result memoized, making this linear
+        // overall - walking every resource's chain independently would be
+        // quadratic on a deeply nested hierarchy.
+        const UNSETTLED = 1, SAFE = 2, CYCLIC = 3;
+        const state = new Map();
+
+        const classify = (startId) => {
+            const path = [];
+            let id = startId;
+            for (;;) {
+                const s = state.get(id);
+                if (s === UNSETTLED) {
+                    // Closed a loop. The cycle is the path from where this id
+                    // first appeared; anything before that merely leads into the
+                    // cycle and still reaches a row, since cycle members become
+                    // roots below.
+                    const at = path.indexOf(id);
+                    for (let i = 0; i < at; i++) state.set(path[i], SAFE);
+                    for (let i = at; i < path.length; i++) state.set(path[i], CYCLIC);
+                    return;
+                }
+                if (s === SAFE || s === CYCLIC) break;   // reached settled ground
+                const r = byId.get(id);
+                if (!r) break;
+                state.set(id, UNSETTLED);
+                path.push(id);
+                const pid = r.parentId;
+                if (pid == null || pid === id || !byId.has(pid)) break;
+                id = pid;
+            }
+            // This whole chain terminates at a root, so none of it is in a cycle.
+            for (const p of path) state.set(p, SAFE);
+        };
+
+        for (const r of this.resources) {
+            if (!state.has(r.id)) classify(r.id);
+        }
+
+        let cycles = 0;
         for (const r of this.resources) {
             const pid = r.parentId;
-            if (pid != null && pid !== r.id && byId.has(pid)) {
+            if (pid != null && pid !== r.id && byId.has(pid) && state.get(r.id) !== CYCLIC) {
                 let arr = childrenById.get(pid);
                 if (!arr) { arr = []; childrenById.set(pid, arr); }
                 arr.push(r);
             } else {
+                if (pid != null && pid !== r.id && byId.has(pid)) cycles++;
                 roots.push(r);
             }
+        }
+        if (cycles > 0) {
+            console.warn(`BlazorResourceTimeline: ${cycles} resource(s) are in a parentId ` +
+                `cycle and have been treated as top-level rows.`);
         }
         this._childrenById = childrenById;
         this._resourceRoots = roots;
@@ -2357,16 +2518,25 @@ export class TimelineEngine {
     _rebuildRows() {
         const rows = [];
         const idIndex = new Map();
-        const visit = (list, depth) => {
-            for (const r of list) {
-                const kids = this._childrenById.get(r.id);
-                const hasChildren = !!(kids && kids.length);
-                idIndex.set(r.id, rows.length);
-                rows.push({ resource: r, depth, hasChildren });
-                if (hasChildren && !this._collapsed.has(r.id)) visit(kids, depth + 1);
+        // Explicit stack rather than recursion: hierarchy depth comes from host
+        // data and is not bounded, so a deep tree could blow the call stack.
+        // Roots are pushed in reverse so they pop in input order.
+        const stack = [];
+        for (let i = this._resourceRoots.length - 1; i >= 0; i--) {
+            stack.push({ resource: this._resourceRoots[i], depth: 0 });
+        }
+        while (stack.length) {
+            const { resource, depth } = stack.pop();
+            const kids = this._childrenById.get(resource.id);
+            const hasChildren = !!(kids && kids.length);
+            idIndex.set(resource.id, rows.length);
+            rows.push({ resource, depth, hasChildren });
+            if (hasChildren && !this._collapsed.has(resource.id)) {
+                for (let i = kids.length - 1; i >= 0; i--) {
+                    stack.push({ resource: kids[i], depth: depth + 1 });
+                }
             }
-        };
-        visit(this._resourceRoots, 0);
+        }
         this._rows = rows;
         this._rowIndexById = idIndex;
         this._reportResourceRows();
@@ -2411,32 +2581,44 @@ export class TimelineEngine {
     // so scans that early-exit on startTime widen their window by these maxima.
     _indexAllocations() {
         const index = new Map();
-        let maxStartEdgeMs = 0;
-        let maxEndEdgeMs = 0;
-        let maxEffectiveSpanMs = 0;
         for (const alloc of this.allocations) {
-            let list = index.get(alloc.resourceId);
-            if (!list) {
-                list = [];
-                index.set(alloc.resourceId, list);
+            let row = index.get(alloc.resourceId);
+            if (!row) {
+                row = this._newRowIndex();
+                index.set(alloc.resourceId, row);
             }
-            list.push(alloc);
-            const startEdge = alloc.startBar && alloc.startBar.duration > 0 ? alloc.startBar.duration : 0;
-            const endEdge = alloc.endBar && alloc.endBar.duration > 0 ? alloc.endBar.duration : 0;
-            if (startEdge > maxStartEdgeMs) maxStartEdgeMs = startEdge;
-            if (endEdge > maxEndEdgeMs) maxEndEdgeMs = endEdge;
-            const span = (alloc.endTime - alloc.startTime) + startEdge + endEdge;
-            if (span > maxEffectiveSpanMs) maxEffectiveSpanMs = span;
+            row.items.push(alloc);
+            this._widenRowBounds(row, alloc);
         }
         // Each resource's list inherits global sort order, so it is already
         // sorted by startTime (which the lane assignment relies on).
-        for (const list of index.values()) {
-            this._assignStackLanes(list);
+        for (const row of index.values()) {
+            this._assignStackLanes(row.items);
         }
         this.allocationsByResource = index;
-        this._maxStartEdgeMs = maxStartEdgeMs;
-        this._maxEndEdgeMs = maxEndEdgeMs;
-        this._maxEffectiveSpanMs = maxEffectiveSpanMs;
+    }
+
+    _newRowIndex() {
+        return { items: [], maxStartEdgeMs: 0, maxSpanMs: 0 };
+    }
+
+    // Widens a row's cached scan bounds to cover one allocation. These bound
+    // how far back a startTime-sorted scan of that row has to look. They are
+    // deliberately per row rather than global: one very long allocation (or one
+    // with a huge start edge) would otherwise force every scan of every row in
+    // the timeline to widen, undoing the binary search entirely.
+    _widenRowBounds(row, alloc) {
+        const startEdge = alloc.startBar && alloc.startBar.duration > 0 ? alloc.startBar.duration : 0;
+        const endEdge = alloc.endBar && alloc.endBar.duration > 0 ? alloc.endBar.duration : 0;
+        if (startEdge > row.maxStartEdgeMs) row.maxStartEdgeMs = startEdge;
+        const span = (alloc.endTime - alloc.startTime) + startEdge + endEdge;
+        if (span > row.maxSpanMs) row.maxSpanMs = span;
+    }
+
+    // The allocations of one resource row, or an empty row index when it has
+    // none. Never returns null, so callers can scan unconditionally.
+    _rowIndexFor(resourceId) {
+        return this.allocationsByResource.get(resourceId) || EMPTY_ROW_INDEX;
     }
 
     // Assigns vertical stacking lanes within one row's startTime-sorted
@@ -2444,8 +2626,9 @@ export class TimelineEngine {
     // on top of each other (see the barMargin option). Bars are grouped into
     // clusters (maximal runs of transitively-overlapping bars); within a
     // cluster each bar takes the first lane free at its start time, and every
-    // member points at a shared cluster record so rendering can center the
-    // whole stack on the row's center line. Bars that overlap nothing form
+    // member is recorded in _laneInfo against a shared cluster record so
+    // rendering can center the whole stack on the row's center line. Bars that
+    // overlap nothing form
     // single-lane clusters and stay centered exactly as before. Touching bars
     // (one ends the instant the next starts) do not count as overlapping.
     //
@@ -2459,11 +2642,20 @@ export class TimelineEngine {
         let clusterMaxEnd = -Infinity;
         let laneEnds = [];
         let laneHeights = [];
+        // A lower bound on every lane's end time. Kept as a bound rather than
+        // the exact minimum so it can be maintained in O(1): it is only ever
+        // lowered, and a too-low value merely falls back to the scan below
+        // (still correct). When it exceeds the current bar's start time, no
+        // lane can be free and the scan is skipped outright - which is exactly
+        // the degenerate row of mutually overlapping bars that would otherwise
+        // make lane assignment quadratic.
+        let laneEndLowerBound = Infinity;
 
+        const laneInfo = this._laneInfo;
         const closeCluster = (endIndex) => {
             const cluster = { laneHeights, offsets: null, key: null };
             for (let j = clusterStart; j < endIndex; j++) {
-                list[j]._cluster = cluster;
+                laneInfo.get(list[j]).cluster = cluster;
             }
         };
 
@@ -2474,9 +2666,16 @@ export class TimelineEngine {
                 clusterStart = i;
                 laneEnds = [];
                 laneHeights = [];
+                laneEndLowerBound = Infinity;
             }
-            let lane = 0;
-            while (lane < laneEnds.length && laneEnds[lane] > alloc.startTime) lane++;
+            let lane;
+            if (laneEndLowerBound > alloc.startTime) {
+                // No lane can have freed up yet; open a new one without scanning.
+                lane = laneEnds.length;
+            } else {
+                lane = 0;
+                while (lane < laneEnds.length && laneEnds[lane] > alloc.startTime) lane++;
+            }
             const end = Math.max(alloc.endTime, alloc.startTime);
             const height = alloc.height && alloc.height > 0 ? alloc.height : 0;
             if (lane === laneEnds.length) {
@@ -2486,7 +2685,8 @@ export class TimelineEngine {
                 laneEnds[lane] = end;
                 if (height > laneHeights[lane]) laneHeights[lane] = height;
             }
-            alloc._lane = lane;
+            if (end < laneEndLowerBound) laneEndLowerBound = end;
+            laneInfo.set(alloc, { cluster: null, lane });
             if (end > clusterMaxEnd) clusterMaxEnd = end;
         }
         closeCluster(list.length);
@@ -2499,11 +2699,16 @@ export class TimelineEngine {
     // computed once per cluster and cached until barHeight/barMargin change.
     // Single-lane bars sit exactly on the center line (offset 0).
     _stackOffset(alloc) {
-        const cluster = alloc._cluster;
+        const info = this._laneInfo.get(alloc);
+        if (!info) return 0;
+        const cluster = info.cluster;
         if (!cluster || cluster.laneHeights.length <= 1) return 0;
 
         const c = this.config;
-        const key = c.barHeight + '|' + c.barMargin;
+        // Compared against a generation counter rather than a composite key
+        // built from barHeight/barMargin: this runs once per visible bar per
+        // frame, and building a string there allocated on the hottest path.
+        const key = this._barLayoutGen;
         if (cluster.key !== key) {
             const heights = cluster.laneHeights;
             const count = heights.length;
@@ -2520,26 +2725,98 @@ export class TimelineEngine {
             cluster.offsets = offsets;
             cluster.key = key;
         }
-        return cluster.offsets[alloc._lane];
+        return cluster.offsets[info.lane];
     }
 
-    // Binary-searches a resource's startTime-sorted allocations for the first
-    // index that could still intersect a window starting at visStart. Any
-    // intersecting allocation has startTime >= visStart - maxEffectiveSpan, so
-    // everything before that lower bound is safely skipped.
-    _firstVisibleAllocationIndex(allocations, visStart) {
-        const lowerBound = visStart - this._maxEffectiveSpanMs;
+    // Binary-searches a row's startTime-sorted allocations for the first index
+    // that could still intersect a window starting at visStart. Any
+    // intersecting allocation has startTime >= visStart - the row's widest
+    // effective span, so everything before that lower bound is safely skipped.
+    _firstVisibleAllocationIndex(row, visStart) {
+        const items = row.items;
+        const lowerBound = visStart - row.maxSpanMs;
         let lo = 0;
-        let hi = allocations.length;
+        let hi = items.length;
         while (lo < hi) {
             const mid = (lo + hi) >> 1;
-            if (allocations[mid].startTime < lowerBound) {
+            if (items[mid].startTime < lowerBound) {
                 lo = mid + 1;
             } else {
                 hi = mid;
             }
         }
         return lo;
+    }
+
+    // First index in a startTime-sorted list at which an allocation starting at
+    // startTime can be inserted while preserving order.
+    _sortedInsertIndex(list, startTime) {
+        let lo = 0;
+        let hi = list.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (list[mid].startTime <= startTime) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+    // Removes one specific allocation from a startTime-sorted list, locating it
+    // by its pre-edit start time rather than scanning the whole list.
+    _removeFromSorted(list, alloc, prevStartTime) {
+        for (let i = this._sortedInsertIndex(list, prevStartTime) - 1;
+            i >= 0 && list[i].startTime === prevStartTime; i--) {
+            if (list[i] === alloc) {
+                list.splice(i, 1);
+                return;
+            }
+        }
+        // Fallback if the recorded previous time didn't place it (shouldn't
+        // happen, but a missed removal would duplicate the bar).
+        const at = list.indexOf(alloc);
+        if (at >= 0) list.splice(at, 1);
+    }
+
+    // Re-files a single allocation after an edit changed its start time and/or
+    // its resource, instead of re-sorting and re-indexing the entire dataset.
+    // Only the one or two rows it touches have their lanes recomputed, which is
+    // what makes held-down keyboard editing viable on large timelines.
+    _reindexAllocation(alloc, prevResourceId, prevStartTime) {
+        const changedRow = alloc.resourceId !== prevResourceId;
+        const changedTime = alloc.startTime !== prevStartTime;
+        if (!changedRow && !changedTime) {
+            // Only the end time moved: order is unaffected, but the row's lanes
+            // and span bound still depend on it.
+            const row = this._rowIndexFor(alloc.resourceId);
+            this._widenRowBounds(row, alloc);
+            this._assignStackLanes(row.items);
+            return;
+        }
+
+        // Keep the global list ordered by startTime; _indexAllocations relies on
+        // that order when it rebuilds every row from scratch.
+        if (changedTime) {
+            this._removeFromSorted(this.allocations, alloc, prevStartTime);
+            this.allocations.splice(
+                this._sortedInsertIndex(this.allocations, alloc.startTime), 0, alloc);
+        }
+
+        const from = this.allocationsByResource.get(prevResourceId);
+        if (from) this._removeFromSorted(from.items, alloc, prevStartTime);
+
+        let to = changedRow ? this.allocationsByResource.get(alloc.resourceId) : from;
+        if (!to) {
+            to = this._newRowIndex();
+            this.allocationsByResource.set(alloc.resourceId, to);
+        }
+        to.items.splice(this._sortedInsertIndex(to.items, alloc.startTime), 0, alloc);
+
+        // Bounds only widen here. A row whose longest bar just shrank keeps a
+        // conservative (still correct, merely wider) scan window until the next
+        // full re-index - cheaper than rescanning the row to tighten it.
+        this._widenRowBounds(to, alloc);
+        this._assignStackLanes(to.items);
+        if (changedRow && from) this._assignStackLanes(from.items);
     }
 
     setData(resources, start, end, allocations) {
@@ -2578,9 +2855,6 @@ export class TimelineEngine {
         this.timeRange = { start, end };
         this.allocations = [];
         this.allocationsByResource = new Map();
-        this._maxStartEdgeMs = 0;
-        this._maxEndEdgeMs = 0;
-        this._maxEffectiveSpanMs = 0;
         this.selectedBars.clear();
         this.drag = null;
         this.edit = null;
@@ -2626,8 +2900,14 @@ export class TimelineEngine {
     // change). Dimensions may change, so the layout is recomputed and repainted.
     setOptions(options) {
         const prevRenderer = String(this.config.renderer || 'canvas').toLowerCase();
+        const prevBarHeight = this.config.barHeight;
+        const prevBarMargin = this.config.barMargin;
         this._applyOptions(options);
         this._rebuildDateFormatters();
+        // Cached stacking offsets are derived from these two; invalidate them.
+        if (this.config.barHeight !== prevBarHeight || this.config.barMargin !== prevBarMargin) {
+            this._barLayoutGen++;
+        }
         // An explicit pixelsPerHour in the options supersedes any runtime zoom.
         if (options && options.pixelsPerHour != null) {
             this._userPixelsPerHour = null;
@@ -2717,9 +2997,6 @@ export class TimelineEngine {
         this.timeRange = { start, end };
         this.allocations = [];
         this.allocationsByResource = new Map();
-        this._maxStartEdgeMs = 0;
-        this._maxEndEdgeMs = 0;
-        this._maxEffectiveSpanMs = 0;
         this.selectedBars.clear();
         this.drag = null;
         this.edit = null;
@@ -2742,8 +3019,7 @@ export class TimelineEngine {
     // visible range widened by windowBufferFactor viewports on each side and
     // clamped to the overall range. Returned as [startMs, endMs] for interop.
     getVisibleWindow() {
-        const [s, e] = this._windowFetchRange();
-        return [s, e];
+        return this._windowFetchRange();
     }
 
     _windowFetchRange() {
@@ -2819,7 +3095,7 @@ export class TimelineEngine {
 
     // Returns the ids of the currently selected bars, in selection order.
     getSelectedBarIds() {
-        return Array.from(this.selectedBars.keys());
+        return Array.from(this.selectedBars);
     }
 
     // Resolves after the next render's paint completes. Lets the host hide a
@@ -2836,15 +3112,18 @@ export class TimelineEngine {
     }
 
     dispose() {
+        // Checked by async callbacks (image loads) that can still fire after
+        // teardown and would otherwise touch a disposed engine.
+        this._disposed = true;
         if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
         if (this._scrollRaf) cancelAnimationFrame(this._scrollRaf);
         if (this._nowTimer) {
             clearInterval(this._nowTimer);
             this._nowTimer = null;
         }
-        if (this._tooltipTimer) {
-            clearTimeout(this._tooltipTimer);
-            this._tooltipTimer = null;
+        if (this._tooltip) {
+            this._tooltip.dispose();
+            this._tooltip = null;
         }
         if (this._windowCheckTimer) {
             clearTimeout(this._windowCheckTimer);
@@ -2855,6 +3134,7 @@ export class TimelineEngine {
             this._resizeObserver = null;
         }
         window.removeEventListener('resize', this._onResize);
+        window.removeEventListener('scroll', this._onAnyScroll, { capture: true });
         this.wrapper.removeEventListener('scroll', this._onScroll);
         this.wrapper.removeEventListener('keydown', this._onKeyDown);
         this.wrapper.removeEventListener('focus', this._onFocusIn);
@@ -2864,15 +3144,18 @@ export class TimelineEngine {
             this.renderer.dispose();
             this.renderer = null;
         }
-        const contentDiv = this.wrapper.querySelector('.timeline-content');
+        const contentDiv = this._contentDiv || this.wrapper.querySelector('.timeline-content');
         if (contentDiv) contentDiv.remove();
+        this._contentDiv = null;
         if (this._liveRegion) {
             this._liveRegion.remove();
             this._liveRegion = null;
         }
-        if (this._tooltipEl) {
-            this._tooltipEl.remove();
-            this._tooltipEl = null;
+        // Detach handlers first: an image still in flight keeps its onload
+        // closure - and through it this engine - alive until the load settles.
+        for (const img of this.imageCache.values()) {
+            img.onload = null;
+            img.onerror = null;
         }
         this.imageCache.clear();
         this._flushRenderedResolvers();
