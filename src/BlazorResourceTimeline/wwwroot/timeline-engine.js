@@ -399,6 +399,9 @@ export class TimelineEngine {
         const renderer = new Renderer(this.wrapper, {
             // Icon images finish loading after the frame that laid them out.
             requestRender: () => { if (this._hasTimeRange()) this.render(); },
+            // Used after a canvas backing-store resize, which clears the bitmap
+            // synchronously; painting in the same turn avoids a blank flash.
+            paintNow: () => { if (this._hasTimeRange()) this._paintNow(); },
             getImage: (src) => this._getImage(src)
         });
 
@@ -721,7 +724,19 @@ export class TimelineEngine {
         const clampedScrollLeft = Math.max(0, Math.min(rawScrollLeft, Math.max(0, spacerWidth - cssW)));
         this.scrollX = clampedScrollLeft * this._scrollScaleX;
 
-        this.render();
+        // Paint in this turn. Canvas resize clears the backing store immediately;
+        // deferring to rAF would present one blank frame (noticeable when a host
+        // reflows on selection empty↔non-empty and the ResizeObserver runs).
+        this._paintNow();
+    }
+
+    // Cancels any pending rAF paint and paints the current scene immediately.
+    _paintNow() {
+        if (this.animationFrame) {
+            cancelAnimationFrame(this.animationFrame);
+            this.animationFrame = null;
+        }
+        this._paintFrame();
     }
 
     // Sets the horizontal scroll to a virtual offset (in content pixels),

@@ -196,13 +196,20 @@
 .demo-stats {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 1.25rem;
     padding: 0.5rem 0.75rem;
     margin-bottom: 0.75rem;
+    min-height: 2.5rem;
     background-color: #f1f3f5;
     border-radius: 6px;
     font-size: 0.875rem;
     color: #495057;
+}
+
+.demo-stats .selection {
+    flex: 1 1 16rem;
+    min-width: 0;
 }
 
 .demo-stats .selection.muted {
@@ -223,8 +230,14 @@
     font-size: 0.8rem;
 }
 
-.btn-clear:hover {
+.btn-clear:hover:not(:disabled) {
     background-color: #e9ecef;
+}
+
+/* Reserve the Clear control's box so empty↔selected does not reflow the timeline. */
+.btn-clear.is-placeholder {
+    visibility: hidden;
+    pointer-events: none;
 }
 
 .demo-timeline {

@@ -38,9 +38,15 @@ export class CanvasRenderer {
                 }
             }
             // Re-apply the backing store at the new density and repaint.
+            // Changing canvas.width/height clears the bitmap; paint synchronously
+            // when that happens so a blank frame is never presented.
             if (this._cssW > 0 && this._cssH > 0) {
-                this._applyBackingStore();
-                this.host.requestRender();
+                if (this._applyBackingStore()) {
+                    if (typeof this.host.paintNow === 'function') this.host.paintNow();
+                    else this.host.requestRender();
+                } else {
+                    this.host.requestRender();
+                }
             }
         });
         try {
@@ -55,20 +61,23 @@ export class CanvasRenderer {
         }
     }
 
+    // Returns true when the device-pixel backing store was resized (and thus
+    // cleared). Callers that need a continuous picture should paint immediately.
     resize(cssW, cssH) {
         this._cssW = cssW;
         this._cssH = cssH;
         this.surface.style.width = cssW + 'px';
         this.surface.style.height = cssH + 'px';
-        this._applyBackingStore();
+        return this._applyBackingStore();
     }
 
     // Sizes the backing store in device pixels. The scale is capped so very
     // high DPR displays (some phones report 3-4) don't multiply the fill cost.
+    // Returns true when width/height were written (bitmap cleared by the browser).
     _applyBackingStore() {
         const cssW = this._cssW;
         const cssH = this._cssH;
-        if (cssW === 0 || cssH === 0) return;
+        if (cssW === 0 || cssH === 0) return false;
 
         const maxScale = 2;
         let deviceW, deviceH;
@@ -83,12 +92,16 @@ export class CanvasRenderer {
             deviceH = Math.round(cssH * scale);
         }
 
+        let cleared = false;
         if (this.surface.width !== deviceW || this.surface.height !== deviceH) {
+            // Assigning width/height resets the bitmap to transparent black.
             this.surface.width = deviceW;
             this.surface.height = deviceH;
+            cleared = true;
         }
         this._scaleX = deviceW / cssW;
         this._scaleY = deviceH / cssH;
+        return cleared;
     }
 
     render(scene) {

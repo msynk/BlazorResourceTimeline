@@ -95,27 +95,34 @@
         {
             <span class="last-edit">Menu action: @_lastMenuAction</span>
         }
-        @if (_selectedBars.Count > 1)
-        {
-            <span class="selection">
-                <strong>@_selectedBars.Count</strong> bars selected
-                (@FormatDuration(_selectedBars.Aggregate(TimeSpan.Zero, (acc, b) => acc + (b.EndTime - b.StartTime))) total)
-            </span>
-            <button class="btn-clear" @onclick="ClearSelectionAsync">Clear</button>
-        }
-        else if (_selectedBars.Count == 1)
-        {
-            <span class="selection">
-                Selected: <strong>@ResourceNameFor(_selectedBars[0].ResourceId)</strong>
-                @FormatTime(_selectedBars[0].StartTime) &ndash; @FormatTime(_selectedBars[0].EndTime)
-                (@FormatDuration(_selectedBars[0].EndTime - _selectedBars[0].StartTime))
-            </span>
-            <button class="btn-clear" @onclick="ClearSelectionAsync">Clear</button>
-        }
-        else
-        {
-            <span class="selection muted">No bar selected &mdash; drag to marquee-select, Ctrl+click to multi-select</span>
-        }
+        @* Keep selection chrome in the layout even when empty so toggling
+           selection does not resize the flex timeline (canvas backing-store
+           resize would otherwise flash). *@
+        <span class="selection@(_selectedBars.Count == 0 ? " muted" : "")">
+            @if (_selectedBars.Count > 1)
+            {
+                <text>
+                    <strong>@_selectedBars.Count</strong> bars selected
+                    (@FormatDuration(SelectedTotalDuration) total)
+                </text>
+            }
+            else if (_selectedBars.Count == 1)
+            {
+                <text>
+                    Selected: <strong>@ResourceNameFor(_selectedBars[0].ResourceId)</strong>
+                    @FormatTime(_selectedBars[0].StartTime) &ndash; @FormatTime(_selectedBars[0].EndTime)
+                    (@FormatDuration(_selectedBars[0].EndTime - _selectedBars[0].StartTime))
+                </text>
+            }
+            else
+            {
+                <text>No bar selected &mdash; drag to marquee-select, Ctrl+click to multi-select</text>
+            }
+        </span>
+        <button class="btn-clear@(_selectedBars.Count == 0 ? " is-placeholder" : "")"
+                disabled="@(_selectedBars.Count == 0)"
+                aria-hidden="@(_selectedBars.Count == 0)"
+                @onclick="ClearSelectionAsync">Clear</button>
     </section>
 
     <div class="demo-timeline">
@@ -590,6 +597,10 @@
 
     private static string FormatTime(DateTimeOffset time) =>
         time.LocalDateTime.ToString("MMM d, HH:mm");
+
+    // Kept out of the markup: Razor misparses Aggregate lambdas inline.
+    private TimeSpan SelectedTotalDuration =>
+        _selectedBars.Aggregate(TimeSpan.Zero, (acc, b) => acc + (b.EndTime - b.StartTime));
 
     private static string FormatDuration(TimeSpan span) =>
         span.TotalHours >= 1
