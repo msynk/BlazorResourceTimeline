@@ -15,6 +15,30 @@ html, body {
     -webkit-text-size-adjust: 100%;
 }
 
+/* System dark as a fallback before/without an explicit data-theme attribute. */
+@media (prefers-color-scheme: dark) {
+    html:not([data-theme="light"]),
+    html:not([data-theme="light"]) body {
+        color: #e9ecef;
+        background-color: #121417;
+        color-scheme: dark;
+    }
+}
+
+html[data-theme="dark"],
+html[data-theme="dark"] body {
+    color: #e9ecef;
+    background-color: #121417;
+    color-scheme: dark;
+}
+
+html[data-theme="light"],
+html[data-theme="light"] body {
+    color: #212529;
+    background-color: #fff;
+    color-scheme: light;
+}
+
 h1, h2, h3, h4, h5, h6, p {
     margin-top: 0;
     margin-bottom: 0.5rem;

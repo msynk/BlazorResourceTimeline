@@ -6,7 +6,7 @@
 
 <PageTitle>Resource Timeline</PageTitle>
 
-<div class="demo-page">
+<div class="demo-page@(_darkTheme ? " theme-dark" : "")">
     <header class="demo-header">
         <div class="demo-title">
             <h1>Resource Timeline</h1>
@@ -76,6 +76,12 @@
                 </span>
                 <button class="btn-today" @onclick="GoToTodayAsync">Go to Today</button>
                 <button class="btn-regenerate" @onclick="RegenerateAsync">Regenerate</button>
+                <button class="btn-theme@(_darkTheme ? " is-active" : "")"
+                        @onclick="ToggleThemeAsync"
+                        title="@(_darkTheme ? "Switch to light theme" : "Switch to dark theme")"
+                        aria-pressed="@(_darkTheme ? "true" : "false")">
+                    @(_darkTheme ? "Light theme" : "Dark theme")
+                </button>
                 <button class="btn-code" @onclick="ToggleCode">
                     @(_showCode ? "Hide Code" : "Show Code")
                 </button>
@@ -226,7 +232,7 @@
     private BlazorResourceTimeline? _timeline;
     private BlazorResourceTimelineConfig? _config;
     private IReadOnlyList<BlazorResourceTimelineAllocation> _selectedBars = Array.Empty<BlazorResourceTimelineAllocation>();
-    private int _days = 100;
+    private int _days = 7;
     private int _barHeight = 4;
     private int _barMargin = 2;
     private string _renderer = "canvas";
@@ -234,6 +240,7 @@
     private bool _editable;
     private bool _windowed;
     private bool _customColumn;
+    private bool _darkTheme;
     private string? _lastEdit;
 
     // Right-click state: the args of the open context menu (null when closed)
@@ -255,8 +262,11 @@
             }
         </span>;
 
-    private static string DotColor(BlazorResourceTimelineRowContext row) =>
-        row.HasChildren ? "#adb5bd" : "#1971c2";
+    private string DotColor(BlazorResourceTimelineRowContext row) =>
+        row.HasChildren
+            ? (_darkTheme ? "#868e96" : "#adb5bd")
+            : (_darkTheme ? "#74c0fc" : "#1971c2");
+
     // A new Options instance is assigned on change so the component re-applies
     // it (Options is compared by reference, like Config).
     private BlazorResourceTimelineOptions? _options;
@@ -360,10 +370,48 @@
         }
         """;
 
-    protected override Task OnInitializedAsync()
+    protected override async Task OnInitializedAsync()
     {
         _options = BuildOptions();
-        return RegenerateAsync();
+        await RegenerateAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Resolve the system scheme here (JS is guaranteed ready) and sync
+            // both the page class and the document data-theme together.
+            await InitializeThemeFromSystemAsync();
+        }
+
+        // Focus the freshly opened menu so Escape (and tabbing to the items)
+        // works without an extra click.
+        if (_ctxMenuFocusPending && _contextMenu is not null)
+        {
+            _ctxMenuFocusPending = false;
+            await _ctxMenuElement.FocusAsync();
+        }
+    }
+
+    private async Task InitializeThemeFromSystemAsync()
+    {
+        try
+        {
+            var preferred = await JS.InvokeAsync<string>("getPreferredDemoTheme");
+            var dark = preferred == "dark";
+            if (dark != _darkTheme)
+            {
+                _darkTheme = dark;
+                ApplyOptions();
+                StateHasChanged();
+            }
+            await ApplyDocumentThemeAsync();
+        }
+        catch
+        {
+            await ApplyDocumentThemeAsync();
+        }
     }
 
     private async Task RegenerateAsync()
@@ -495,7 +543,71 @@
             "html" => BlazorResourceTimelineRendererType.Html,
             _ => BlazorResourceTimelineRendererType.Canvas,
         },
+        // Always send a full palette: the engine merges colors and leaves prior
+        // values in place when Colors is null, so light↔dark would stick otherwise.
+        Colors = _darkTheme ? DarkTimelineColors : LightTimelineColors,
     };
+
+    private static readonly BlazorResourceTimelineColors LightTimelineColors = new()
+    {
+        ContentBg = "#ffffff",
+        AxisBg = "#f8f9fa",
+        AxisBorder = "#dee2e6",
+        Tick = "#adb5bd",
+        Label = "#495057",
+        DateLabel = "#212529",
+        Grid = "#e9ecef",
+        Bar = "#74c0fc",
+        BarSelected = "#4dabf7",
+        BarSelectedBorder = "#1971c2",
+        BarLabel = "#495057",
+        Now = "#e03131",
+        SelectionFill = "rgba(77, 171, 247, 0.18)",
+        SelectionBorder = "#4dabf7",
+        Focus = "#1971c2",
+        TooltipBg = "#212529",
+        TooltipText = "#ffffff",
+    };
+
+    private static readonly BlazorResourceTimelineColors DarkTimelineColors = new()
+    {
+        ContentBg = "#1a1d21",
+        AxisBg = "#141618",
+        AxisBorder = "#2c3035",
+        Tick = "#6c757d",
+        Label = "#adb5bd",
+        DateLabel = "#e9ecef",
+        Grid = "#2c3035",
+        Bar = "#4dabf7",
+        BarSelected = "#74c0fc",
+        BarSelectedBorder = "#a5d8ff",
+        BarLabel = "#ced4da",
+        Now = "#ff6b6b",
+        SelectionFill = "rgba(77, 171, 247, 0.22)",
+        SelectionBorder = "#74c0fc",
+        Focus = "#74c0fc",
+        TooltipBg = "#f8f9fa",
+        TooltipText = "#212529",
+    };
+
+    private async Task ToggleThemeAsync()
+    {
+        _darkTheme = !_darkTheme;
+        ApplyOptions();
+        await ApplyDocumentThemeAsync();
+    }
+
+    private async Task ApplyDocumentThemeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("setDemoTheme", _darkTheme ? "dark" : "light");
+        }
+        catch
+        {
+            // Theme still applies to the demo page chrome via CSS class.
+        }
+    }
 
     // The component has already applied the move/resize to this instance in
     // place; a real app would persist it here. We just surface it in the UI.
@@ -529,17 +641,6 @@
         if (e.Key == "Escape")
         {
             CloseContextMenu();
-        }
-    }
-
-    protected override async Task OnAfterRenderAsync(bool firstRender)
-    {
-        // Focus the freshly opened menu so Escape (and tabbing to the items)
-        // works without an extra click.
-        if (_ctxMenuFocusPending && _contextMenu is not null)
-        {
-            _ctxMenuFocusPending = false;
-            await _ctxMenuElement.FocusAsync();
         }
     }
 

@@ -27,6 +27,18 @@
         <a href="." class="reload">Reload</a>
         <span class="dismiss">🗙</span>
     </div>
+    <script>
+        // Theme helpers for the demo page. Apply the system preference once,
+        // synchronously, before Blazor boots. Do not use window.onload — that
+        // races with Blazor and can overwrite the theme after the app has set it.
+        window.getPreferredDemoTheme = function () {
+            return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        };
+        window.setDemoTheme = function (theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+        };
+        window.setDemoTheme(window.getPreferredDemoTheme());
+    </script>
     <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
 </body>
 
