@@ -9,6 +9,8 @@ built for dense, glanceable planning boards - flight/gate planning, train
 scheduling, fleet and crew rostering, and similar transport use-cases - where a
 lot of data must stay readable and interactive.
 
+![BlazorResourceTimeline](docs/screenshot.png)
+
 ## Features
 
 - **Pluggable renderers**: one engine (data, layout, interaction) driving your
