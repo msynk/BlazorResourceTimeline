@@ -11,7 +11,11 @@ namespace BlazorResourceTimeline.Models;
 /// </summary>
 public class BlazorResourceTimelineOptions
 {
-    /// <summary>Height of each resource row, in pixels.</summary>
+    /// <summary>
+    /// Minimum height of each resource row, in pixels. Rows grow automatically
+    /// when overlapping allocations stack taller than this so bars stay inside
+    /// the row with the same top/bottom padding a single default-height bar has.
+    /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? ResourceHeight { get; set; }
 
@@ -35,8 +39,9 @@ public class BlazorResourceTimelineOptions
     /// Vertical distance (in pixels) between allocation bars that overlap in time
     /// on the same resource row. Overlapping bars are stacked apart around the
     /// row's center line instead of being drawn on top of each other; this sets
-    /// the gap between them (<c>0</c> stacks them touching). Bars that overlap
-    /// nothing stay centered in their row. Defaults to 2.
+    /// the gap between them (<c>0</c> stacks them touching). The row grows as
+    /// needed so the stack keeps consistent top/bottom padding. Bars that
+    /// overlap nothing stay centered in their row. Defaults to 2.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? BarMargin { get; set; }

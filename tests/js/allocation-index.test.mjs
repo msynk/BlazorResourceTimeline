@@ -80,6 +80,57 @@ test('overlapping bars are stacked into distinct lanes around the centre', () =>
     assert.ok(Math.abs(offsets.reduce((s, o) => s + o, 0)) < 1e-9);
 });
 
+test('rows grow so stacked overlapping bars stay inside with consistent padding', () => {
+    const engine = makeIndexedEngine([
+        alloc('a', 'r0', 0, 100),
+        alloc('b', 'r0', 50, 150),
+        alloc('c', 'r0', 60, 160),
+        // A sibling resource with no overlaps stays at the minimum height.
+        alloc('d', 'r1', 0, 100)
+    ]);
+    const c = engine.config;
+    const stackH = 3 * c.barHeight + 2 * c.barMargin;
+    const padTotal = c.resourceHeight - c.barHeight;
+    const expectedTall = stackH + padTotal;
+
+    assert.equal(engine._rowHeight(0), expectedTall);
+    assert.equal(engine._rowHeight(1), c.resourceHeight);
+
+    // Outer lane centres must stay within the row band (same padding as a
+    // single default bar would have in a minimum-height row).
+    const half = expectedTall / 2;
+    const pad = padTotal / 2;
+    for (const a of engine.allocations.filter(x => x.resourceId === 'r0')) {
+        const barH = c.barHeight;
+        const top = engine._stackOffset(a) - barH / 2;
+        const bottom = engine._stackOffset(a) + barH / 2;
+        assert.ok(top >= -half + pad - 1e-9, 'stack must not breach top padding');
+        assert.ok(bottom <= half - pad + 1e-9, 'stack must not breach bottom padding');
+    }
+});
+
+test('visible-row culling uses cumulative heights, not index * resourceHeight', () => {
+    const engine = makeIndexedEngine([
+        alloc('a', 'r0', 0, 100),
+        alloc('b', 'r0', 50, 150),
+        alloc('c', 'r0', 60, 160),
+        alloc('d', 'r1', 0, 100),
+        alloc('e', 'r2', 0, 100)
+    ]);
+    // Viewport shows only the top of the first (tall) row.
+    engine._viewportH = engine.config.timeAxisHeight + 10;
+    engine.scrollY = 0;
+    const { start, end } = engine._visibleRowWindow(0);
+    assert.equal(start, 0);
+    assert.ok(end >= 1 && end <= 2, 'only the first tall row (plus pad) should be in view');
+
+    // Scroll past the tall row into r1.
+    engine.scrollY = engine._rowHeight(0);
+    const mid = engine._visibleRowWindow(0);
+    assert.equal(mid.start, 1);
+    assert.ok(mid.end >= 2);
+});
+
 test('a fully overlapping row assigns one lane per bar', () => {
     // The degenerate case the lane-end lower bound short-circuits.
     const allocations = [];

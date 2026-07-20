@@ -62,6 +62,8 @@ export function makeBareEngine(overrides = {}) {
     engine._configGen = 1;
     engine._configSnap = null;
     engine._configSnapGen = -1;
+    engine._rowHeights = [];
+    engine._rowTops = [0];
 
     engine.scrollX = 0;
     engine.scrollY = 0;
@@ -92,9 +94,24 @@ export function makeZonedEngine(timeZone, locale = null) {
 export { ZonedTime } from '../../../src/BlazorResourceTimeline/wwwroot/zoned-time.js';
 
 // A bare engine holding the given allocations, indexed as the real one would.
+// When resources are not supplied, one leaf row is synthesized per resourceId
+// seen in the allocations so variable row-height metrics have something to size.
 export function makeIndexedEngine(allocations, overrides = {}) {
     const engine = makeBareEngine(overrides);
     engine.allocations = allocations.slice().sort((a, b) => a.startTime - b.startTime);
+    if (!engine._rows.length) {
+        const seen = new Set();
+        for (const a of engine.allocations) {
+            if (!seen.has(a.resourceId)) {
+                seen.add(a.resourceId);
+                engine._rows.push({
+                    resource: { id: a.resourceId, name: a.resourceId },
+                    depth: 0,
+                    hasChildren: false
+                });
+            }
+        }
+    }
     engine._indexAllocations();
     return engine;
 }

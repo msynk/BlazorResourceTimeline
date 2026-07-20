@@ -125,9 +125,10 @@ test('time/x conversions round-trip through the current scale and scroll', () =>
 test('resource row hit-testing maps y back to the row index', () => {
     const engine = makeBareEngine();
     engine._rows = [1, 2, 3].map(i => ({ resource: { id: 'r' + i }, depth: 0, hasChildren: false }));
+    engine._recomputeRowMetrics();
     engine.scrollY = 0;
 
-    // Row i occupies [timeAxisHeight + i*h, +h).
+    // Row i occupies [timeAxisHeight + i*h, +h) when every row is the minimum height.
     const h = engine.config.resourceHeight;
     const axis = engine.config.timeAxisHeight;
     assert.equal(engine.getYToResource(axis + 0.5 * h), 0);
@@ -135,6 +136,23 @@ test('resource row hit-testing maps y back to the row index', () => {
     assert.equal(engine.getYToResource(axis + 2.5 * h), 2);
     assert.equal(engine.getYToResource(axis + 3.5 * h), -1, 'past the last row');
     assert.equal(engine.getYToResource(axis - 1), -1, 'above the content area');
+});
+
+test('variable-height rows keep hit-testing aligned with cumulative tops', () => {
+    const engine = makeBareEngine();
+    engine._rows = [0, 1, 2].map(i => ({ resource: { id: 'r' + i }, depth: 0, hasChildren: false }));
+    // Simulate a tall middle row (as deep stacks produce).
+    engine._rowHeights = [40, 80, 40];
+    engine._rowTops = [0, 40, 120, 160];
+    engine.scrollY = 0;
+    const axis = engine.config.timeAxisHeight;
+
+    assert.equal(engine.getYToResource(axis + 20), 0);
+    assert.equal(engine.getYToResource(axis + 40), 1);
+    assert.equal(engine.getYToResource(axis + 100), 1);
+    assert.equal(engine.getYToResource(axis + 120), 2);
+    assert.equal(engine.getResourceToY(1), axis + 40);
+    assert.equal(engine._totalRowsHeight(), 160);
 });
 
 test('selection holds ids only and survives a data reload', () => {

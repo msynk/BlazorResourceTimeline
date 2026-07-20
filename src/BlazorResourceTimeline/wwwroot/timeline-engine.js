@@ -45,6 +45,9 @@ export class TimelineEngine {
         // argument (and later setOptions). Keys match the camelCased property
         // names of the .NET options model.
         this.config = {
+            // Minimum resource-row height. Grows per row when overlapping bars
+            // stack taller, preserving the same top/bottom padding a single
+            // default-height bar has in a minimum-height row.
             resourceHeight: 40,
             timeAxisHeight: 60,
             resourceAxisWidth: 150,
@@ -57,7 +60,8 @@ export class TimelineEngine {
             // Vertical gap (px) between bars that overlap in time on the same
             // row. Overlapping bars are stacked apart around the row's center
             // line instead of drawn on top of each other; this is the distance
-            // between them (0 stacks them touching).
+            // between them (0 stacks them touching). Rows grow as needed so
+            // the stack keeps the same top/bottom padding as a single bar.
             barMargin: 2,
             minBarWidth: 2,
             // Decorations are skipped when the main bar's drawn width falls
@@ -264,6 +268,12 @@ export class TimelineEngine {
         // per-cluster stacking offsets (see _stackOffset).
         this._barLayoutGen = 1;
 
+        // Per-visible-row layout for variable-height virtualization.
+        // _rowTops[i] is the content-space Y of row i's top; _rowTops[n] is the
+        // total height of all rows. Rebuilt by _recomputeRowMetrics whenever
+        // lanes, bar layout options, or the visible row list change.
+        this._rowHeights = [];
+        this._rowTops = [0];
 
         // Last x the "now" indicator was painted at, so the once-a-minute tick
         // can skip repaints that would not move it (see _nowTimer).
@@ -662,7 +672,7 @@ export class TimelineEngine {
         // sizes it (and any backing store) to the viewport dimensions.
         this.renderer.resize(cssW, cssH);
 
-        const totalHeight = this.config.timeAxisHeight + (this._rows.length * this.config.resourceHeight);
+        const totalHeight = this.config.timeAxisHeight + this._totalRowsHeight();
         const timeSpan = this.timeRange.end - this.timeRange.start;
 
         // Full (virtual) content width, which may exceed the element-size cap at
@@ -736,14 +746,141 @@ export class TimelineEngine {
     }
 
     getResourceToY(resourceIndex) {
-        return this.config.timeAxisHeight + (resourceIndex * this.config.resourceHeight) - this.scrollY;
+        return this.config.timeAxisHeight + this._rowContentTop(resourceIndex) - this.scrollY;
     }
 
     getYToResource(y) {
         const resourceY = y - this.config.timeAxisHeight + this.scrollY;
-        if (resourceY < 0) return -1;
-        const index = Math.floor(resourceY / this.config.resourceHeight);
-        return index >= 0 && index < this._rows.length ? index : -1;
+        return this._rowIndexAtContentY(resourceY);
+    }
+
+    // Content-space Y of the top of visible row `i` (0 at the first row).
+    // Index `n` (== row count) is valid and returns the total rows height, so
+    // the grid can draw the closing line under the last row.
+    _rowContentTop(resourceIndex) {
+        const tops = this._rowTops;
+        if (!tops || resourceIndex < 0 || resourceIndex >= tops.length) {
+            return resourceIndex * this.config.resourceHeight;
+        }
+        return tops[resourceIndex];
+    }
+
+    // Height of visible row `i`, falling back to the configured minimum.
+    _rowHeight(resourceIndex) {
+        const heights = this._rowHeights;
+        if (!heights || resourceIndex < 0 || resourceIndex >= heights.length) {
+            return this.config.resourceHeight;
+        }
+        return heights[resourceIndex];
+    }
+
+    // Total content height of every visible resource row.
+    _totalRowsHeight() {
+        const tops = this._rowTops;
+        return tops && tops.length ? tops[tops.length - 1] : 0;
+    }
+
+    // Binary-searches the cumulative row tops for the row covering contentY
+    // (0 at the top of the first resource row), or -1 when out of range.
+    _rowIndexAtContentY(contentY) {
+        const tops = this._rowTops;
+        const n = this._rows.length;
+        if (n === 0 || !tops || tops.length < 2 || contentY < 0 || contentY >= tops[n]) {
+            return -1;
+        }
+        let lo = 0;
+        let hi = n - 1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (contentY < tops[mid]) hi = mid - 1;
+            else if (contentY >= tops[mid + 1]) lo = mid + 1;
+            else return mid;
+        }
+        return -1;
+    }
+
+    // Inclusive-ish visible row window for vertical culling. Returns
+    // [start, end) with a small pad so partially-visible rows still paint.
+    _visibleRowWindow(pad = 1) {
+        const n = this._rows.length;
+        if (n === 0) return { start: 0, end: 0 };
+        const viewH = Math.max(0, this._viewportH - this.config.timeAxisHeight);
+        const viewTop = this.scrollY;
+        const viewBottom = viewTop + viewH;
+
+        let start = this._rowIndexAtContentY(viewTop);
+        if (start < 0) start = viewTop <= 0 ? 0 : n;
+        start = Math.max(0, start - pad);
+
+        let end = this._rowIndexAtContentY(Math.max(0, viewBottom - 1e-6));
+        if (end < 0) end = viewBottom <= 0 ? -1 : n - 1;
+        end = Math.min(n, end + 1 + pad);
+        return { start, end };
+    }
+
+    // Pixel height of a lane-height list (one cluster), using current bar
+    // layout options for lanes that inherit the default height.
+    _stackHeightFromLanes(laneHeights) {
+        const c = this.config;
+        if (!laneHeights || laneHeights.length === 0) return 0;
+        if (laneHeights.length === 1) return laneHeights[0] || c.barHeight;
+        let total = c.barMargin * (laneHeights.length - 1);
+        for (let i = 0; i < laneHeights.length; i++) {
+            total += laneHeights[i] || c.barHeight;
+        }
+        return total;
+    }
+
+    _clusterStackHeight(cluster) {
+        return cluster ? this._stackHeightFromLanes(cluster.laneHeights) : 0;
+    }
+
+    // Tallest overlapping stack on a resource row (0 when empty).
+    _maxStackHeightForRow(row) {
+        if (!row) return 0;
+        return this._stackHeightFromLanes(row.maxClusterLaneHeights);
+    }
+
+    // Rebuilds per-visible-row heights from stack depth so overlapping bars
+    // stay inside their row with the same top/bottom padding a single default
+    // bar would have in a minimum-height row:
+    //   rowH = max(resourceHeight, stackH + (resourceHeight - barHeight))
+    _recomputeRowMetrics() {
+        const c = this.config;
+        const n = this._rows.length;
+        const heights = new Array(n);
+        const tops = new Array(n + 1);
+        tops[0] = 0;
+        const padTotal = Math.max(0, c.resourceHeight - c.barHeight);
+        for (let i = 0; i < n; i++) {
+            const row = this.allocationsByResource.get(this._rows[i].resource.id);
+            const stackH = this._maxStackHeightForRow(row);
+            heights[i] = Math.max(c.resourceHeight, stackH + padTotal);
+            tops[i + 1] = tops[i] + heights[i];
+        }
+        this._rowHeights = heights;
+        this._rowTops = tops;
+    }
+
+    // After barHeight/barMargin change, the tallest cluster per row may change
+    // (mixed explicit heights). Rescan lane membership once; rare path.
+    _refreshMaxClusterLanes() {
+        for (const row of this.allocationsByResource.values()) {
+            let best = null;
+            let bestH = -1;
+            const seen = new Set();
+            for (let i = 0; i < row.items.length; i++) {
+                const info = this._laneInfo.get(row.items[i]);
+                if (!info || !info.cluster || seen.has(info.cluster)) continue;
+                seen.add(info.cluster);
+                const h = this._clusterStackHeight(info.cluster);
+                if (h > bestH) {
+                    bestH = h;
+                    best = info.cluster.laneHeights;
+                }
+            }
+            row.maxClusterLaneHeights = best;
+        }
     }
 
     calculateVisibleTimeRange() {
@@ -1047,11 +1184,7 @@ export class TimelineEngine {
         const startY = c.timeAxisHeight;
         const visibleEndY = this._viewportH;
 
-        const visibleStart = Math.max(0, Math.floor(this.scrollY / c.resourceHeight) - 1);
-        const visibleEnd = Math.min(
-            this._rows.length,
-            Math.ceil((this.scrollY + this._viewportH - c.timeAxisHeight) / c.resourceHeight) + 1
-        );
+        const { start: visibleStart, end: visibleEnd } = this._visibleRowWindow(1);
 
         // Inclusive upper bound, unlike the bar/resource-axis row loops: a grid
         // line is drawn at each row's *top*, so closing the bottom edge of the
@@ -1091,11 +1224,7 @@ export class TimelineEngine {
         const startY = c.timeAxisHeight;
         const visibleEndY = this._viewportH;
         const indent = c.resourceIndent;
-        const visibleStart = Math.max(0, Math.floor(this.scrollY / c.resourceHeight) - 1);
-        const visibleEnd = Math.min(
-            this._rows.length,
-            Math.ceil((this.scrollY + this._viewportH - c.timeAxisHeight) / c.resourceHeight) + 1
-        );
+        const { start: visibleStart, end: visibleEnd } = this._visibleRowWindow(1);
 
         const rows = this._rowNodes;
         let count = 0;
@@ -1105,7 +1234,7 @@ export class TimelineEngine {
             const row = this._rows[i];
             let node = rows[count];
             if (node === undefined) node = rows[count] = {};
-            node.midY = y + c.resourceHeight / 2;
+            node.midY = y + this._rowHeight(i) / 2;
             // Depth reserves room on the left; group rows get a chevron there.
             node.leftPad = 8 + row.depth * indent;
             node.name = row.resource.name;
@@ -1127,18 +1256,16 @@ export class TimelineEngine {
         const visEnd = this.visibleTimeRange.end;
 
         // Only iterate resources whose row is on screen (vertical culling).
-        const firstResource = Math.max(0, Math.floor(this.scrollY / c.resourceHeight) - 1);
-        const lastResource = Math.min(
-            this._rows.length,
-            Math.ceil((this.scrollY + this._viewportH - c.timeAxisHeight) / c.resourceHeight) + 1
-        );
+        // Variable row heights use cumulative Y + binary search, not index*h.
+        const { start: firstResource, end: lastResource } = this._visibleRowWindow(1);
 
         for (let resourceIndex = firstResource; resourceIndex < lastResource; resourceIndex++) {
             const resource = this._rows[resourceIndex].resource;
             const resourceY = this.getResourceToY(resourceIndex);
-            if (resourceY + c.resourceHeight < startY || resourceY > visibleEndY) continue;
+            const rowH = this._rowHeight(resourceIndex);
+            if (resourceY + rowH < startY || resourceY > visibleEndY) continue;
 
-            const barCenterY = resourceY + c.resourceHeight / 2;
+            const barCenterY = resourceY + rowH / 2;
             const row = this.allocationsByResource.get(resource.id);
             if (!row) continue;
             const resourceAllocations = row.items;
@@ -1357,7 +1484,8 @@ export class TimelineEngine {
         const resourceY = this.getResourceToY(ed.previewResourceIndex);
         const barHeight = ed.alloc.height && ed.alloc.height > 0 ? ed.alloc.height : c.barHeight;
         // The ghost keeps the bar's committed stack lane; lanes recompute on commit.
-        const barTop = resourceY + c.resourceHeight / 2 + this._stackOffset(ed.alloc) - barHeight / 2;
+        const barTop = resourceY + this._rowHeight(ed.previewResourceIndex) / 2
+            + this._stackOffset(ed.alloc) - barHeight / 2;
         const x1 = this.getTimeToX(ed.previewStart);
         const x2 = this.getTimeToX(ed.previewEnd);
 
@@ -1785,8 +1913,9 @@ export class TimelineEngine {
     // First on-screen resource row, used to seed the keyboard focus when the
     // user starts navigating without a prior focus.
     _firstVisibleResourceIndex() {
-        const idx = Math.floor(this.scrollY / this.config.resourceHeight);
-        return Math.max(0, Math.min(this._rows.length - 1, idx));
+        const idx = this._rowIndexAtContentY(this.scrollY);
+        const base = idx < 0 ? 0 : idx;
+        return Math.max(0, Math.min(this._rows.length - 1, base));
     }
 
     // Allocation whose start time is closest to the given time (binary search
@@ -1890,8 +2019,8 @@ export class TimelineEngine {
     _scrollFocusIntoView() {
         const c = this.config;
         if (this._focusResource >= 0) {
-            const rowTop = this._focusResource * c.resourceHeight;
-            const rowBottom = rowTop + c.resourceHeight;
+            const rowTop = this._rowContentTop(this._focusResource);
+            const rowBottom = rowTop + this._rowHeight(this._focusResource);
             const viewH = Math.max(this._viewportH - c.timeAxisHeight, 0);
             const viewTop = this.scrollY;
             const viewBottom = viewTop + viewH;
@@ -2022,8 +2151,12 @@ export class TimelineEngine {
 
         const c = this.config;
         // Only visit rows the marquee actually covers (content-space Y).
-        const firstRow = Math.max(0, Math.floor(minY / c.resourceHeight));
-        const lastRow = Math.min(this._rows.length - 1, Math.floor(maxY / c.resourceHeight));
+        let firstRow = this._rowIndexAtContentY(minY);
+        if (firstRow < 0) firstRow = minY < 0 ? 0 : this._rows.length;
+        let lastRow = this._rowIndexAtContentY(maxY);
+        if (lastRow < 0) lastRow = maxY < 0 ? -1 : this._rows.length - 1;
+        firstRow = Math.max(0, firstRow);
+        lastRow = Math.min(this._rows.length - 1, lastRow);
         // Left edge of the marquee in time, used to binary-search the first
         // candidate bar per row instead of scanning from the start.
         const minTime = this.timeRange.start + (minX / this._pixelsPerMs);
@@ -2068,7 +2201,7 @@ export class TimelineEngine {
         const minBarWidth = this.config.minBarWidth;
         const clickTime = this.getXToTime(canvasX);
         const firstIndex = this._firstVisibleAllocationIndex(row, clickTime);
-        const rowCenterY = this.getResourceToY(resourceIndex) + this.config.resourceHeight / 2;
+        const rowCenterY = this.getResourceToY(resourceIndex) + this._rowHeight(resourceIndex) / 2;
         let best = null;
         let bestDy = Infinity;
         let bestDx = Infinity;
@@ -2227,7 +2360,11 @@ export class TimelineEngine {
             ed.previewStart = ns;
             ed.previewEnd = ne;
             if (c.allowResourceChange && this._rows.length) {
-                const row = Math.floor((canvasY - c.timeAxisHeight + this.scrollY) / c.resourceHeight);
+                const contentY = canvasY - c.timeAxisHeight + this.scrollY;
+                let row = this._rowIndexAtContentY(contentY);
+                if (row < 0) {
+                    row = contentY < 0 ? 0 : this._rows.length - 1;
+                }
                 ed.previewResourceIndex = Math.max(0, Math.min(this._rows.length - 1, row));
             }
         }
@@ -2252,7 +2389,9 @@ export class TimelineEngine {
         if (newResource) alloc.resourceId = newResource.id;
 
         this._reindexAllocation(alloc, prevResourceId, prevStartTime);
-        this.render();
+        // Stack depth (and therefore row heights / scroll spacer) may have
+        // changed; relayout rather than a plain repaint.
+        this._relayout();
         this._notifyEdit(alloc);
     }
 
@@ -2390,12 +2529,13 @@ export class TimelineEngine {
     // the HTML overlay can render one template per row. Cheap: rows are bounded.
     _reportResourceRows() {
         if (!this.dotNetRef || !this.config.resourceTemplate) return;
-        const rows = this._rows.map((r) => ({
+        const rows = this._rows.map((r, i) => ({
             id: r.resource.id,
             name: r.resource.name,
             depth: r.depth,
             hasChildren: r.hasChildren,
-            collapsed: this._collapsed.has(r.resource.id)
+            collapsed: this._collapsed.has(r.resource.id),
+            height: this._rowHeight(i)
         }));
         this.dotNetRef.invokeMethodAsync('OnResourceRowsChanged', rows)
             .catch((error) => console.error('BlazorResourceTimeline rows callback failed:', error));
@@ -2539,6 +2679,7 @@ export class TimelineEngine {
         }
         this._rows = rows;
         this._rowIndexById = idIndex;
+        this._recomputeRowMetrics();
         this._reportResourceRows();
     }
 
@@ -2546,8 +2687,7 @@ export class TimelineEngine {
     _rowAtY(canvasY) {
         const c = this.config;
         if (canvasY < c.timeAxisHeight) return -1;
-        const index = Math.floor((canvasY - c.timeAxisHeight + this.scrollY) / c.resourceHeight);
-        return index >= 0 && index < this._rows.length ? index : -1;
+        return this._rowIndexAtContentY(canvasY - c.timeAxisHeight + this.scrollY);
     }
 
     // Toggles a group row's collapsed state and re-lays out. Keeps the focused
@@ -2593,13 +2733,15 @@ export class TimelineEngine {
         // Each resource's list inherits global sort order, so it is already
         // sorted by startTime (which the lane assignment relies on).
         for (const row of index.values()) {
-            this._assignStackLanes(row.items);
+            this._assignStackLanes(row.items, row);
         }
         this.allocationsByResource = index;
+        this._recomputeRowMetrics();
+        this._reportResourceRows();
     }
 
     _newRowIndex() {
-        return { items: [], maxStartEdgeMs: 0, maxSpanMs: 0 };
+        return { items: [], maxStartEdgeMs: 0, maxSpanMs: 0, maxClusterLaneHeights: null };
     }
 
     // Widens a row's cached scan bounds to cover one allocation. These bound
@@ -2637,7 +2779,11 @@ export class TimelineEngine {
     // lay lanes out by their real heights. Only lane membership is decided
     // here - the pixel offsets depend on barHeight/barMargin, which can change
     // via setOptions without reloading data, so they are derived lazily.
-    _assignStackLanes(list) {
+    //
+    // When `row` is provided, its maxClusterLaneHeights is updated so variable
+    // row heights can grow to keep deep stacks inside the row with consistent
+    // top/bottom padding.
+    _assignStackLanes(list, row) {
         let clusterStart = 0;
         let clusterMaxEnd = -Infinity;
         let laneEnds = [];
@@ -2651,11 +2797,20 @@ export class TimelineEngine {
         // make lane assignment quadratic.
         let laneEndLowerBound = Infinity;
 
+        if (row) row.maxClusterLaneHeights = null;
+
         const laneInfo = this._laneInfo;
         const closeCluster = (endIndex) => {
             const cluster = { laneHeights, offsets: null, key: null };
             for (let j = clusterStart; j < endIndex; j++) {
                 laneInfo.get(list[j]).cluster = cluster;
+            }
+            if (row && laneHeights.length) {
+                const h = this._stackHeightFromLanes(laneHeights);
+                if (!row.maxClusterLaneHeights
+                    || h > this._stackHeightFromLanes(row.maxClusterLaneHeights)) {
+                    row.maxClusterLaneHeights = laneHeights;
+                }
             }
         };
 
@@ -2789,7 +2944,9 @@ export class TimelineEngine {
             // and span bound still depend on it.
             const row = this._rowIndexFor(alloc.resourceId);
             this._widenRowBounds(row, alloc);
-            this._assignStackLanes(row.items);
+            this._assignStackLanes(row.items, row);
+            this._recomputeRowMetrics();
+            this._reportResourceRows();
             return;
         }
 
@@ -2815,8 +2972,10 @@ export class TimelineEngine {
         // conservative (still correct, merely wider) scan window until the next
         // full re-index - cheaper than rescanning the row to tighten it.
         this._widenRowBounds(to, alloc);
-        this._assignStackLanes(to.items);
-        if (changedRow && from) this._assignStackLanes(from.items);
+        this._assignStackLanes(to.items, to);
+        if (changedRow && from) this._assignStackLanes(from.items, from);
+        this._recomputeRowMetrics();
+        this._reportResourceRows();
     }
 
     setData(resources, start, end, allocations) {
@@ -2902,11 +3061,21 @@ export class TimelineEngine {
         const prevRenderer = String(this.config.renderer || 'canvas').toLowerCase();
         const prevBarHeight = this.config.barHeight;
         const prevBarMargin = this.config.barMargin;
+        const prevResourceHeight = this.config.resourceHeight;
         this._applyOptions(options);
         this._rebuildDateFormatters();
         // Cached stacking offsets are derived from these two; invalidate them.
-        if (this.config.barHeight !== prevBarHeight || this.config.barMargin !== prevBarMargin) {
+        const barLayoutChanged =
+            this.config.barHeight !== prevBarHeight || this.config.barMargin !== prevBarMargin;
+        if (barLayoutChanged) {
             this._barLayoutGen++;
+            // Tallest cluster per row can change when mixed explicit heights
+            // compete with default-height multi-lane stacks.
+            this._refreshMaxClusterLanes();
+        }
+        if (barLayoutChanged || this.config.resourceHeight !== prevResourceHeight) {
+            this._recomputeRowMetrics();
+            this._reportResourceRows();
         }
         // An explicit pixelsPerHour in the options supersedes any runtime zoom.
         if (options && options.pixelsPerHour != null) {

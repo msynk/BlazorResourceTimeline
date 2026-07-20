@@ -25,7 +25,7 @@
                 @foreach (var row in _resourceRows)
                 {
                     <div class="timeline-resource-row"
-                         style="height:@(_layout.ResourceHeight)px;padding-left:@(8 + row.Depth * _layout.ResourceIndent)px;">
+                         style="height:@((row.Height > 0 ? row.Height : _layout.ResourceHeight))px;padding-left:@(8 + row.Depth * _layout.ResourceIndent)px;">
                         @if (row.HasChildren)
                         {
                             <button type="button" class="timeline-resource-chevron"
@@ -625,6 +625,8 @@
         public int Depth { get; set; }
         public bool HasChildren { get; set; }
         public bool Collapsed { get; set; }
+        /// <summary>Pixel height of this row (grows when overlapping bars stack).</summary>
+        public int Height { get; set; }
     }
 
     [JSInvokable]
