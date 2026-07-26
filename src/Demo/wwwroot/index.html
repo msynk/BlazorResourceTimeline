@@ -29,7 +29,7 @@
     </div>
     <script>
         // Theme helpers for the demo page. Apply the system preference once,
-        // synchronously, before Blazor boots. Do not use window.onload — that
+        // synchronously, before Blazor boots. Do not use window.onload - that
         // races with Blazor and can overwrite the theme after the app has set it.
         window.getPreferredDemoTheme = function () {
             return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';

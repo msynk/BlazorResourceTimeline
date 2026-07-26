@@ -6,7 +6,7 @@ Tests for the JavaScript timeline engine (`src/BlazorResourceTimeline/wwwroot/`)
 node --test "src/Tests/js/**/*.test.mjs"
 ```
 
-Requires Node 20+. There are no npm dependencies and no `package.json` — these
+Requires Node 20+. There are no npm dependencies and no `package.json` - these
 use node's built-in test runner and `node:assert`, so nothing needs installing
 and CI only has to add a `setup-node` step.
 
@@ -31,7 +31,7 @@ browser or DOM shim.
   code and its test encode the same clever idea, they agree on the same bug.
 - **Prefer absolute invariants.** `indexViolations()` checks properties that
   must hold on their own terms (rows sorted, scan bounds cover their contents,
-  nothing lost or duplicated) rather than only diffing against a full rebuild —
+  nothing lost or duplicated) rather than only diffing against a full rebuild -
   a bug present in both paths passes a differential check.
 - **Anything needing real layout belongs in a browser.** Hit-testing against
   painted pixels, scrollbar clamping and renderer output are not covered here.
