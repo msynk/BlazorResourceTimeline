@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Trimming roots for the JS interop boundary.
+
+  The assembly is marked <IsTrimmable>, so a trimmed app (Blazor WebAssembly
+  trims on publish) removes members it cannot see used. The types below are
+  reached by reflection - System.Text.Json walks them when Blazor marshals them
+  to and from the rendering engine - so the trimmer cannot see those uses.
+
+  Stripping them fails *silently*: a removed property is simply never
+  serialized, so the renderer falls back to its own default and the consumer's
+  setting is ignored at runtime with no error anywhere. Without this file a
+  trimmed app keeps only the properties it happens to also assign from C#,
+  measured on a trimmed publish as 6 of 36 on BlazorResourceTimelineOptions,
+  12 of 14 on BlazorResourceTimelineAllocation and 3 of 4 on
+  BlazorResourceTimelineResource.
+
+  Some entries below are defensive rather than currently load-bearing - the
+  enums (the trimmer keeps the fields of a type it keeps) and ResourceRow
+  (whose every property also happens to be read from C# today). They are listed
+  anyway because they are genuine reflection targets, and dropping them would
+  make correctness depend on those incidental details holding.
+
+  IMPORTANT: any new type - or nested type - reachable from the boundary must be
+  added here. TrimmingDescriptorTests walks the property graph and fails if one
+  is missed, so this list cannot silently fall behind the models.
+
+  Types that never cross the boundary are deliberately absent:
+  BlazorResourceTimelineConfig is decomposed into its parts before marshalling,
+  and BlazorResourceTimelineContextMenuArgs / BlazorResourceTimelineRowContext /
+  BlazorResourceTimelineWindow only travel in process to consumer callbacks, so
+  ordinary static analysis keeps whatever the app uses.
+
+  The component type itself needs no entry - Blazor's own
+  DynamicallyAccessedMembers annotation on component instantiation preserves it,
+  including its [Parameter] properties and [JSInvokable] methods (verified
+  against a trimmed publish).
+-->
+<linker>
+  <assembly fullname="BlazorResourceTimeline">
+
+    <!-- Serialized .NET -> JS when options are applied. -->
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineOptions" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineColors" preserve="all" />
+
+    <!-- Serialized .NET -> JS on every data load. -->
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineResource" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineAllocation" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineBarIcon" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineEdgeBar" preserve="all" />
+
+    <!-- Enum fields are read by name by JsonStringEnumConverter. -->
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineRendererType" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineBarIconPosition" preserve="all" />
+
+    <!-- Deserialized JS -> .NET: the layout read back after init, and the
+         visible-row descriptors pushed to the resource-template overlay. -->
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineLayout" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimeline/ResourceRow" preserve="all" />
+
+    <!-- Instantiated by System.Text.Json from the [JsonConverter] attributes. -->
+    <type fullname="BlazorResourceTimeline.UnixTimeMillisecondsJsonConverter" preserve="all" />
+    <type fullname="BlazorResourceTimeline.MillisecondsTimeSpanJsonConverter" preserve="all" />
+
+  </assembly>
+</linker>

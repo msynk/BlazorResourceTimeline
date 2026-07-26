@@ -9,7 +9,7 @@ built for dense, glanceable planning boards - flight/gate planning, train
 scheduling, fleet and crew rostering, and similar transport use-cases - where a
 lot of data must stay readable and interactive.
 
-![BlazorResourceTimeline](docs/screenshot.png)
+![BlazorResourceTimeline](https://raw.githubusercontent.com/msynk/BlazorResourceTimeline/main/docs/screenshot.png)
 
 ## Features
 
@@ -60,7 +60,30 @@ lot of data must stay readable and interactive.
 dotnet add package BlazorResourceTimeline
 ```
 
-Targets `net8.0`, `net9.0`, and `net10.0`.
+Targets `net8.0`, `net9.0`, and `net10.0`, for both Blazor WebAssembly and
+Blazor Server / interactive-render-mode apps.
+
+No script or stylesheet registration is needed: the JavaScript engine is imported
+on demand from `_content/BlazorResourceTimeline/`, and the component's scoped CSS
+arrives through the framework's own bundle. That bundle is linked by every Blazor
+template already - just make sure your host page keeps its
+
+```html
+<link href="YourApp.styles.css" rel="stylesheet" />
+```
+
+line (with `YourApp` being your app's assembly name).
+
+### Trimming
+
+The assembly is marked trim-compatible, so trimmed apps (Blazor WebAssembly
+trims on publish) shrink it rather than skipping it. The types crossing the
+JavaScript interop boundary are rooted in an embedded trimming descriptor, so
+every option and allocation property keeps working after trimming - nothing
+needs configuring on your side.
+
+Ahead-of-time (AOT) compilation is not declared: interop marshalling relies on
+reflection-based `System.Text.Json`, so the component is not AOT-safe.
 
 ## Quick start
 
@@ -391,3 +414,24 @@ dotnet build src/BlazorResourceTimeline.slnx
 dotnet test  src/BlazorResourceTimeline.slnx
 dotnet run --project src/Demo
 ```
+
+The rendering engine is JavaScript and is covered by node's built-in test runner
+(no npm dependencies):
+
+```bash
+node --test "src/Tests/js/**/*.test.mjs"
+```
+
+## Releasing
+
+Packing and publishing are driven by the tag: pushing a `v*` tag builds, tests,
+packs and pushes to NuGet, taking the package version from the tag name
+(`v1.2.3` produces `1.2.3`).
+
+```bash
+dotnet pack src/BlazorResourceTimeline/BlazorResourceTimeline.csproj -c Release -o artifacts
+```
+
+## License
+
+[MIT](https://github.com/msynk/BlazorResourceTimeline/blob/main/LICENSE)
