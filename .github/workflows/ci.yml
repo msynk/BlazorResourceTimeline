@@ -44,7 +44,7 @@ jobs:
           node-version: '22'
 
       - name: Test (rendering engine)
-        run: node --test "tests/js/**/*.test.mjs"
+        run: node --test "src/Tests/js/**/*.test.mjs"
 
       - name: Pack
         run: dotnet pack src/BlazorResourceTimeline/BlazorResourceTimeline.csproj -c Release --no-build -o artifacts

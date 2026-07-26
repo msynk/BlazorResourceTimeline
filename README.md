@@ -382,13 +382,13 @@ Capture the component with `@ref` to drive it from code:
 ## Repository layout
 
 - `src/BlazorResourceTimeline` - the component library.
-- `src/BlazorResourceTimeline.Demo` - a Blazor WebAssembly demo.
-- `src/BlazorResourceTimeline.Tests` - unit tests.
+- `src/Demo` - a Blazor WebAssembly demo.
+- `src/Tests/BlazorResourceTimeline.Tests` - unit tests.
 
 ## Building
 
 ```bash
 dotnet build src/BlazorResourceTimeline.slnx
 dotnet test  src/BlazorResourceTimeline.slnx
-dotnet run --project src/BlazorResourceTimeline.Demo
+dotnet run --project src/Demo
 ```

@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Tooltip } from '../../src/BlazorResourceTimeline/wwwroot/tooltip.js';
+import { Tooltip } from '../../BlazorResourceTimeline/wwwroot/tooltip.js';
 
 // Minimal document/window stub. The tooltip only creates one div, appends it to
 // body, writes styles and measures itself.

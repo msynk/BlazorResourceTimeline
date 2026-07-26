@@ -20,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\BlazorResourceTimeline\BlazorResourceTimeline.csproj" />
+    <ProjectReference Include="..\..\BlazorResourceTimeline\BlazorResourceTimeline.csproj" />
   </ItemGroup>
 
 </Project>

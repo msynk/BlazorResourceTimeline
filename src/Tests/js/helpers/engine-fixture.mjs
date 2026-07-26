@@ -8,7 +8,7 @@
 //
 // Anything that genuinely needs a DOM belongs in a browser-driven test instead.
 
-import { TimelineEngine } from '../../../src/BlazorResourceTimeline/wwwroot/timeline-engine.js';
+import { TimelineEngine } from '../../../BlazorResourceTimeline/wwwroot/timeline-engine.js';
 
 // Mirrors the defaults in the engine's constructor for the fields the
 // DOM-independent methods touch. Kept explicit rather than reaching into a real
@@ -91,7 +91,7 @@ export function makeZonedEngine(timeZone, locale = null) {
     return engine;
 }
 
-export { ZonedTime } from '../../../src/BlazorResourceTimeline/wwwroot/zoned-time.js';
+export { ZonedTime } from '../../../BlazorResourceTimeline/wwwroot/zoned-time.js';
 
 // A bare engine holding the given allocations, indexed as the real one would.
 // When resources are not supplied, one leaf row is synthesized per resourceId
