@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace BlazorResourceTimeline.Models;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// A single row on the timeline (for example a server, database or worker).

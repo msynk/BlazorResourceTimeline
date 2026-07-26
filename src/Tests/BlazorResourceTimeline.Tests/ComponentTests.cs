@@ -1,7 +1,6 @@
 using Bunit;
 using Microsoft.AspNetCore.Components;
-using BlazorResourceTimeline.Models;
-using TimelineComponent = BlazorResourceTimeline.Components.BlazorResourceTimeline;
+using TimelineComponent = global::BlazorResourceTimeline.BlazorResourceTimeline;
 
 namespace BlazorResourceTimeline.Tests;
 

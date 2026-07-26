@@ -1,4 +1,4 @@
-namespace BlazorResourceTimeline.Components;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// Layout dimensions (in pixels) reported by the renderer.

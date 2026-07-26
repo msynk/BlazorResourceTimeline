@@ -1,4 +1,4 @@
-namespace BlazorResourceTimeline.Models;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// A time window the renderer asks the host to supply allocations for when the

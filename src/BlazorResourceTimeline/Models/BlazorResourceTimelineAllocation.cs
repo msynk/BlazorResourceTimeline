@@ -1,7 +1,6 @@
 using System.Text.Json.Serialization;
-using BlazorResourceTimeline.Json;
 
-namespace BlazorResourceTimeline.Models;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// A single allocation period drawn as a bar on a resource row.

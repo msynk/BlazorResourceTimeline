@@ -1,7 +1,6 @@
 ﻿@page "/"
-@using BlazorResourceTimeline.Components
-@using BlazorResourceTimeline.Models
-@using BlazorResourceTimeline.Demo.Data
+@using global::BlazorResourceTimeline
+@using global::BlazorResourceTimeline.Demo.Data
 @inject IJSRuntime JS
 
 <PageTitle>Resource Timeline</PageTitle>
@@ -277,8 +276,7 @@
 
     private const string CodeSample = """
         @page "/timeline"
-        @using BlazorResourceTimeline.Components
-        @using BlazorResourceTimeline.Models
+        @using BlazorResourceTimeline
 
         <BlazorResourceTimeline Config="_config"
                                 OnSelectionChanged="HandleSelectionChanged"

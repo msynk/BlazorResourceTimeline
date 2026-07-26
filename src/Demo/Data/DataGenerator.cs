@@ -1,5 +1,3 @@
-using BlazorResourceTimeline.Models;
-
 namespace BlazorResourceTimeline.Demo.Data;
 
 /// <summary>

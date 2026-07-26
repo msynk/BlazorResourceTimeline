@@ -67,8 +67,7 @@ Targets `net8.0`, `net9.0`, and `net10.0`.
 Add the component and give it a `Config`:
 
 ```razor
-@using BlazorResourceTimeline.Components
-@using BlazorResourceTimeline.Models
+@using BlazorResourceTimeline
 
 <div style="height: 600px;">
     <BlazorResourceTimeline Config="_config"

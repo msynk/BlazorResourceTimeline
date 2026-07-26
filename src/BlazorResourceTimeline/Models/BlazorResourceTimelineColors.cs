@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace BlazorResourceTimeline.Models;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// Optional color overrides for the timeline. Every value is a CSS color string

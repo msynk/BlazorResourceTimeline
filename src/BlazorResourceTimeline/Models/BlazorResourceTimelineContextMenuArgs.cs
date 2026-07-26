@@ -1,4 +1,4 @@
-namespace BlazorResourceTimeline.Models;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// Describes a right-click on the timeline: what was under the pointer and

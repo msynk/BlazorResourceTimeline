@@ -1,4 +1,4 @@
-namespace BlazorResourceTimeline.Models;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// Bundles everything the timeline component needs to render: the resource rows

@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace BlazorResourceTimeline.Json;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// Serializes a <see cref="DateTimeOffset"/> as Unix time in milliseconds (a

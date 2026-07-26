@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace BlazorResourceTimeline.Models;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// Optional visual configuration for the timeline: axis/row dimensions, bar

@@ -1,4 +1,4 @@
-namespace BlazorResourceTimeline.Models;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// A small custom icon or image rendered next to a <see cref="BlazorResourceTimelineAllocation"/> bar.

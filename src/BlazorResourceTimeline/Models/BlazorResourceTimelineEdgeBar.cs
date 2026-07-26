@@ -1,7 +1,6 @@
 using System.Text.Json.Serialization;
-using BlazorResourceTimeline.Json;
 
-namespace BlazorResourceTimeline.Models;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// An additional bar drawn immediately before (start) or after (end) a main

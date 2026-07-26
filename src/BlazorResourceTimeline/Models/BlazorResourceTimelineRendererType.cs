@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace BlazorResourceTimeline.Models;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// Which rendering technology the timeline uses to paint its scene. All

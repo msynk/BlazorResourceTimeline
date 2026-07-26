@@ -1,4 +1,4 @@
-namespace BlazorResourceTimeline.Models;
+namespace BlazorResourceTimeline;
 
 /// <summary>
 /// Context passed to a resource-column template for one visible row. Reflects the
