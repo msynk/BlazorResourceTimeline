@@ -1,5 +1,10 @@
 # BlazorResourceTimeline
 
+[![NuGet](https://img.shields.io/nuget/v/BlazorResourceTimeline.svg)](https://www.nuget.org/packages/BlazorResourceTimeline)
+[![Downloads](https://img.shields.io/nuget/dt/BlazorResourceTimeline.svg)](https://www.nuget.org/packages/BlazorResourceTimeline)
+[![CI](https://github.com/msynk/BlazorResourceTimeline/actions/workflows/ci.yml/badge.svg)](https://github.com/msynk/BlazorResourceTimeline/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/msynk/BlazorResourceTimeline/blob/main/LICENSE)
+
 A high-performance **resource-timeline / planner** component for ASP.NET Core Blazor,
 with pluggable canvas, SVG and HTML renderers (canvas by default).
 
@@ -10,6 +15,8 @@ scheduling, fleet and crew rostering, and similar transport use-cases - where a
 lot of data must stay readable and interactive.
 
 ![BlazorResourceTimeline](https://raw.githubusercontent.com/msynk/BlazorResourceTimeline/main/docs/screenshot.png)
+
+<sub>The demo in its dark theme: 68 resources and ~3,300 allocations on the canvas renderer.</sub>
 
 ## Features
 
@@ -32,8 +39,9 @@ lot of data must stay readable and interactive.
   callback reports what was hit - the bar, the resource row, the time under the
   pointer and the click's viewport coordinates - so you can render your own menu.
 - **Overlap stacking**: allocations that overlap in time on the same row are
-  automatically stacked apart instead of drawn on top of each other, with the
-  gap controlled by `Options.BarMargin`.
+  automatically stacked into lanes instead of drawn on top of each other, and
+  the row grows to keep the whole stack inside it. `Options.ResourceHeight` is
+  the *minimum* row height; `Options.BarMargin` sets the gap between lanes.
 - **Hover tooltips**: per-bar tooltips (custom text or an auto-generated
   default), on by default and configurable.
 - **Resource hierarchy**: nest resources into multi-level, collapsible groups
@@ -51,8 +59,13 @@ lot of data must stay readable and interactive.
 - **Touch & pen** support via Pointer Events.
 - **Streaming data load** for very large datasets (batched interop instead of
   one giant payload).
-- **Customizable**: colors/theme, dimensions, fonts, per-bar colors, heights,
-  labels (above/below/start/end), icons, and start/end "edge" (delay) bars.
+- **Theming**: every painted color is overridable through `Options.Colors`, so
+  a light, dark or brand palette is just another `Options` instance - switchable
+  at runtime (the demo ships a dark theme).
+- **Rich bars**: per-bar colors and heights, labels (above/below/start/end),
+  image/SVG icons anchored to any side, and start/end "edge" (delay) bars.
+- **Dimensions & fonts**: axis sizes, row height, bar sizing and every label
+  font are configurable.
 
 ## Installation
 
@@ -139,6 +152,33 @@ height.
 > `BlazorResourceTimelineConfig` instance to trigger a re-render, or call
 > `ReloadAsync()` after mutating the existing one in place.
 
+## Renderers
+
+One engine owns the data, layout, hit-testing and interaction; only the painting
+step differs. Pick it with `Options.Renderer`, and switch at runtime by assigning
+a new `Options` instance - data, events and keyboard behavior are identical
+across all three.
+
+| `Renderer` | Output | Best for |
+| --- | --- | --- |
+| `Canvas` *(default)* | Immediate-mode 2D drawing, HiDPI/Retina-crisp via `ResizeObserver` + `device-pixel-content-box` | Dense boards; the fastest option |
+| `Svg` | Resolution-independent vector nodes | Inspecting, copying or printing the scene |
+| `Html` | One real DOM element per visible bar, carrying `data-bar-id` | Styling bars with your own CSS |
+
+All three cull to the visible viewport every frame, so cost tracks what is on
+screen rather than the size of the dataset.
+
+```razor
+<BlazorResourceTimeline Config="_config" Options="_options" />
+
+@code {
+    private BlazorResourceTimelineOptions _options = new()
+    {
+        Renderer = BlazorResourceTimelineRendererType.Svg,
+    };
+}
+```
+
 ## Configuration (`Options`)
 
 Pass a `BlazorResourceTimelineOptions` to customize appearance and behavior
@@ -152,13 +192,103 @@ instance to re-apply at runtime (e.g. to switch themes or time zone):
     private BlazorResourceTimelineOptions _options = new()
     {
         TimeZone = "UTC",
-        ResourceHeight = 44,
+        ResourceHeight = 44, // minimum row height; rows grow to fit stacked bars
         BarHeight = 8,
         BarMargin = 2, // gap between bars that overlap in time on the same row
         Colors = new() { Bar = "#74c0fc", Now = "#e03131" },
     };
 }
 ```
+
+Every property is nullable, so a partial instance overrides only what it sets:
+values left `null` keep the renderer's defaults. Note that re-applying `Options`
+*merges* - a `null` property keeps whatever was applied before, rather than
+resetting it to the default.
+
+## Theming and dark mode
+
+`Options.Colors` (`BlazorResourceTimelineColors`) covers everything the renderer
+paints - backgrounds, axis borders, ticks and labels, grid lines, bar fill,
+selected fill/outline, bar labels, the "now" line, the marquee rectangle, the
+focus ring and the tooltip. Assigning a new `Options` instance repaints
+immediately, which is all a theme toggle needs:
+
+```razor
+<BlazorResourceTimeline Config="_config" Options="_options" />
+
+@code {
+    private bool _dark;
+    private BlazorResourceTimelineOptions _options = new() { Colors = Light };
+
+    private void ToggleTheme()
+    {
+        _dark = !_dark;
+        // A new instance: Options is compared by reference.
+        _options = new BlazorResourceTimelineOptions { Colors = _dark ? Dark : Light };
+    }
+
+    private static readonly BlazorResourceTimelineColors Light = new()
+    {
+        ContentBg = "#ffffff", AxisBg = "#f8f9fa", AxisBorder = "#dee2e6",
+        Tick = "#adb5bd", Label = "#495057", DateLabel = "#212529", Grid = "#e9ecef",
+        Bar = "#74c0fc", BarSelected = "#4dabf7", BarSelectedBorder = "#1971c2",
+        BarLabel = "#495057", Now = "#e03131",
+        SelectionFill = "rgba(77, 171, 247, 0.18)", SelectionBorder = "#4dabf7",
+        Focus = "#1971c2", TooltipBg = "#212529", TooltipText = "#ffffff",
+    };
+
+    private static readonly BlazorResourceTimelineColors Dark = new()
+    {
+        ContentBg = "#1a1d21", AxisBg = "#141618", AxisBorder = "#2c3035",
+        Tick = "#6c757d", Label = "#adb5bd", DateLabel = "#e9ecef", Grid = "#2c3035",
+        Bar = "#4dabf7", BarSelected = "#74c0fc", BarSelectedBorder = "#a5d8ff",
+        BarLabel = "#ced4da", Now = "#ff6b6b",
+        SelectionFill = "rgba(77, 171, 247, 0.22)", SelectionBorder = "#74c0fc",
+        Focus = "#74c0fc", TooltipBg = "#f8f9fa", TooltipText = "#212529",
+    };
+}
+```
+
+> **Note:** colors are *merged*, not replaced - a `null` entry keeps whatever was
+> applied before, not the built-in default. That is convenient for tweaking one
+> color, but when swapping between themes send a **complete** palette, otherwise
+> stray colors from the previous theme stick around.
+
+## Bar appearance
+
+Beyond its time span, each `BlazorResourceTimelineAllocation` can carry its own
+presentation:
+
+| Property | Effect |
+| --- | --- |
+| `Color` | CSS color for the bar fill (falls back to `Colors.Bar`). |
+| `Height` | Per-bar height in pixels (falls back to `Options.BarHeight`). Edge bars share it. |
+| `TextAbove` / `TextBelow` | Labels centered above / below the bar. |
+| `TextStart` / `TextEnd` | Labels just outside the start / end edge. |
+| `Icons` | Images or data-URI SVGs anchored `Start`, `End`, `Above` or `Below`; several at one position lay out side by side, growing away from the bar. |
+| `StartBar` / `EndBar` | Decorative "edge" bars extending before the start / after the end, each with its own `Duration` and `Color` - typically delays. |
+| `Tooltip` | Hover text (see [Tooltips](#tooltips)). |
+
+```csharp
+new BlazorResourceTimelineAllocation
+{
+    Id = "f-100",
+    ResourceId = "gate-a1",
+    StartTime = start,
+    EndTime = start.AddHours(2),
+    Color = "#74c0fc",
+    Height = 12,
+    TextAbove = "LH441",
+    TextEnd = "FRA",
+    // 25 minutes late off-blocks, drawn in red after the planned end.
+    EndBar = new() { Duration = TimeSpan.FromMinutes(25), Color = "#e03131" },
+    Icons = [new() { Source = "/icons/warning.svg", Position = BlazorResourceTimelineBarIconPosition.Start }],
+}
+```
+
+Labels and icons are skipped on bars narrower than `Options.MinBarWidthForLabels`,
+so zoomed-out boards stay readable. Edge bars and icons are decoration only -
+they are not selectable and never become hit targets.
 
 ## Editing
 
@@ -271,10 +401,14 @@ cluster mixing bar heights still lays out without overlap. Bars that merely touc
 }
 ```
 
-> **Note:** a tall stack can outgrow its row. A cluster needs
-> `sum(bar heights) + BarMargin × (lanes − 1)` pixels; raise
-> `Options.ResourceHeight` (or lower `BarHeight`/`BarMargin`) when dense overlaps
-> would otherwise spill into the neighbouring row.
+**Rows grow to fit their stack**, so a dense cluster never spills into the
+neighbouring row. `Options.ResourceHeight` is the *minimum* row height: a row
+whose tallest cluster needs `sum(lane heights) + BarMargin × (lanes − 1)` pixels
+grows to that height plus the same top/bottom padding a single default-height bar
+has in a minimum-height row. A row whose bars never overlap stays exactly at
+`ResourceHeight`, so simple boards look unchanged, and the resource column,
+hit-testing, keyboard navigation and the `ResourceTemplate` overlay all follow
+the per-row heights.
 
 ## Resource-column template
 
@@ -401,11 +535,24 @@ Capture the component with `@ref` to drive it from code:
 - `TopStartContent` / `LoadingContent` - custom render fragments for the
   top-start corner and the loading overlay.
 
+## Demo
+
+`src/Demo` is a Blazor WebAssembly playground for everything above: dataset size
+(7 to 365 days), renderer, bar height and margin, editing, on-demand loading, the
+custom resource column, time zone, zoom, and a light/dark theme toggle - plus a
+live view of the selection, the last edit and the last context-menu action.
+
+```bash
+dotnet run --project src/Demo
+```
+
 ## Repository layout
 
-- `src/BlazorResourceTimeline` - the component library.
-- `src/Demo` - a Blazor WebAssembly demo.
-- `src/Tests/BlazorResourceTimeline.Tests` - unit tests.
+- `src/BlazorResourceTimeline` - the component library (C# component, models and
+  the JavaScript engine/renderers under `wwwroot`).
+- `src/Demo` - the Blazor WebAssembly demo.
+- `src/Tests/BlazorResourceTimeline.Tests` - .NET unit tests.
+- `src/Tests/js` - rendering-engine tests (node's built-in test runner).
 
 ## Building
 

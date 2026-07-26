@@ -3,7 +3,7 @@
 Tests for the JavaScript timeline engine (`src/BlazorResourceTimeline/wwwroot/`).
 
 ```bash
-node --test "tests/js/**/*.test.mjs"
+node --test "src/Tests/js/**/*.test.mjs"
 ```
 
 Requires Node 20+. There are no npm dependencies and no `package.json` — these
@@ -16,7 +16,9 @@ and CI only has to add a `setup-node` step.
 | --- | --- |
 | `time-axis.test.mjs` | Zoned hour boundaries, DST transitions, tick density |
 | `allocation-index.test.mjs` | Per-resource index, stacking lanes, incremental re-index on edit |
-| `engine-state.test.mjs` | Resource hierarchy, coordinate mapping, options, selection |
+| `engine-state.test.mjs` | Resource hierarchy, coordinate mapping, row heights, options, selection |
+| `scene.test.mjs` | Scene building, and the stale state pooled/refilled bar nodes can leak between frames |
+| `tooltip.test.mjs` | Show delay, subject switching and viewport-edge flipping, against a minimal DOM stub |
 
 `helpers/engine-fixture.mjs` builds an engine on the prototype with only the
 state the DOM-independent methods read, so these run under plain Node with no
