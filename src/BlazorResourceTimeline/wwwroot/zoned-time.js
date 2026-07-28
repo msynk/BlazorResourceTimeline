@@ -157,3 +157,31 @@ export class ZonedTime {
         return this._dateTimeDtf.format(ts);
     }
 }
+
+// Hour boundaries in UTC, for the optional second axis row - same shape and
+// contract as ZonedTime.hourBoundaries, so the two rows are built identically.
+//
+// UTC has no offset and no DST, so its boundaries are simply the multiples of
+// `step` hours since the epoch (which is itself UTC midnight, and `step`
+// divides 24). That makes this exact arithmetic with no Intl involved, which
+// matters because it runs alongside the zoned walk on every frame.
+//
+// The two rows' boundaries coincide wherever the axis zone's offset is a whole
+// number of hours, and sit apart by the offset's minutes where it is not
+// (Asia/Kolkata at +05:30, Australia/Eucla at +08:45) - which is exactly the
+// horizontal shift the UTC row is meant to show.
+export function utcHourBoundaries(visStart, visEnd, step) {
+    const out = [];
+    if (!(step > 0)) return out;
+
+    const HOUR_MS = 3600000;
+    const DAY_MS = 86400000;
+    const stepMs = step * HOUR_MS;
+
+    // First aligned boundary at or after the window start. Math.ceil keeps this
+    // correct for pre-epoch (negative) instants too.
+    for (let ts = Math.ceil(visStart / stepMs) * stepMs; ts <= visEnd; ts += stepMs) {
+        out.push({ ts, hour: Math.floor((((ts % DAY_MS) + DAY_MS) % DAY_MS) / HOUR_MS) });
+    }
+    return out;
+}

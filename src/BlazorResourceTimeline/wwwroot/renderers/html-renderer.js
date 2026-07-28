@@ -289,8 +289,12 @@ export class HtmlRenderer {
         // Children are positioned in viewport coordinates; shift them back.
         applyStyle(this._timeAxisInner, { left: px(-startX) });
 
-        // Divider between the date row and the hour row, then the day separators.
+        // Divider between the date row and the hour row(s), the one between the
+        // UTC row and the zone row when both are shown, then the day separators.
         this._rect(p.axisLines, startX, v.dateRowHeight, v.width - startX, 1, colors.axisBorder);
+        if (v.utcRowY != null) {
+            this._rect(p.axisLines, startX, v.utcRowY, v.width - startX, 1, colors.axisBorder);
+        }
         for (const day of scene.days) {
             if (day.sepX != null) {
                 this._rect(p.axisLines, day.sepX, 0, 1, v.dateRowHeight, colors.axisBorder);
@@ -303,10 +307,20 @@ export class HtmlRenderer {
             }
         }
 
+        // The optional UTC row is drawn exactly like the zone row, with its
+        // ticks rising from its own baseline (the divider above the zone row)
+        // rather than the bottom of the axis.
         for (const tick of scene.hourTicks) {
             this._rect(p.axisTicks, tick.x, v.axisHeight - 8, 1, 8, colors.tick);
         }
+        for (const tick of scene.utcTicks) {
+            this._rect(p.axisTicks, tick.x, v.utcRowY - 8, 1, 8, colors.tick);
+        }
         for (const tick of scene.hourTicks) {
+            this._text(p.axisTickLabels, tick.label, tick.x, tick.labelY,
+                scene.config.hourLabelFont, colors.label, 'center', 'middle');
+        }
+        for (const tick of scene.utcTicks) {
             this._text(p.axisTickLabels, tick.label, tick.x, tick.labelY,
                 scene.config.hourLabelFont, colors.label, 'center', 'middle');
         }

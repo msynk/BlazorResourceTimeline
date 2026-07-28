@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { makeBareEngine, ZonedTime } from './helpers/engine-fixture.mjs';
+import { makeBareEngine, ZonedTime, utcHourBoundaries } from './helpers/engine-fixture.mjs';
 
 // Oracle: scan the window minute by minute and keep every instant whose local
 // wall clock reads mm:ss = 00:00 on an hour that is a multiple of `step`. Zone
@@ -155,6 +155,58 @@ test('zoned parts and the wall-clock round trip agree across a DST year', () => 
                 `${zone}: wall-clock round trip lost the instant at day ${day}`);
         }
     }
+});
+
+test('the UTC row\'s boundaries match the zoned walk through UTC', () => {
+    // The UTC row skips Intl entirely (UTC has no offset and no DST), so its
+    // arithmetic is checked against the general zoned implementation - and
+    // through it against the brute-force scan the tests above pin down.
+    const utc = new ZonedTime('UTC');
+    const windows = [
+        ['2026-04-01T00:00:00Z', '2026-04-03T00:00:00Z'],   // aligned both ends
+        ['2026-01-15T06:37:11Z', '2026-01-16T19:04:53Z'],   // unaligned
+        ['1969-12-30T05:00:00Z', '1970-01-02T05:00:00Z']    // spanning the epoch
+    ];
+
+    for (const [from, to] of windows) {
+        const start = Date.parse(from);
+        const end = Date.parse(to);
+        for (const step of STEPS) {
+            assert.deepEqual(
+                utcHourBoundaries(start, end, step),
+                utc.hourBoundaries(start, end, step),
+                `window ${from}..${to}, step ${step}`);
+        }
+        assert.deepEqual(utcHourBoundaries(start, end, 0), [], 'step 0 shows no ticks');
+    }
+});
+
+test('the two axis rows line up only where the zone offset is a whole hour', () => {
+    // This offset is the whole point of the UTC row: same density, boundaries
+    // that coincide under a whole-hour offset and sit shifted where the offset
+    // carries minutes.
+    const start = Date.parse('2026-06-15T00:00:00Z');
+    const end = start + 86400000;
+    const tsOf = (list) => list.map(b => b.ts);
+
+    const berlin = new ZonedTime('Europe/Berlin').hourBoundaries(start, end, 2);
+    assert.deepEqual(tsOf(utcHourBoundaries(start, end, 2)), tsOf(berlin),
+        '+02:00 puts both rows on the same instants');
+
+    // Widened by a day each way so every UTC tick has a zone neighbour on both
+    // sides; the outermost ones would otherwise only find the far one.
+    const kolkata = new ZonedTime('Asia/Kolkata')
+        .hourBoundaries(start - 86400000, end + 86400000, 2);
+    const utc = utcHourBoundaries(start, end, 2);
+    assert.ok(utc.every(u => !tsOf(kolkata).includes(u.ts)),
+        '+05:30 must offset the UTC row from the zone row');
+    for (const u of utc) {
+        const nearest = kolkata.reduce((a, b) =>
+            Math.abs(b.ts - u.ts) < Math.abs(a.ts - u.ts) ? b : a);
+        assert.equal(Math.abs(nearest.ts - u.ts), 1800000, 'the shift is the offset\'s 30 minutes');
+    }
+    // Either way the labels themselves stay whole hours.
+    assert.ok(utc.every(b => Number.isInteger(b.hour) && b.hour >= 0 && b.hour < 24));
 });
 
 test('day boundaries are local midnight in the configured zone', () => {

@@ -231,3 +231,77 @@ test('grid lines line up with the hour ticks', () => {
     const scene = engine.buildScene();
     assert.deepEqual(scene.gridV, scene.hourTicks.map(t => t.x));
 });
+
+test('the hour row fills the band under the date row when the UTC row is off', () => {
+    const engine = makeSceneEngine([]);
+    const scene = engine.buildScene();
+    const v = scene.viewport;
+
+    assert.equal(v.utcRowY, null);
+    assert.deepEqual(scene.utcTicks, [], 'no UTC row means no UTC ticks');
+    for (const tick of scene.hourTicks) {
+        assert.equal(tick.labelY, (v.dateRowHeight + v.axisHeight) / 2);
+    }
+});
+
+test('showUtcTime adds a second hour row above the zone row', () => {
+    // The fixture's window is in May, when Berlin is on CEST (UTC+2). A
+    // whole-hour offset puts both rows' ticks on the same instants, so they
+    // line up horizontally and differ only in the numbers they show.
+    const engine = makeSceneEngine([]);
+    engine.config.timeZone = 'Europe/Berlin';
+    engine.config.showUtcTime = true;
+    engine._rebuildDateFormatters();
+
+    const scene = engine.buildScene();
+    const v = scene.viewport;
+    assert.equal(v.utcRowY, (v.dateRowHeight + v.axisHeight) / 2);
+    assert.ok(scene.hourTicks.length > 0);
+    assert.equal(scene.utcTicks.length, scene.hourTicks.length);
+
+    for (let i = 0; i < scene.utcTicks.length; i++) {
+        const utc = scene.utcTicks[i];
+        const zone = scene.hourTicks[i];
+        // UTC above the divider, the zone row below it, neither overlapping
+        // the day labels nor spilling out of the axis.
+        assert.ok(utc.labelY > v.dateRowHeight && utc.labelY < v.utcRowY);
+        assert.ok(zone.labelY > v.utcRowY && zone.labelY < v.axisHeight);
+        assert.equal(utc.x, zone.x, '+02:00 keeps the rows aligned');
+        assert.equal(Number(utc.label), (Number(zone.label) + 22) % 24,
+            'the UTC row must read two hours behind the Berlin row');
+    }
+});
+
+test('a half-hour zone offsets the UTC row horizontally', () => {
+    // Kolkata is +05:30, so the UTC row's whole hours fall between the zone
+    // row's - the horizontal shift is the point of drawing it as its own row.
+    const engine = makeSceneEngine([]);
+    engine.config.timeZone = 'Asia/Kolkata';
+    engine.config.showUtcTime = true;
+    engine._rebuildDateFormatters();
+
+    const scene = engine.buildScene();
+    assert.ok(scene.utcTicks.length > 0);
+    const zoneX = scene.hourTicks.map(t => t.x);
+
+    for (const tick of scene.utcTicks) {
+        assert.ok(!zoneX.includes(tick.x), 'the rows must not share tick positions here');
+        // Both rows still label whole hours - no minutes anywhere.
+        assert.match(tick.label, /^\d\d$/);
+    }
+    // Half an hour at the fixture's 40px/hour scale is 20px of shift.
+    const shift = Math.min(...scene.utcTicks.map(u => Math.min(...zoneX.map(x => Math.abs(u.x - x)))));
+    assert.ok(Math.abs(shift - 20) < 0.001, `expected a 20px shift, got ${shift}`);
+});
+
+test('UTC ticks do not linger in the scene once the row is turned off', () => {
+    const engine = makeSceneEngine([]);
+    engine.config.showUtcTime = true;
+    assert.ok(engine.buildScene().utcTicks.length > 0);
+
+    engine.config.showUtcTime = false;
+    const scene = engine.buildScene();
+    assert.ok(scene.hourTicks.length > 0);
+    assert.deepEqual(scene.utcTicks, [],
+        'the pooled scene must not keep the previous frame\'s UTC row');
+});

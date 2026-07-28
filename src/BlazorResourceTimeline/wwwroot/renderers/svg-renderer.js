@@ -296,6 +296,10 @@ export class SvgRenderer {
         // day separators - all lines, so they share one pool.
         this._line(p.axisLines, startX, v.axisHeight, v.width, v.axisHeight, colors.axisBorder);
         this._line(p.axisLines, startX, v.dateRowHeight, v.width, v.dateRowHeight, colors.axisBorder);
+        if (v.utcRowY != null) {
+            // Divider between the UTC row and the zone row below it.
+            this._line(p.axisLines, startX, v.utcRowY, v.width, v.utcRowY, colors.axisBorder);
+        }
         for (const day of scene.days) {
             if (day.sepX != null) {
                 this._line(p.axisLines, day.sepX, 0, day.sepX, v.dateRowHeight, colors.axisBorder);
@@ -308,10 +312,20 @@ export class SvgRenderer {
             }
         }
 
+        // The optional UTC row is drawn exactly like the zone row, with its
+        // ticks rising from its own baseline (the divider above the zone row)
+        // rather than the bottom of the axis.
         for (const tick of scene.hourTicks) {
             this._line(p.axisTicks, tick.x, v.axisHeight - 8, tick.x, v.axisHeight, colors.tick);
         }
+        for (const tick of scene.utcTicks) {
+            this._line(p.axisTicks, tick.x, v.utcRowY - 8, tick.x, v.utcRowY, colors.tick);
+        }
         for (const tick of scene.hourTicks) {
+            this._text(p.axisTickLabels, tick.label, tick.x, tick.labelY,
+                scene.config.hourLabelFont, colors.label, 'center', 'middle');
+        }
+        for (const tick of scene.utcTicks) {
             this._text(p.axisTickLabels, tick.label, tick.x, tick.labelY,
                 scene.config.hourLabelFont, colors.label, 'center', 'middle');
         }

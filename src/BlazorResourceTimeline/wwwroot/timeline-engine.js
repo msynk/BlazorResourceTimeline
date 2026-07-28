@@ -16,7 +16,7 @@
 // Renderers receive a host object ({ requestRender, getImage }) for async
 // needs such as icon images finishing loading.
 
-import { ZonedTime } from './zoned-time.js';
+import { ZonedTime, utcHourBoundaries } from './zoned-time.js';
 import { Tooltip } from './tooltip.js';
 
 // Consecutive render failures logged before the engine goes quiet about them.
@@ -115,6 +115,14 @@ export class TimelineEngine {
             // BCP 47 locale (e.g. "de-DE") for day labels, tooltips and
             // screen-reader announcements. null uses the viewer's locale.
             locale: null,
+            // Adds a second hour row to the time axis, in UTC, above the row
+            // drawn in `timeZone` and below the day labels. It is an
+            // independent hour row - its own boundaries, ticks and whole-hour
+            // labels - so its numbers sit horizontally offset from the zone
+            // row's by any minutes in that zone's UTC offset. The band below
+            // the date row is split between the two rows, so timeAxisHeight is
+            // what gives them room.
+            showUtcTime: false,
             // Horizontal scale in pixels per hour. null means auto: fit exactly
             // one day into the viewport width (the original behavior). An
             // explicit value (or runtime zoom) is clamped to the min/max below.
@@ -998,9 +1006,13 @@ export class TimelineEngine {
         if (!scene) {
             scene = this._scene = {
                 config: null,
-                viewport: { width: 0, height: 0, axisWidth: 0, axisHeight: 0, dateRowHeight: 0 },
+                viewport: {
+                    width: 0, height: 0, axisWidth: 0, axisHeight: 0,
+                    dateRowHeight: 0, utcRowY: null
+                },
                 days: [],
                 hourTicks: [],
+                utcTicks: [],
                 gridH: [],
                 gridV: [],
                 resourceRows: null,
@@ -1013,12 +1025,14 @@ export class TimelineEngine {
             this._barNodes = [];
             this._dayNodes = [];
             this._tickNodes = [];
+            this._utcTickNodes = [];
             this._rowNodes = [];
             this._marqueeNode = { x: 0, y: 0, width: 0, height: 0 };
             this._ghostNode = { x: 0, y: 0, width: 0, height: 0, color: '', label: null };
         }
         scene.days.length = 0;
         scene.hourTicks.length = 0;
+        scene.utcTicks.length = 0;
         scene.gridH.length = 0;
         scene.gridV.length = 0;
         scene.bars.length = 0;
@@ -1059,7 +1073,8 @@ export class TimelineEngine {
         const c = this.config;
         // Contents:
         //   days       [{ sepX|null, label, labelX, labelY }]
-        //   hourTicks  [{ x, label, labelY }]
+        //   hourTicks  [{ x, label, labelY }]  the axis-zone hour row
+        //   utcTicks   the same, for the optional UTC row (empty when off)
         //   gridH      horizontal grid line y positions
         //   gridV      vertical grid line x positions
         //   resourceRows  null when the HTML template overlay is active
@@ -1076,12 +1091,26 @@ export class TimelineEngine {
         viewport.axisWidth = c.resourceAxisWidth;
         viewport.axisHeight = c.timeAxisHeight;
         viewport.dateRowHeight = c.dateRowHeight;
+        // Y of the divider between the UTC row (above) and the zone row
+        // (below), splitting the band under the day labels in two. null when
+        // the UTC row is off, which is what every renderer branches on.
+        viewport.utcRowY = c.showUtcTime
+            ? (c.dateRowHeight + c.timeAxisHeight) / 2
+            : null;
         // The zoned hour boundaries drive both the axis ticks and the vertical
         // grid lines. They are the most expensive thing in the frame (zone
         // lookups), so they are computed once here and shared.
+        const step = this._hourStep();
         const hours = this._time.hourBoundaries(
-            this.visibleTimeRange.start, this.visibleTimeRange.end, this._hourStep());
-        this._buildTimeAxisScene(scene, hours);
+            this.visibleTimeRange.start, this.visibleTimeRange.end, step);
+        // The UTC row is a second, independent hour row at the same density.
+        // Its boundaries are UTC whole hours, so they coincide with the zone
+        // row's under a whole-hour offset and sit shifted where the offset has
+        // minutes in it.
+        const utcHours = c.showUtcTime
+            ? utcHourBoundaries(this.visibleTimeRange.start, this.visibleTimeRange.end, step)
+            : null;
+        this._buildTimeAxisScene(scene, hours, utcHours);
         this._buildGridScene(scene);
         this._buildBarsScene(scene);
         this._buildNowScene(scene);
@@ -1107,8 +1136,9 @@ export class TimelineEngine {
 
     // Top axis row: one label per day, pinned to stay visible while the day is
     // on screen (sticky-header style), with a separator at each midnight
-    // boundary. Bottom row: hourly ticks/labels thinned to fit the zoom.
-    _buildTimeAxisScene(scene, hours) {
+    // boundary. Below it, hourly ticks/labels thinned to fit the zoom - one row
+    // in the axis zone, or two (UTC above it) when showUtcTime is set.
+    _buildTimeAxisScene(scene, hours, utcHours) {
         const c = this.config;
         const startX = c.resourceAxisWidth;
         const visibleEndX = this._viewportW;
@@ -1163,19 +1193,37 @@ export class TimelineEngine {
             dayStart = dayEnd;
         }
 
-        // Hour ticks/labels, from the pre-computed boundaries.
-        const labelY = (dateRowHeight + c.timeAxisHeight) / 2;
+        // Hour ticks/labels, from the pre-computed boundaries. The zone row
+        // occupies the whole band below the date row, or its lower half when
+        // the UTC row is shown above it.
+        const utcRowY = scene.viewport.utcRowY;
+        const hourRowTop = utcRowY == null ? dateRowHeight : utcRowY;
+        this._fillHourTicks(scene.hourTicks, this._tickNodes, hours,
+            (hourRowTop + c.timeAxisHeight) / 2);
+        if (utcHours) {
+            this._fillHourTicks(scene.utcTicks, this._utcTickNodes, utcHours,
+                (dateRowHeight + utcRowY) / 2);
+        }
+    }
+
+    // Culls one row of hour boundaries to the visible span and fills `out` from
+    // the given node pool. Both hour rows - the axis zone's and the optional
+    // UTC one - are built through here, so they are identical but for their
+    // boundaries and the row they are centered in.
+    _fillHourTicks(out, pool, hours, labelY) {
+        const startX = this.config.resourceAxisWidth;
+        const visibleEndX = this._viewportW;
+
         for (let i = 0; i < hours.length; i++) {
             const x = this.getTimeToX(hours[i].ts);
-            if (x >= startX && x <= visibleEndX) {
-                const n = scene.hourTicks.length;
-                let tick = this._tickNodes[n];
-                if (tick === undefined) tick = this._tickNodes[n] = {};
-                tick.x = x;
-                tick.label = hours[i].hour.toString().padStart(2, '0');
-                tick.labelY = labelY;
-                scene.hourTicks.push(tick);
-            }
+            if (x < startX || x > visibleEndX) continue;
+            const n = out.length;
+            let tick = pool[n];
+            if (tick === undefined) tick = pool[n] = {};
+            tick.x = x;
+            tick.label = hours[i].hour.toString().padStart(2, '0');
+            tick.labelY = labelY;
+            out.push(tick);
         }
     }
 

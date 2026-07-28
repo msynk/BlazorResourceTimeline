@@ -269,10 +269,15 @@ export class CanvasRenderer {
         ctx.lineTo(visibleEndX, axisHeight);
         ctx.stroke();
 
-        // Divider between the date row and the hour row.
+        // Divider between the date row and the hour row(s), plus the one
+        // between the UTC row and the zone row when both are shown.
         ctx.beginPath();
         ctx.moveTo(startX, dateRowHeight);
         ctx.lineTo(visibleEndX, dateRowHeight);
+        if (v.utcRowY != null) {
+            ctx.moveTo(startX, v.utcRowY);
+            ctx.lineTo(visibleEndX, v.utcRowY);
+        }
         ctx.stroke();
 
         // Date row: separators batched into one stroke, then the pinned labels.
@@ -296,7 +301,10 @@ export class CanvasRenderer {
             }
         }
 
-        // Hour row: ticks batched into one stroke, then the hour-of-day labels.
+        // Hour row(s): ticks batched into one stroke, then the hour-of-day
+        // labels. The optional UTC row is drawn exactly like the zone row, with
+        // its ticks rising from its own baseline (the divider above the zone
+        // row) rather than the bottom of the axis.
         ctx.strokeStyle = colors.tick;
         ctx.beginPath();
         for (const tick of scene.hourTicks) {
@@ -304,12 +312,20 @@ export class CanvasRenderer {
             ctx.moveTo(px, axisHeight - 8);
             ctx.lineTo(px, axisHeight);
         }
+        for (const tick of scene.utcTicks) {
+            const px = Math.round(tick.x) + 0.5;
+            ctx.moveTo(px, v.utcRowY - 8);
+            ctx.lineTo(px, v.utcRowY);
+        }
         ctx.stroke();
 
         ctx.textAlign = 'center';
         ctx.font = scene.config.hourLabelFont;
         ctx.fillStyle = colors.label;
         for (const tick of scene.hourTicks) {
+            ctx.fillText(tick.label, tick.x, tick.labelY);
+        }
+        for (const tick of scene.utcTicks) {
             ctx.fillText(tick.label, tick.x, tick.labelY);
         }
     }

@@ -116,6 +116,22 @@ public class BlazorResourceTimelineOptions
     public string? TimeZone { get; set; }
 
     /// <summary>
+    /// Adds a second hour row to the time axis, in UTC, drawn below the day
+    /// labels and above the row that follows <see cref="TimeZone"/> (or the
+    /// viewer's local zone). It is rendered exactly like that row - same ticks,
+    /// same density, whole-hour labels - but on UTC's own hour boundaries, so
+    /// its numbers sit shifted horizontally by any minutes in the axis zone's
+    /// offset (half an hour's worth for <c>"Asia/Kolkata"</c> at +05:30). Under
+    /// a whole-hour offset the two rows line up and differ only in their
+    /// numbers, and with <see cref="TimeZone"/> set to <c>"UTC"</c> they read
+    /// the same. The band under the day row is split evenly between them, so
+    /// raise <see cref="TimeAxisHeight"/> to give them more room.
+    /// Defaults to <c>false</c>.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ShowUtcTime { get; set; }
+
+    /// <summary>
     /// BCP 47 locale (for example <c>"de-DE"</c> or <c>"ja-JP"</c>) used to format
     /// day labels, tooltips and screen-reader announcements. <c>null</c> uses the
     /// viewer's locale. Numeric hour ticks are unaffected (always 24-hour).

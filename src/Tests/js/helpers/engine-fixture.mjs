@@ -31,6 +31,7 @@ export function makeBareEngine(overrides = {}) {
         hitTolerance: 3,
         timeZone: null,
         locale: null,
+        showUtcTime: false,
         pixelsPerHour: null,
         minPixelsPerHour: 0.25,
         maxPixelsPerHour: 1200,
@@ -91,7 +92,7 @@ export function makeZonedEngine(timeZone, locale = null) {
     return engine;
 }
 
-export { ZonedTime } from '../../../BlazorResourceTimeline/wwwroot/zoned-time.js';
+export { ZonedTime, utcHourBoundaries } from '../../../BlazorResourceTimeline/wwwroot/zoned-time.js';
 
 // A bare engine holding the given allocations, indexed as the real one would.
 // When resources are not supplied, one leaf row is synthesized per resourceId

@@ -67,6 +67,10 @@
                         <option value="Asia/Tokyo">Tokyo</option>
                     </select>
                 </label>
+                <label class="editable-control" title="Add a second hour row, in UTC, above the time-zone row">
+                    <input type="checkbox" @bind="_showUtcTime" @bind:after="ApplyOptions" />
+                    UTC row
+                </label>
                 <span class="zoom-controls">
                     Zoom
                     <button class="btn-zoom" @onclick="ZoomOutAsync" title="Zoom out">&minus;</button>
@@ -145,7 +149,7 @@
                 <TopStartContent>
                     <div class="corner">
                         <span class="corner-title">Resources</span>
-                        <span class="corner-sub">Hour</span>
+                        <span class="corner-sub">@(_showUtcTime ? "UTC / zone" : "Hour")</span>
                     </div>
                 </TopStartContent>
             </BlazorResourceTimeline>
@@ -236,6 +240,7 @@
     private int _barMargin = 2;
     private string _renderer = "canvas";
     private string _timeZone = "";
+    private bool _showUtcTime;
     private bool _editable;
     private bool _windowed;
     private bool _customColumn;
@@ -532,6 +537,11 @@
     private BlazorResourceTimelineOptions BuildOptions() => new()
     {
         TimeZone = string.IsNullOrEmpty(_timeZone) ? null : _timeZone,
+        ShowUtcTime = _showUtcTime,
+        // Two hour rows in the default 60px axis leave each about 19px; a little
+        // more room keeps them comfortable. Sent explicitly both ways - Options
+        // merges, so a null here would keep the taller axis after toggling off.
+        TimeAxisHeight = _showUtcTime ? 76 : 60,
         Editable = _editable,
         BarHeight = _barHeight,
         BarMargin = _barMargin,

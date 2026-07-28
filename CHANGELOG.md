@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Options.ShowUtcTime`: an optional second hour row on the time axis, in UTC,
+  drawn below the day labels and above the row that follows `Options.TimeZone`.
+  It is rendered exactly like that row but on UTC's own hour boundaries, so its
+  numbers sit shifted horizontally by any minutes in the zone's offset.
+  Supported by all three renderers.
+
 ## [0.1.0] - 2026-07-26
 
 First public release.

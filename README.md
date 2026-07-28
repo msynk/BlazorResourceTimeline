@@ -55,7 +55,8 @@ lot of data must stay readable and interactive.
   `aria-label`, arrow-key bar navigation, keyboard selection, and live-region
   announcements.
 - **Time-zone-aware axes** (IANA ids via `Intl`), correct across DST, with an
-  optional `Locale` for day labels, tooltips and announcements.
+  optional `Locale` for day labels, tooltips and announcements, and an optional
+  second hour row in UTC (`Options.ShowUtcTime`) above the local one.
 - **Touch & pen** support via Pointer Events.
 - **Streaming data load** for very large datasets (batched interop instead of
   one giant payload).
@@ -204,6 +205,43 @@ Every property is nullable, so a partial instance overrides only what it sets:
 values left `null` keep the renderer's defaults. Note that re-applying `Options`
 *merges* - a `null` property keeps whatever was applied before, rather than
 resetting it to the default.
+
+### Dual time rows (UTC)
+
+`Options.ShowUtcTime = true` adds a second row of hour labels to the time axis,
+in UTC, between the day labels and the row that follows `TimeZone` - useful for
+aviation, operations and any other schedule read in Zulu time alongside a local
+clock:
+
+```razor
+@code {
+    private BlazorResourceTimelineOptions _options = new()
+    {
+        TimeZone = "Europe/Berlin",
+        ShowUtcTime = true,
+        TimeAxisHeight = 76, // the two hour rows split the band below the day row
+    };
+}
+```
+
+The UTC row is rendered exactly like the zone row - same ticks, same density,
+whole-hour labels - but on UTC's own hour boundaries. Where the axis zone's
+offset carries minutes, as `Asia/Kolkata` (+05:30) does, that puts its numbers
+horizontally between the zone row's rather than beneath them:
+
+```
+Mon, Jun 15                             <- day row, in the axis zone
+  00     02     04     06     08        <- UTC row
+    06     08     10     12     14      <- Asia/Kolkata row, shifted by :30
+```
+
+Under a whole-hour offset the two rows line up and differ only in their numbers,
+and with `TimeZone = "UTC"` they read the same. The band below the day row is
+split evenly between them, so raise `TimeAxisHeight` (default 60) to give them
+more room.
+
+The rows are not captioned - use [`TopStartContent`](#notable-parameters) to
+label them in the otherwise blank top-start corner, as the demo does.
 
 ## Theming and dark mode
 
