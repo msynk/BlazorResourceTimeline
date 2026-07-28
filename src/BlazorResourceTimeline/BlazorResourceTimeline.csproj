@@ -24,7 +24,7 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <PackageId>BlazorResourceTimeline</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Title>Blazor Resource Timeline</Title>
     <Authors>msynk</Authors>
     <Company>msynk</Company>
