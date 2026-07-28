@@ -96,7 +96,7 @@ public class ComponentTests : BunitContext
     }
 
     [Fact]
-    public void Resource_Template_Renders_A_Row_Per_Reported_Row()
+    public async Task Resource_Template_Renders_A_Row_Per_Reported_Row()
     {
         JSInterop.Mode = JSRuntimeMode.Loose;
 
@@ -107,8 +107,10 @@ public class ComponentTests : BunitContext
             .Add(c => c.Config, SampleConfig())
             .Add(c => c.ResourceTemplate, template));
 
-        // Simulate the renderer reporting its visible rows.
-        cut.InvokeAsync(() => cut.Instance.OnResourceRowsChanged(
+        // Simulate the renderer reporting its visible rows. Awaiting the
+        // dispatcher matters: the callback re-renders through StateHasChanged,
+        // so asserting on the markup before it completes is a race.
+        await cut.InvokeAsync(() => cut.Instance.OnResourceRowsChanged(
         [
             new TimelineComponent.ResourceRow { Id = "grp", Name = "Group", HasChildren = true },
             new TimelineComponent.ResourceRow { Id = "r1", Name = "Resource 1", Depth = 1 },
