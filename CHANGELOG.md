@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Options.AutoScrollToNow`: centers the current time in the view as soon as the
+  first data load is laid out, so a timeline meant to open "at now" no longer
+  needs a `GoToTodayAsync()` call after rendering. Later loads leave the
+  viewport alone.
+- `Options.PreserveScrollOnReload`: keeps a data reload showing what it was
+  showing - the time at the left edge of the content area and the row at the
+  top - restored by time and resource id, so it survives a reload that changes
+  the range, the scale or the row list.
+- `Options.NowLineRefreshMs`: how often the "now" indicator is repainted to keep
+  up with the wall clock on an idle timeline (default 60000, as before; `0`
+  stops the ticking).
+- `BarIconPosition.Center`: anchors a bar icon on top of the allocation bar,
+  centered horizontally and vertically. Several centered icons lay out side by
+  side as one group centered on the bar.
+- `BarIcon.Inside`: draws an icon within the bar instead of beside it, aligned
+  against the edge its `Position` names. Inside icons take no room outside the
+  bar, so the labels around it stay where they were.
+
 ## [0.2.0] - 2026-07-28
 
 ### Added

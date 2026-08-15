@@ -129,6 +129,18 @@ export class TimelineEngine {
             pixelsPerHour: null,
             minPixelsPerHour: 0.25,
             maxPixelsPerHour: 1200,
+            // Centers the current time in the view on the first data load, so
+            // a timeline meant to open "at now" needs no goToNow() call from
+            // the host. Only the first load: every later one leaves the
+            // viewport alone (see preserveScrollOnReload).
+            autoScrollToNow: false,
+            // Keeps a reload showing what it was showing - the time at the
+            // left edge of the content area and the row at the top - instead
+            // of letting a changed range, scale or row list move the view.
+            preserveScrollOnReload: false,
+            // How often (ms) the "now" indicator is repainted so it keeps up
+            // with the wall clock on an idle timeline. 0 stops the ticking.
+            nowLineRefreshMs: 60 * 1000,
             // Editing. When editable, a bar can be dragged to move it in time
             // (and, if allowResourceChange, onto another resource row), or
             // grabbed near an edge to resize its start/end. Moves/resizes snap
@@ -327,6 +339,20 @@ export class TimelineEngine {
         this._virtualScrollMaxX = 0; // max virtual scrollX (virtualWidth - viewport)
         this._scrollScaleX = 1;     // virtual px per real (spacer) px, >= 1
 
+        // Whether any data has been loaded yet. The first load is the special
+        // one: autoScrollToNow centers it on the current time, and there is no
+        // earlier view for preserveScrollOnReload to put back.
+        this._firstLoadDone = false;
+
+        // Where the viewport should end up once the next layout runs - the view
+        // captured before a reload, or the initial centering on "now". Applied
+        // by _relayout, the first point at which the new scale and scroll
+        // extent are known (and which defers it while the wrapper has no size).
+        this._pendingScroll = null;
+        // The same, held across a streaming load so endData can restore the
+        // view again once the bars have settled the row heights.
+        this._streamScroll = null;
+
         // Hidden 2D context used only for text measurement (date-label
         // pinning). Rendering-agnostic: available regardless of the active
         // renderer, and never attached to the document.
@@ -373,10 +399,18 @@ export class TimelineEngine {
 
         this._setupEventListeners();
 
-        // Keep the "now" indicator honest on idle timelines (e.g. a wall
-        // display nobody scrolls): re-render once per minute while the current
-        // time falls within the data range. A full redraw is a few
-        // milliseconds, negligible at this frequency.
+        this._nowTimer = null;
+        this._startNowTimer();
+    }
+
+    // Keeps the "now" indicator honest on idle timelines (e.g. a wall display
+    // nobody scrolls): re-renders every nowLineRefreshMs while the current time
+    // falls within the data range. A full redraw is a few milliseconds, which
+    // the skips below keep to the ticks that would actually move the line.
+    _startNowTimer() {
+        const interval = this.config.nowLineRefreshMs;
+        if (!(interval > 0)) return;
+
         this._nowTimer = setInterval(() => {
             if (!this._hasTimeRange()) return;
             // Nothing is presented while the tab is hidden; the next tick after
@@ -385,13 +419,20 @@ export class TimelineEngine {
             const now = Date.now();
             if (now < this.timeRange.start || now > this.timeRange.end) return;
             // Only repaint when the indicator would actually land on a different
-            // pixel. Zoomed out far enough, a minute is well under one pixel and
-            // the whole frame would be identical.
+            // pixel. Zoomed out far enough, a whole interval's worth of time is
+            // well under one pixel and the frame would be identical.
             const x = Math.round(this.getTimeToX(now));
             if (x === this._lastNowX) return;
             this._lastNowX = x;
             this.render();
-        }, 60 * 1000);
+        }, interval);
+    }
+
+    _stopNowTimer() {
+        if (this._nowTimer) {
+            clearInterval(this._nowTimer);
+            this._nowTimer = null;
+        }
     }
 
     // ---- Renderer management ----
@@ -732,6 +773,11 @@ export class TimelineEngine {
         const clampedScrollLeft = Math.max(0, Math.min(rawScrollLeft, Math.max(0, spacerWidth - cssW)));
         this.scrollX = clampedScrollLeft * this._scrollScaleX;
 
+        // A view queued by the last data load is applied here, where the scale
+        // and the scroll extent it needs are finally known, and before the
+        // frame below paints - so the timeline never shows the old position.
+        this._applyPendingScroll();
+
         // Paint in this turn. Canvas resize clears the backing store immediately;
         // deferring to rAF would present one blank frame (noticeable when a host
         // reflows on selection empty↔non-empty and the ResizeObserver runs).
@@ -754,6 +800,17 @@ export class TimelineEngine {
         const clamped = Math.max(0, Math.min(virtualX, this._virtualScrollMaxX));
         this.scrollX = clamped;
         this.wrapper.scrollLeft = this._scrollScaleX > 0 ? clamped / this._scrollScaleX : 0;
+    }
+
+    // Vertical counterpart: clamps against the scrollable height (computed the
+    // same way the spacer is, rather than read back from the DOM, so this costs
+    // no reflow) and keeps scrollY and the DOM in sync.
+    _setScrollY(y) {
+        const maxY = Math.max(
+            0, this.config.timeAxisHeight + this._totalRowsHeight() - this._viewportH);
+        const clamped = Math.max(0, Math.min(y, maxY));
+        this.scrollY = clamped;
+        this.wrapper.scrollTop = clamped;
     }
 
     getTimeToX(time) {
@@ -1444,6 +1501,10 @@ export class TimelineEngine {
     //   end    -> left-aligned, starting just after the full span's right edge
     // Icons share these anchor positions and are laid out first; labels are
     // then pushed outward so they never overlap an icon at the same position.
+    // Icons also support 'center': drawn on top of the main bar, centered in
+    // both axes, several of them side by side as one centered group. An icon
+    // with `inside` set keeps its anchor but is placed within the main bar,
+    // against the matching edge, without displacing anything outside it.
     // spanStartX/spanEndX are the outer edges of the drawn bar including any
     // start/end edge bars, so start/end decorations never overlap them.
     _buildBarDecorations(alloc, node, barX, barEndX, spanStartX, spanEndX, barTop, barCenterY, barHeight, c) {
@@ -1458,8 +1519,19 @@ export class TimelineEngine {
         let aboveY = barTop - gap;    // bottom edge of the next above-anchored item
         let belowY = barBottom + gap; // top edge of the next below-anchored item
 
+        // Inner edges for icons drawn inside the bar. Kept separate from the
+        // outer ones so an inside icon never pushes a label away from the bar.
+        let insideStartX = barX;
+        let insideEndX = barEndX;
+        let insideTopY = barTop;
+        let insideBottomY = barBottom;
+
         if (alloc.icons && alloc.icons.length) {
             const defaultSize = c.barIconSize;
+            // Center-anchored icons are measured in this pass and placed after
+            // it, once the group's total width is known.
+            let centered = null;
+            let centeredWidth = 0;
             for (const icon of alloc.icons) {
                 if (!icon || !icon.source) continue;
                 const img = this._getImage(icon.source);
@@ -1478,8 +1550,34 @@ export class TimelineEngine {
                 }
 
                 const pos = String(icon.position || 'start').toLowerCase();
+                if (pos === 'center') {
+                    if (centered === null) centered = [];
+                    else centeredWidth += gap;
+                    centered.push({ source: icon.source, width: w, height: h });
+                    centeredWidth += w;
+                    continue;
+                }
+
                 let x, y;
-                if (pos === 'end') {
+                if (icon.inside) {
+                    if (pos === 'end') {
+                        x = insideEndX - gap - w;
+                        y = barCenterY - h / 2;
+                        insideEndX = x;
+                    } else if (pos === 'above') {
+                        x = barCenterX - w / 2;
+                        y = insideTopY + gap;
+                        insideTopY = y + h;
+                    } else if (pos === 'below') {
+                        x = barCenterX - w / 2;
+                        y = insideBottomY - gap - h;
+                        insideBottomY = y;
+                    } else { // 'start' (default)
+                        x = insideStartX + gap;
+                        y = barCenterY - h / 2;
+                        insideStartX = x + w;
+                    }
+                } else if (pos === 'end') {
                     x = endEdgeX + gap;
                     y = barCenterY - h / 2;
                     endEdgeX = x + w;
@@ -1498,6 +1596,19 @@ export class TimelineEngine {
                 }
                 node.icons = node._icons;
                 node._icons.push({ source: icon.source, x, y, width: w, height: h });
+            }
+
+            if (centered !== null) {
+                let x = barCenterX - centeredWidth / 2;
+                node.icons = node._icons;
+                for (const icon of centered) {
+                    node._icons.push({
+                        source: icon.source,
+                        x, y: barCenterY - icon.height / 2,
+                        width: icon.width, height: icon.height
+                    });
+                    x += icon.width + gap;
+                }
             }
         }
 
@@ -2612,20 +2723,25 @@ export class TimelineEngine {
         }
     }
 
+    // Virtual horizontal offset (in content pixels) that puts the given time at
+    // the center of the content area, clamped to the scrollable extent. Returns
+    // null when the time is outside the timeline's range or nothing is laid out.
+    _centerVirtualX(time) {
+        if (!this._hasTimeRange() || this._pixelsPerMs === 0) return null;
+        if (time < this.timeRange.start || time > this.timeRange.end) return null;
+
+        const contentX = (time - this.timeRange.start) * this._pixelsPerMs;
+        return Math.max(0, Math.min(contentX - this._visibleWidth / 2, this._virtualScrollMaxX));
+    }
+
     // Scrolls horizontally so the given time is centered in the content area.
     // Returns true if the time is within range and navigation happened.
     scrollToTime(time) {
-        if (!this._hasTimeRange() || this._pixelsPerMs === 0) return false;
-        if (time < this.timeRange.start || time > this.timeRange.end) return false;
+        const targetVirtual = this._centerVirtualX(time);
+        if (targetVirtual === null) return false;
 
-        const contentX = (time - this.timeRange.start) * this._pixelsPerMs;
-
-        // Center the target (virtual space), clamp, then map onto the capped
-        // native scrollbar for the smooth scroll.
-        const targetVirtual = Math.max(0, Math.min(
-            contentX - this._visibleWidth / 2, this._virtualScrollMaxX));
+        // Map onto the capped native scrollbar for the smooth scroll.
         const targetScrollLeft = this._scrollScaleX > 0 ? targetVirtual / this._scrollScaleX : 0;
-
         this.wrapper.scrollTo({ left: targetScrollLeft, behavior: 'smooth' });
         return true;
     }
@@ -2634,6 +2750,83 @@ export class TimelineEngine {
     // timeline's data range (and navigation happened), false otherwise.
     goToNow() {
         return this.scrollToTime(Date.now());
+    }
+
+    // ---- View continuity across data loads ----
+
+    // Called by every data-load entry point *before* it replaces the data,
+    // while the outgoing view can still be read. The first load is where
+    // autoScrollToNow applies and where there is nothing to preserve; later
+    // loads capture the current view for preserveScrollOnReload. Either way the
+    // result is applied by _applyPendingScroll on the next layout.
+    _prepareLoadScroll() {
+        if (!this._firstLoadDone) {
+            this._firstLoadDone = true;
+            if (this.config.autoScrollToNow) this._pendingScroll = { centerOnNow: true };
+            return;
+        }
+
+        if (this.config.preserveScrollOnReload) {
+            const anchor = this._captureViewAnchor();
+            if (anchor) this._pendingScroll = anchor;
+        }
+    }
+
+    // What the viewport is showing, described in terms that survive a reload:
+    // the time at the left edge of the content area, and the row at the top of
+    // it (by id, plus how far into that row the edge falls). A reload that
+    // changes the scale, the overall range or the row list invalidates raw
+    // pixel offsets, but not these.
+    _captureViewAnchor() {
+        if (!this._hasTimeRange() || this._pixelsPerMs === 0) return null;
+
+        const anchor = {
+            leadTime: this.getXToTime(this.config.resourceAxisWidth),
+            scrollY: this.scrollY,
+            rowId: null,
+            rowOffset: 0
+        };
+
+        const topRow = this._rowIndexAtContentY(this.scrollY);
+        if (topRow >= 0) {
+            anchor.rowId = this._rows[topRow].resource.id;
+            anchor.rowOffset = this.scrollY - this._rowContentTop(topRow);
+        }
+        return anchor;
+    }
+
+    // Applies the view queued by _prepareLoadScroll against the layout that has
+    // just been computed. Nothing is scheduled in the common case, so this is a
+    // single null check on the hot resize path.
+    _applyPendingScroll() {
+        const pending = this._pendingScroll;
+        if (!pending) return;
+        this._pendingScroll = null;
+
+        if (pending.centerOnNow) {
+            const target = this._centerVirtualX(Date.now());
+            // "Now" outside the loaded range leaves nothing to center on; the
+            // view simply stays where it started.
+            if (target !== null) this._setVirtualScrollX(target);
+            return;
+        }
+
+        this._restoreViewAnchor(pending);
+    }
+
+    // Puts a captured view back: the anchored time returns to the left edge of
+    // the content area and the anchored row to the top. A row that the reload
+    // removed (or collapsed away) falls back to the raw vertical offset, which
+    // is as close as anything gets once the row is gone.
+    _restoreViewAnchor(anchor) {
+        this._setVirtualScrollX((anchor.leadTime - this.timeRange.start) * this._pixelsPerMs);
+
+        let y = anchor.scrollY;
+        if (anchor.rowId !== null) {
+            const index = this._rowIndexById.get(anchor.rowId);
+            if (index !== undefined) y = this._rowContentTop(index) + anchor.rowOffset;
+        }
+        this._setScrollY(y);
     }
 
     // Rebuilds the resource hierarchy (children map + roots), seeds the initial
@@ -3042,6 +3235,7 @@ export class TimelineEngine {
     }
 
     setData(resources, start, end, allocations) {
+        this._prepareLoadScroll();
         this._windowed = false;
         this.resources = resources || [];
         this._rebuildResourceStructure();
@@ -3071,6 +3265,10 @@ export class TimelineEngine {
     // so structure appears while the batches arrive; sorting and indexing run
     // once at endData.
     beginData(resources, start, end, total) {
+        this._prepareLoadScroll();
+        // The batches still to arrive will grow the rows that stacking makes
+        // taller, so endData re-applies this once the layout has settled.
+        this._streamScroll = this._pendingScroll;
         this._windowed = false;
         this.resources = resources || [];
         this._rebuildResourceStructure();
@@ -3105,6 +3303,8 @@ export class TimelineEngine {
         const buffer = this._loadBuffer || [];
         this._loadBuffer = null;
         this._loadExpected = 0;
+        this._pendingScroll = this._streamScroll;
+        this._streamScroll = null;
         this.allocations = buffer.sort((a, b) => a.startTime - b.startTime);
         this._indexAllocations();
         this._hideTooltip();
@@ -3125,8 +3325,13 @@ export class TimelineEngine {
         const prevBarHeight = this.config.barHeight;
         const prevBarMargin = this.config.barMargin;
         const prevResourceHeight = this.config.resourceHeight;
+        const prevNowRefresh = this.config.nowLineRefreshMs;
         this._applyOptions(options);
         this._rebuildDateFormatters();
+        if (this.config.nowLineRefreshMs !== prevNowRefresh) {
+            this._stopNowTimer();
+            this._startNowTimer();
+        }
         // Cached stacking offsets are derived from these two; invalidate them.
         const barLayoutChanged =
             this.config.barHeight !== prevBarHeight || this.config.barMargin !== prevBarMargin;
@@ -3224,6 +3429,7 @@ export class TimelineEngine {
     // an empty grid is painted, and allocations arrive later per fetched window
     // (see getVisibleWindow / applyAllocationWindow / _requestWindowIfNeeded).
     beginWindowed(resources, start, end) {
+        this._prepareLoadScroll();
         this.resources = resources || [];
         this._rebuildResourceStructure();
         this.timeRange = { start, end };
@@ -3349,10 +3555,7 @@ export class TimelineEngine {
         this._disposed = true;
         if (this.animationFrame) cancelAnimationFrame(this.animationFrame);
         if (this._scrollRaf) cancelAnimationFrame(this._scrollRaf);
-        if (this._nowTimer) {
-            clearInterval(this._nowTimer);
-            this._nowTimer = null;
-        }
+        this._stopNowTimer();
         if (this._tooltip) {
             this._tooltip.dispose();
             this._tooltip = null;

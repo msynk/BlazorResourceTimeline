@@ -157,6 +157,43 @@ public class BlazorResourceTimelineOptions
     public double? MaxPixelsPerHour { get; set; }
 
     /// <summary>
+    /// Centers the current time in the view as soon as the first data load is
+    /// laid out, so a timeline meant to open "at now" does not need a
+    /// <c>GoToTodayAsync</c> call after rendering. The "now" line ends up in the
+    /// middle of the content area, exactly as that method would leave it, but
+    /// without the scroll animation. Only the first load is affected: later
+    /// ones leave the viewport where the user left it (see
+    /// <see cref="PreserveScrollOnReload"/>). Has no effect when the current
+    /// time falls outside the loaded range. Defaults to <c>false</c>.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? AutoScrollToNow { get; set; }
+
+    /// <summary>
+    /// Keeps a data reload showing what it was showing - the time at the left
+    /// edge of the content area and the row at the top - instead of letting a
+    /// changed time range, scale or row list move the view. The view is restored
+    /// by time and resource id rather than by pixel offset, so it survives a
+    /// reload that shifts the overall range or re-orders the rows; if the
+    /// anchored row is gone entirely, the vertical position is left as it was.
+    /// Defaults to <c>false</c>.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? PreserveScrollOnReload { get; set; }
+
+    /// <summary>
+    /// How often (in milliseconds) the "now" indicator is repainted so it keeps
+    /// up with the wall clock on a timeline nobody is interacting with.
+    /// Defaults to 60000 (once a minute); lower it when the timeline is zoomed
+    /// in far enough that a minute is a visible distance. Repaints are skipped
+    /// while the tab is hidden and whenever the line would land on the same
+    /// pixel, so a short interval costs nothing on a zoomed-out view. Set to
+    /// <c>0</c> to stop the ticking entirely.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? NowLineRefreshMs { get; set; }
+
+    /// <summary>
     /// Enables in-timeline editing: allocations can be dragged to move them in time
     /// (and, unless <see cref="AllowResourceChange"/> is <c>false</c>, onto another
     /// resource row) or grabbed near an edge to resize their start/end. Commits

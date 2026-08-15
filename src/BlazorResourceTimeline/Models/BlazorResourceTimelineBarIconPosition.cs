@@ -19,5 +19,8 @@ public enum BlazorResourceTimelineBarIconPosition
     Above,
 
     /// <summary>Centered below the bar.</summary>
-    Below
+    Below,
+
+    /// <summary>Drawn on top of the bar, centered horizontally and vertically within it.</summary>
+    Center
 }

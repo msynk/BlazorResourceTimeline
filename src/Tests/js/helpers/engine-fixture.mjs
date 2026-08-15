@@ -35,6 +35,9 @@ export function makeBareEngine(overrides = {}) {
         pixelsPerHour: null,
         minPixelsPerHour: 0.25,
         maxPixelsPerHour: 1200,
+        autoScrollToNow: false,
+        preserveScrollOnReload: false,
+        nowLineRefreshMs: 60000,
         barLabelFont: '11px sans-serif',
         dateLabelFont: '12px sans-serif',
         hourLabelFont: '12px sans-serif',
@@ -77,6 +80,14 @@ export function makeBareEngine(overrides = {}) {
     engine._virtualWidth = 0;
     engine._virtualScrollMaxX = 0;
     engine._scrollScaleX = 1;
+    engine._firstLoadDone = false;
+    engine._pendingScroll = null;
+    engine._streamScroll = null;
+
+    // Scroll positions are written through to the wrapper element; the
+    // DOM-independent paths only ever set scrollLeft/scrollTop on it, so a
+    // plain object records them just as well.
+    engine.wrapper = { scrollLeft: 0, scrollTop: 0 };
 
     // Reporting rows back to .NET is interop; there is no dotNetRef here.
     engine.dotNetRef = null;

@@ -65,7 +65,8 @@ public static class DataGenerator
         BlazorResourceTimelineBarIconPosition.Start,
         BlazorResourceTimelineBarIconPosition.End,
         BlazorResourceTimelineBarIconPosition.Above,
-        BlazorResourceTimelineBarIconPosition.Below
+        BlazorResourceTimelineBarIconPosition.Below,
+        BlazorResourceTimelineBarIconPosition.Center
     ];
 
     // A small palette of inline SVG icons, exposed as ready-to-use data URIs.
@@ -89,17 +90,14 @@ public static class DataGenerator
 
     /// <summary>
     /// Builds resource rows from the provided names (or a default set), organized
-    /// into a two-level hierarchy: a "Data Center" root, a group per resource type
-    /// (Servers, Databases, ...) and the individual resources as leaves. Group and
-    /// root rows carry no allocations of their own.
+    /// into a group per resource type (Servers, Databases, ...) at the root, with
+    /// the individual resources as leaves. Group rows carry no allocations of
+    /// their own.
     /// </summary>
     public static List<BlazorResourceTimelineResource> GenerateResources(string[]? resourceNames = null)
     {
         var names = resourceNames ?? DefaultResourceNames;
         var list = new List<BlazorResourceTimelineResource>();
-
-        const string rootId = "grp-root";
-        list.Add(new BlazorResourceTimelineResource { Id = rootId, Name = "Data Center" });
 
         var groupIds = new Dictionary<string, string>();
         for (var i = 0; i < names.Length; i++)
@@ -113,8 +111,7 @@ public static class DataGenerator
                 list.Add(new BlazorResourceTimelineResource
                 {
                     Id = groupId,
-                    Name = $"{prefix}s",
-                    ParentId = rootId
+                    Name = $"{prefix}s"
                 });
             }
 
@@ -193,7 +190,7 @@ public static class DataGenerator
 
         foreach (var resource in resources)
         {
-            if (parentIds.Contains(resource.Id)) continue; // skip group/root rows
+            if (parentIds.Contains(resource.Id)) continue; // skip group rows
 
             AddAllocationsForResource(
                 allocations, resource, startMs, endMs, timeSpan, days, nowMs, random,
@@ -203,7 +200,7 @@ public static class DataGenerator
         return allocations.OrderBy(c => c.StartTime).ToList();
     }
 
-    // Ids of resources that have at least one child (group/root rows), so the
+    // Ids of resources that have at least one child (the group rows), so the
     // allocation generators can skip them.
     private static HashSet<string> ParentIds(IEnumerable<BlazorResourceTimelineResource> resources) =>
         resources.Where(r => r.ParentId != null)
@@ -241,7 +238,7 @@ public static class DataGenerator
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (parentIds.Contains(resource.Id)) continue; // skip group/root rows
+            if (parentIds.Contains(resource.Id)) continue; // skip group rows
 
             AddAllocationsForResource(
                 allocations, resource, startMs, endMs, timeSpan, days, nowMs, random,
@@ -254,6 +251,41 @@ public static class DataGenerator
 
         cancellationToken.ThrowIfCancellationRequested();
         return allocations.OrderBy(c => c.StartTime).ToList();
+    }
+
+    /// <summary>
+    /// Moves every bar icon inside its bar or back out beside it, and resizes the
+    /// bars to suit: one carrying an icon drawn inside it gets a height that can
+    /// contain the icon, any other falls back to the default bar height. Lets the
+    /// demo flip the placement without regenerating the data.
+    /// </summary>
+    public static void ApplyIconPlacement(IEnumerable<BlazorResourceTimelineAllocation> allocations, bool inside)
+    {
+        foreach (var allocation in allocations)
+        {
+            ApplyIconPlacement(allocation, inside);
+        }
+    }
+
+    private static void ApplyIconPlacement(BlazorResourceTimelineAllocation allocation, bool inside)
+    {
+        if (allocation.Icons is not { Count: > 0 }) return;
+
+        var tallestInsideIcon = 0;
+        foreach (var icon in allocation.Icons)
+        {
+            // A centered icon is drawn on top of the bar whatever the flag says.
+            var isCenter = icon.Position == BlazorResourceTimelineBarIconPosition.Center;
+            icon.Inside = inside && !isCenter;
+            if (isCenter || icon.Inside)
+            {
+                tallestInsideIcon = Math.Max(tallestInsideIcon, icon.Size ?? 0);
+            }
+        }
+
+        // Without the extra room an icon inside the bar would overhang it on
+        // both sides and read as floating over it rather than sitting in it.
+        allocation.Height = tallestInsideIcon > 0 ? tallestInsideIcon + 6 : null;
     }
 
     // Generates and appends the allocation bars for a single resource. Shared by the
@@ -351,7 +383,9 @@ public static class DataGenerator
                         Size = 14 + random.Next(5) // 14..18 px
                     });
                 }
+
                 allocation.Icons = icons;
+                ApplyIconPlacement(allocation, inside: false);
             }
 
             allocations.Add(allocation);

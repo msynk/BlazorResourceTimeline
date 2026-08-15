@@ -71,9 +71,10 @@ public class BlazorResourceTimelineAllocation
 
     /// <summary>
     /// Optional custom icons or small images rendered around the bar. Each icon
-    /// can be anchored to a different position (start, end, above or below).
-    /// Multiple icons sharing a position are laid out next to one another,
-    /// growing away from the bar in the order they appear in the list.
+    /// can be anchored to a different position (start, end, above, below or
+    /// center) and drawn either beside the bar or within it. Multiple icons
+    /// sharing a position are laid out next to one another, growing away from
+    /// the bar in the order they appear in the list.
     /// </summary>
     public List<BlazorResourceTimelineBarIcon>? Icons { get; set; }
 }

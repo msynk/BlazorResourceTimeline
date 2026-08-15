@@ -20,6 +20,17 @@ public class BlazorResourceTimelineBarIcon
     public BlazorResourceTimelineBarIconPosition Position { get; set; } = BlazorResourceTimelineBarIconPosition.Start;
 
     /// <summary>
+    /// Draws the icon within the bar instead of outside it, with
+    /// <see cref="Position"/> aligning it against the matching edge:
+    /// <c>Start</c>/<c>End</c> just inside the start/end edge, <c>Above</c>/<c>Below</c>
+    /// just inside the top/bottom edge. Has no effect on
+    /// <see cref="BlazorResourceTimelineBarIconPosition.Center"/>, which always draws
+    /// inside. An icon larger than the bar overhangs it, so give bars carrying one a
+    /// <see cref="BlazorResourceTimelineAllocation.Height"/> that fits.
+    /// </summary>
+    public bool Inside { get; set; }
+
+    /// <summary>
     /// Length of the square box (in pixels) the icon is drawn within. The image
     /// is scaled to fit while keeping its aspect ratio. Falls back to the
     /// renderer's default icon size when null or non-positive.

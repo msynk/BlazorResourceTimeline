@@ -7,71 +7,12 @@
 
 <div class="demo-page@(_darkTheme ? " theme-dark" : "")">
     <header class="demo-header">
-        <div class="demo-title">
+        @* Actions sit on the title line; the settings below are grouped and
+           compact so the header stays a thin band above the timeline. *@
+        <div class="demo-titlebar">
             <h1>Resource Timeline</h1>
-        </div>
-
-        <div class="demo-controls">
-            <div class="demo-controls-row">
-                <label>
-                    Days
-                    <select @bind="_days" @bind:after="RegenerateAsync">
-                        <option value="7">7</option>
-                        <option value="30">30</option>
-                        <option value="100">100</option>
-                        <option value="365">365</option>
-                    </select>
-                </label>
-                <label class="bar-height-control">
-                    Bar height
-                    <input type="range" min="2" max="32" step="1"
-                           @bind="_barHeight" @bind:event="oninput" @bind:after="ApplyOptions" />
-                    <span class="bar-height-value">@_barHeight px</span>
-                </label>
-                <label class="bar-height-control" title="Vertical distance between bars that overlap in time on the same row">
-                    Bar margin
-                    <input type="range" min="0" max="16" step="1"
-                           @bind="_barMargin" @bind:event="oninput" @bind:after="ApplyOptions" />
-                    <span class="bar-height-value">@_barMargin px</span>
-                </label>
-                <label class="editable-control">
-                    <input type="checkbox" @bind="_editable" @bind:after="ApplyOptions" />
-                    Editable
-                </label>
-                <label class="editable-control" title="Serve only the visible window on demand instead of loading all bars up front">
-                    <input type="checkbox" @bind="_windowed" @bind:after="ToggleWindowed" />
-                    On-demand loading
-                </label>
-                <label class="editable-control" title="Render the resource column with a custom HTML template">
-                    <input type="checkbox" @bind="_customColumn" />
-                    Custom column
-                </label>
-            </div>
-            <div class="demo-controls-row">
-                <label title="Which technology paints the timeline; behavior is identical across renderers">
-                    Renderer
-                    <select @bind="_renderer" @bind:after="ApplyOptions">
-                        <option value="canvas">Canvas</option>
-                        <option value="svg">SVG</option>
-                        <option value="html">HTML</option>
-                    </select>
-                </label>
-                <label>
-                    Time zone
-                    <select @bind="_timeZone" @bind:after="ApplyOptions">
-                        <option value="">Local</option>
-                        <option value="UTC">UTC (Zulu)</option>
-                        <option value="America/New_York">New York</option>
-                        <option value="Europe/London">London</option>
-                        <option value="Europe/Berlin">Berlin</option>
-                        <option value="Asia/Tokyo">Tokyo</option>
-                    </select>
-                </label>
-                <label class="editable-control" title="Add a second hour row, in UTC, above the time-zone row">
-                    <input type="checkbox" @bind="_showUtcTime" @bind:after="ApplyOptions" />
-                    UTC row
-                </label>
-                <span class="zoom-controls">
+            <div class="demo-actions">
+                <span class="ctl-zoom">
                     Zoom
                     <button class="btn-zoom" @onclick="ZoomOutAsync" title="Zoom out">&minus;</button>
                     <button class="btn-zoom" @onclick="ZoomInAsync" title="Zoom in">+</button>
@@ -86,8 +27,105 @@
                     @(_darkTheme ? "Light theme" : "Dark theme")
                 </button>
                 <button class="btn-code" @onclick="ToggleCode">
-                    @(_showCode ? "Hide Code" : "Show Code")
+                    @(_showCode ? "Hide code" : "Show code")
                 </button>
+            </div>
+        </div>
+
+        <div class="demo-toolbar">
+            <div class="ctl-group">
+                <label>
+                    Days
+                    <select @bind="_days" @bind:after="RegenerateAsync">
+                        <option value="7">7</option>
+                        <option value="30">30</option>
+                        <option value="100">100</option>
+                        <option value="365">365</option>
+                    </select>
+                </label>
+                <label class="ctl-check" title="Serve only the visible window on demand instead of loading all bars up front">
+                    <input type="checkbox" @bind="_windowed" @bind:after="ToggleWindowed" />
+                    On-demand
+                </label>
+            </div>
+
+            <div class="ctl-group">
+                <label title="Which technology paints the timeline; behavior is identical across renderers">
+                    Renderer
+                    <select @bind="_renderer" @bind:after="ApplyOptions">
+                        <option value="canvas">Canvas</option>
+                        <option value="svg">SVG</option>
+                        <option value="html">HTML</option>
+                    </select>
+                </label>
+                <label class="ctl-check" title="Drag bars to move them in time or onto another resource, or grab an edge to resize">
+                    <input type="checkbox" @bind="_editable" @bind:after="ApplyOptions" />
+                    Editable
+                </label>
+                <label class="ctl-check" title="Render the resource column with a custom HTML template">
+                    <input type="checkbox" @bind="_customColumn" />
+                    Custom column
+                </label>
+            </div>
+
+            <div class="ctl-group">
+                <label class="ctl-range" title="Default bar height in pixels">
+                    Bar
+                    <input type="range" min="2" max="32" step="1"
+                           @bind="_barHeight" @bind:event="oninput" @bind:after="ApplyOptions" />
+                    <span class="ctl-value">@_barHeight px</span>
+                </label>
+                <label class="ctl-range" title="Vertical distance between bars that overlap in time on the same row">
+                    Gap
+                    <input type="range" min="0" max="16" step="1"
+                           @bind="_barMargin" @bind:event="oninput" @bind:after="ApplyOptions" />
+                    <span class="ctl-value">@_barMargin px</span>
+                </label>
+                <label class="ctl-check" title="BarIcon.Inside: draw each bar icon within its bar, against the edge its position names, instead of beside it (bars carrying one are grown to fit)">
+                    <input type="checkbox" @bind="_insideIcons" @bind:after="ToggleIconPlacement" />
+                    Icons inside
+                </label>
+            </div>
+
+            <div class="ctl-group">
+                <label>
+                    Zone
+                    <select @bind="_timeZone" @bind:after="ApplyOptions">
+                        <option value="">Local</option>
+                        <option value="UTC">UTC (Zulu)</option>
+                        <option value="America/New_York">New York</option>
+                        <option value="Europe/London">London</option>
+                        <option value="Europe/Berlin">Berlin</option>
+                        <option value="Asia/Tokyo">Tokyo</option>
+                    </select>
+                </label>
+                <label class="ctl-check" title="Add a second hour row, in UTC, above the time-zone row">
+                    <input type="checkbox" @bind="_showUtcTime" @bind:after="ApplyOptions" />
+                    UTC row
+                </label>
+            </div>
+
+            <div class="ctl-group">
+                @* Options.AutoScrollToNow only applies to a timeline's first
+                   load, so toggling it re-keys (and therefore remounts) the
+                   component - otherwise the checkbox would look inert. *@
+                <label class="ctl-check" title="Options.AutoScrollToNow: center the current time when the timeline first loads (toggling remounts it here to show the effect)">
+                    <input type="checkbox" @bind="_autoScrollToNow" @bind:after="ApplyOptions" />
+                    Start at now
+                </label>
+                <label class="ctl-check" title="Options.PreserveScrollOnReload: keep the visible time range and top row when the data reloads - scroll somewhere, then hit Regenerate">
+                    <input type="checkbox" @bind="_preserveScroll" @bind:after="ApplyOptions" />
+                    Keep view
+                </label>
+                <label title="Options.NowLineRefreshMs: how often the red now line catches up with the clock">
+                    Now line
+                    <select @bind="_nowRefreshMs" @bind:after="ApplyOptions">
+                        <option value="1000">1s</option>
+                        <option value="5000">5s</option>
+                        <option value="60000">1 min</option>
+                        <option value="0">Off</option>
+                    </select>
+                </label>
             </div>
         </div>
     </header>
@@ -138,7 +176,7 @@
         @if (_config is not null)
         {
             <BlazorResourceTimeline @ref="_timeline"
-                              @key="_customColumn"
+                              @key="(_customColumn, _autoScrollToNow)"
                               Config="_config"
                               Options="_options"
                               LoadAllocationsAsync="@(_windowed ? LoadWindowAsync : null)"
@@ -242,9 +280,13 @@
     private string _timeZone = "";
     private bool _showUtcTime;
     private bool _editable;
+    private bool _insideIcons;
     private bool _windowed;
     private bool _customColumn;
     private bool _darkTheme;
+    private bool _autoScrollToNow = true;
+    private bool _preserveScroll = true;
+    private int _nowRefreshMs = 60000;
     private string? _lastEdit;
 
     // Right-click state: the args of the open context menu (null when closed)
@@ -313,11 +355,15 @@
                         Height = 12,
                         TextAbove = "Batch job",
                         // Custom icons can be anchored at the start, end, above or
-                        // below the bar. Source is any image URL or data URI.
+                        // below the bar, or centered on top of it. Inside draws
+                        // the icon within the bar, against that same edge.
+                        // Source is any image URL or data URI.
                         Icons = new List<BlazorResourceTimelineBarIcon>
                         {
                             new() { Source = "/icons/check.svg", Position = BlazorResourceTimelineBarIconPosition.Start },
                             new() { Source = "/icons/star.svg", Position = BlazorResourceTimelineBarIconPosition.End, Size = 18 },
+                            new() { Source = "/icons/lock.svg", Position = BlazorResourceTimelineBarIconPosition.Center, Size = 10 },
+                            new() { Source = "/icons/flag.svg", Position = BlazorResourceTimelineBarIconPosition.End, Inside = true, Size = 10 },
                         },
                     },
                     new BlazorResourceTimelineAllocation
@@ -448,6 +494,7 @@
                 return;
             }
 
+            DataGenerator.ApplyIconPlacement(config.Allocations, _insideIcons);
             _config = config;
         }
         catch (OperationCanceledException)
@@ -501,6 +548,18 @@
     // (Options is compared by reference). Rebuilt from all current selections.
     private void ApplyOptions() => _options = BuildOptions();
 
+    // Icon placement lives on the data rather than in Options, so it is edited
+    // into the existing bars - no regeneration, which also makes the before and
+    // after directly comparable - and published with a new Config reference.
+    private void ToggleIconPlacement()
+    {
+        if (_config is not null)
+        {
+            DataGenerator.ApplyIconPlacement(_config.Allocations, _insideIcons);
+            _config = CloneConfig(_config);
+        }
+    }
+
     // Toggling on-demand loading changes which data path the component uses.
     // Assigning a new Config reference makes it reload (after the updated
     // LoadAllocationsAsync parameter has been applied).
@@ -542,6 +601,11 @@
         // more room keeps them comfortable. Sent explicitly both ways - Options
         // merges, so a null here would keep the taller axis after toggling off.
         TimeAxisHeight = _showUtcTime ? 76 : 60,
+        // Open on the current time instead of the start of the generated range,
+        // and stay where the user left the view when the data is regenerated.
+        AutoScrollToNow = _autoScrollToNow,
+        PreserveScrollOnReload = _preserveScroll,
+        NowLineRefreshMs = _nowRefreshMs,
         Editable = _editable,
         BarHeight = _barHeight,
         BarMargin = _barMargin,

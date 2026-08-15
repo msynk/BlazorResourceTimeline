@@ -129,6 +129,36 @@ public class AllocationWireFormatTests
     }
 
     [Fact]
+    public void Options_SerializeViewKeysWithExpectedNames()
+    {
+        var options = new BlazorResourceTimelineOptions
+        {
+            AutoScrollToNow = true,
+            PreserveScrollOnReload = true,
+            NowLineRefreshMs = 1000,
+        };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(options, Web));
+        var root = doc.RootElement;
+
+        Assert.True(root.GetProperty("autoScrollToNow").GetBoolean());
+        Assert.True(root.GetProperty("preserveScrollOnReload").GetBoolean());
+        Assert.Equal(1000, root.GetProperty("nowLineRefreshMs").GetInt32());
+    }
+
+    [Fact]
+    public void Options_SerializeZeroNowLineRefresh()
+    {
+        // 0 is what turns the "now" ticking off, so it must reach the renderer
+        // rather than be mistaken for "unset" and dropped.
+        var options = new BlazorResourceTimelineOptions { NowLineRefreshMs = 0 };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(options, Web));
+
+        Assert.Equal(0, doc.RootElement.GetProperty("nowLineRefreshMs").GetInt32());
+    }
+
+    [Fact]
     public void Resource_SerializesHierarchyKeysWithExpectedNames()
     {
         var resource = new BlazorResourceTimelineResource
@@ -180,6 +210,29 @@ public class AllocationWireFormatTests
 
         using var doc = JsonDocument.Parse(JsonSerializer.Serialize(alloc, Web));
         Assert.Equal("LH441\nGate A1", doc.RootElement.GetProperty("tooltip").GetString());
+    }
+
+    [Fact]
+    public void BarIcon_SerializesPositionAsNameAndInsideAsBool()
+    {
+        var icon = new BlazorResourceTimelineBarIcon
+        {
+            Source = "/icons/warning.svg",
+            Position = BlazorResourceTimelineBarIconPosition.Center,
+            Inside = true,
+            Size = 12,
+        };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(icon, Web));
+        var root = doc.RootElement;
+
+        // The renderer lowercases the name, so its casing is not part of the
+        // contract - but it must stay a string rather than an enum ordinal.
+        Assert.Equal(JsonValueKind.String, root.GetProperty("position").ValueKind);
+        Assert.Equal("center", root.GetProperty("position").GetString(), ignoreCase: true);
+        Assert.True(root.GetProperty("inside").GetBoolean());
+        Assert.Equal(12, root.GetProperty("size").GetInt32());
+        Assert.Equal("/icons/warning.svg", root.GetProperty("source").GetString());
     }
 
     [Fact]

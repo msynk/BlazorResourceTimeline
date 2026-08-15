@@ -147,6 +147,89 @@ test('a bar with fewer icons than last frame does not accumulate them', () => {
     assert.equal(engine.buildScene().bars[0].icons.length, 1);
 });
 
+test('center icons sit on the bar as one horizontally centered group', () => {
+    const engine = makeSceneEngine([
+        bar('a', 'r0', 1, 6, {
+            icons: [
+                { source: 'one.png', position: 'center' },
+                { source: 'two.png', position: 'center' }
+            ]
+        })
+    ]);
+    const loaded = { complete: true, naturalWidth: 16, naturalHeight: 16 };
+    engine._getImage = () => loaded;
+
+    const node = engine.buildScene().bars[0];
+    const [first, second] = node.icons;
+    const gap = engine.config.barLabelGap;
+
+    assert.equal(second.x, first.x + first.width + gap, 'the pair must sit side by side');
+    const groupCenterX = (first.x + second.x + second.width) / 2;
+    assert.equal(groupCenterX, node.x + node.width / 2, 'the group must be centered on the bar');
+
+    for (const icon of node.icons) {
+        assert.equal(icon.y + icon.height / 2, node.y + node.height / 2,
+            'each icon must be vertically centered on the bar');
+    }
+});
+
+test('inside icons hug the bar edges without displacing the labels outside it', () => {
+    const engine = makeSceneEngine([
+        bar('a', 'r0', 1, 6, {
+            height: 24,
+            textStart: 'start',
+            textEnd: 'end',
+            icons: [
+                { source: 'one.png', position: 'start', inside: true },
+                { source: 'two.png', position: 'end', inside: true }
+            ]
+        })
+    ]);
+    const loaded = { complete: true, naturalWidth: 16, naturalHeight: 16 };
+    engine._getImage = () => loaded;
+
+    const node = engine.buildScene().bars[0];
+    const gap = engine.config.barLabelGap;
+    const [atStart, atEnd] = node.icons;
+
+    assert.equal(atStart.x, node.x + gap, 'the start icon belongs just inside the left edge');
+    assert.equal(atEnd.x + atEnd.width, node.x + node.width - gap,
+        'the end icon belongs just inside the right edge');
+    for (const icon of node.icons) {
+        assert.equal(icon.y + icon.height / 2, node.y + node.height / 2);
+    }
+
+    // Labels are anchored to the bar's outer edges: an icon placed inside the
+    // bar takes up no room out there, so they must not be pushed away.
+    const byText = Object.fromEntries(node.labels.map(l => [l.text, l]));
+    assert.equal(byText.start.x, node.x - gap);
+    assert.equal(byText.end.x, node.x + node.width + gap);
+});
+
+test('inside icons anchored above and below hug the bar\'s top and bottom', () => {
+    const engine = makeSceneEngine([
+        bar('a', 'r0', 1, 6, {
+            height: 24,
+            icons: [
+                { source: 'one.png', position: 'above', inside: true },
+                { source: 'two.png', position: 'below', inside: true }
+            ]
+        })
+    ]);
+    const loaded = { complete: true, naturalWidth: 16, naturalHeight: 16 };
+    engine._getImage = () => loaded;
+
+    const node = engine.buildScene().bars[0];
+    const gap = engine.config.barLabelGap;
+    const [atTop, atBottom] = node.icons;
+
+    assert.equal(atTop.y, node.y + gap);
+    assert.equal(atBottom.y + atBottom.height, node.y + node.height - gap);
+    for (const icon of node.icons) {
+        assert.equal(icon.x + icon.width / 2, node.x + node.width / 2);
+    }
+});
+
 test('edge bars from one bar do not leak into the next bar in the same frame', () => {
     // Two bars share the pool; the second must start clean even though the
     // first filled its backing arrays.

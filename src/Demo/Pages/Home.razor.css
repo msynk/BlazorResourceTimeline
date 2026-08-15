@@ -9,95 +9,126 @@
 
 .demo-header {
     display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-    padding-bottom: 0.75rem;
-}
-
-.demo-title h1 {
-    margin: 0;
-    font-size: 1.5rem;
-}
-
-.demo-title p {
-    margin: 0.25rem 0 0;
-    color: #6c757d;
-    max-width: 60ch;
-}
-
-.demo-controls {
-    display: flex;
     flex-direction: column;
-    align-items: flex-end;
-    gap: 0.5rem;
+    gap: 0.4rem;
+    padding-bottom: 0.5rem;
 }
 
-.demo-controls-row {
+.demo-titlebar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+}
+
+.demo-titlebar h1 {
+    margin: 0;
+    font-size: 1.15rem;
+}
+
+.demo-actions {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 0.75rem;
+    gap: 0.35rem;
 }
 
-.demo-controls label {
+/* Settings live in one wrapping band of groups, divided by hairlines, so a
+   dozen controls read as five clusters and cost two lines at most. */
+.demo-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem 0.15rem;
+    padding: 0.3rem 0.45rem;
+    background-color: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+}
+
+.ctl-group {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    font-size: 0.9rem;
-    color: #495057;
+    flex-wrap: wrap;
+    gap: 0.15rem 0.65rem;
+    padding: 0 0.6rem;
+    border-left: 1px solid #dee2e6;
 }
 
-.demo-controls select {
-    padding: 0.3rem 0.5rem;
+.ctl-group:first-child {
+    padding-left: 0.15rem;
+    border-left: none;
+}
+
+.demo-toolbar label {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.75rem;
+    color: #495057;
+    white-space: nowrap;
+}
+
+.demo-toolbar select {
+    padding: 0.1rem 0.25rem;
     border: 1px solid #ced4da;
     border-radius: 4px;
     background: #fff;
+    color: #495057;
+    font-size: 0.75rem;
 }
 
-.bar-height-control input[type="range"] {
-    width: 110px;
+.ctl-check input[type="checkbox"] {
+    width: 0.85rem;
+    height: 0.85rem;
+    margin: 0;
     cursor: pointer;
 }
 
-.bar-height-value {
-    min-width: 2.8rem;
+.ctl-range input[type="range"] {
+    width: 68px;
+    height: 0.85rem;
+    cursor: pointer;
+}
+
+.ctl-value {
+    min-width: 2.4rem;
     font-variant-numeric: tabular-nums;
     color: #868e96;
 }
 
 .btn-regenerate {
-    padding: 0.4rem 0.9rem;
+    padding: 0.25rem 0.6rem;
     border: none;
     border-radius: 4px;
     background-color: #1971c2;
     color: #fff;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.78rem;
 }
 
 .btn-regenerate:hover {
     background-color: #1864ab;
 }
 
-.zoom-controls {
+.ctl-zoom {
     display: flex;
     align-items: center;
-    gap: 0.3rem;
-    font-size: 0.9rem;
+    gap: 0.25rem;
+    font-size: 0.78rem;
     color: #495057;
 }
 
 .btn-zoom {
-    min-width: 2rem;
-    padding: 0.3rem 0.5rem;
+    min-width: 1.6rem;
+    padding: 0.25rem 0.4rem;
     border: 1px solid #ced4da;
     border-radius: 4px;
     background-color: #fff;
     color: #495057;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.78rem;
     line-height: 1;
 }
 
@@ -106,13 +137,13 @@
 }
 
 .btn-today {
-    padding: 0.4rem 0.9rem;
+    padding: 0.25rem 0.6rem;
     border: 1px solid #1971c2;
     border-radius: 4px;
     background-color: #fff;
     color: #1971c2;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.78rem;
 }
 
 .btn-today:hover {
@@ -120,13 +151,13 @@
 }
 
 .btn-code {
-    padding: 0.4rem 0.9rem;
+    padding: 0.25rem 0.6rem;
     border: 1px solid #495057;
     border-radius: 4px;
     background-color: #fff;
     color: #495057;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.78rem;
 }
 
 .btn-code:hover {
@@ -134,13 +165,13 @@
 }
 
 .btn-theme {
-    padding: 0.4rem 0.9rem;
+    padding: 0.25rem 0.6rem;
     border: 1px solid #868e96;
     border-radius: 4px;
     background-color: #fff;
     color: #495057;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.78rem;
 }
 
 .btn-theme:hover {
@@ -223,13 +254,13 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 1.25rem;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 0.75rem;
-    min-height: 2.5rem;
+    gap: 0.25rem 1rem;
+    padding: 0.35rem 0.6rem;
+    margin-bottom: 0.5rem;
+    min-height: 2.1rem;
     background-color: #f1f3f5;
     border-radius: 6px;
-    font-size: 0.875rem;
+    font-size: 0.8rem;
     color: #495057;
 }
 
@@ -426,26 +457,31 @@
     color: #e9ecef;
 }
 
-.demo-page.theme-dark .demo-title h1 {
+.demo-page.theme-dark .demo-titlebar h1 {
     color: #f8f9fa;
 }
 
-.demo-page.theme-dark .demo-title p {
-    color: #868e96;
+.demo-page.theme-dark .demo-toolbar {
+    background-color: #1a1d21;
+    border-color: #2c3035;
 }
 
-.demo-page.theme-dark .demo-controls label,
-.demo-page.theme-dark .zoom-controls {
+.demo-page.theme-dark .ctl-group {
+    border-left-color: #2c3035;
+}
+
+.demo-page.theme-dark .demo-toolbar label,
+.demo-page.theme-dark .ctl-zoom {
     color: #ced4da;
 }
 
-.demo-page.theme-dark .demo-controls select {
+.demo-page.theme-dark .demo-toolbar select {
     border-color: #495057;
-    background: #1a1d21;
+    background: #141618;
     color: #e9ecef;
 }
 
-.demo-page.theme-dark .bar-height-value {
+.demo-page.theme-dark .ctl-value {
     color: #868e96;
 }
 

@@ -30,6 +30,10 @@ lot of data must stay readable and interactive.
 - **Zoom** from a multi-day overview down to hour-level detail
   (`Ctrl`/`Cmd` + mouse wheel, trackpad pinch, or the programmatic API), with
   adaptive tick/label density.
+- **Viewport control**: open with the current time centered
+  (`Options.AutoScrollToNow`), keep the view where it was across a data reload
+  (`Options.PreserveScrollOnReload`), and set how often the "now" line catches
+  up with the wall clock (`Options.NowLineRefreshMs`).
 - **Selection**: click, `Ctrl`/`Cmd`-click to toggle, and click-and-drag
   marquee selection.
 - **Editing** (opt-in): drag a bar to move it in time (or onto another
@@ -206,6 +210,40 @@ values left `null` keep the renderer's defaults. Note that re-applying `Options`
 *merges* - a `null` property keeps whatever was applied before, rather than
 resetting it to the default.
 
+### Where the view starts, and what a reload does to it
+
+Three independent options decide where the viewport sits and how lively the
+"now" line is. None of them affects the others:
+
+```razor
+@code {
+    private BlazorResourceTimelineOptions _options = new()
+    {
+        AutoScrollToNow = true,        // open with "now" centered
+        PreserveScrollOnReload = true, // a reload keeps the current view
+        NowLineRefreshMs = 1000,       // advance the "now" line every second
+    };
+}
+```
+
+- **`AutoScrollToNow`** centers the current time in the content area as soon as
+  the first data load is laid out - where `GoToTodayAsync()` would leave it,
+  minus the scroll animation - so a timeline meant to open "at now" needs no
+  call after rendering. Only the first load is affected; from then on the
+  viewport belongs to the user. Nothing happens if "now" is outside the
+  loaded range.
+- **`PreserveScrollOnReload`** keeps a reload showing what it was showing: the
+  time at the left edge of the content area, and the row at the top. Both are
+  restored by time and resource id rather than by pixel offset, so the view
+  holds even when the reload shifts the overall range, changes the scale or
+  re-orders the rows. If the anchored row is gone entirely, the vertical
+  position is left as it was.
+- **`NowLineRefreshMs`** is how often the "now" line is repainted so it keeps up
+  with the wall clock on a timeline nobody is touching (default `60000` - once a
+  minute). Repaints are skipped while the tab is hidden and whenever the line
+  would land on the same pixel, so a one-second interval costs nothing on a
+  zoomed-out view. `0` stops the ticking.
+
 ### Dual time rows (UTC)
 
 `Options.ShowUtcTime = true` adds a second row of hour labels to the time axis,
@@ -303,7 +341,7 @@ presentation:
 | `Height` | Per-bar height in pixels (falls back to `Options.BarHeight`). Edge bars share it. |
 | `TextAbove` / `TextBelow` | Labels centered above / below the bar. |
 | `TextStart` / `TextEnd` | Labels just outside the start / end edge. |
-| `Icons` | Images or data-URI SVGs anchored `Start`, `End`, `Above` or `Below`; several at one position lay out side by side, growing away from the bar. |
+| `Icons` | Images or data-URI SVGs anchored `Start`, `End`, `Above`, `Below` or `Center`. Several at one position lay out side by side, growing away from the bar - or as one centered group for `Center`. `Inside = true` moves an icon within the bar, against the edge its position names (`Center` is always inside). |
 | `StartBar` / `EndBar` | Decorative "edge" bars extending before the start / after the end, each with its own `Duration` and `Color` - typically delays. |
 | `Tooltip` | Hover text (see [Tooltips](#tooltips)). |
 
@@ -533,7 +571,7 @@ Capture the component with `@ref` to drive it from code:
 | `ReloadAsync()` | Re-sends the current `Config` even if the reference is unchanged. |
 | `ClearSelectionAsync()` | Clears the current selection. |
 | `GetSelectedBarsAsync()` | Returns the selected allocations, in selection order. |
-| `GoToTodayAsync()` | Centers "now" in view (if within range). |
+| `GoToTodayAsync()` | Centers "now" in view (if within range). `Options.AutoScrollToNow` does this on the first load without a call. |
 | `ScrollToTimeAsync(unixMs)` | Centers the given time in view. |
 | `ZoomInAsync()` / `ZoomOutAsync()` | Zoom around the viewport center. |
 | `SetPixelsPerHourAsync(value?)` | Sets an explicit scale, or `null` for auto. |
