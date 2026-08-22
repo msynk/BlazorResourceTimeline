@@ -52,6 +52,7 @@
     <!-- Enum fields are read by name by JsonStringEnumConverter. -->
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineRendererType" preserve="all" />
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineBarIconPosition" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineArrowKeyNavigation" preserve="all" />
 
     <!-- Deserialized JS -> .NET: the layout read back after init, and the
          visible-row descriptors pushed to the resource-template overlay. -->

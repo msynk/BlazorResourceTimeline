@@ -12,6 +12,19 @@
         <div class="demo-titlebar">
             <h1>Resource Timeline</h1>
             <div class="demo-actions">
+                @* PanByDaysAsync is the same movement the arrow keys make, so
+                   these buttons and the keyboard shortcuts stay in step. *@
+                <span class="ctl-pan">
+                    Pan
+                    <button class="btn-step" @onclick="() => PanAsync(-7)"
+                            title="Back one week (Ctrl+&larr;)" aria-label="Back one week">&laquo;</button>
+                    <button class="btn-step" @onclick="() => PanAsync(-1)"
+                            title="Back one day (&larr;)" aria-label="Back one day">&lsaquo;</button>
+                    <button class="btn-step" @onclick="() => PanAsync(1)"
+                            title="Forward one day (&rarr;)" aria-label="Forward one day">&rsaquo;</button>
+                    <button class="btn-step" @onclick="() => PanAsync(7)"
+                            title="Forward one week (Ctrl+&rarr;)" aria-label="Forward one week">&raquo;</button>
+                </span>
                 <span class="ctl-zoom">
                     Zoom
                     <button class="btn-zoom" @onclick="ZoomOutAsync" title="Zoom out">&minus;</button>
@@ -117,6 +130,10 @@
                     <input type="checkbox" @bind="_preserveScroll" @bind:after="ApplyOptions" />
                     Keep view
                 </label>
+                <label class="ctl-check" title="Options.ArrowKeyNavigation: make the arrow keys step the view a day at a time (a week with Ctrl/Cmd) instead of moving focus between bars. Click the timeline first so it has keyboard focus.">
+                    <input type="checkbox" @bind="_arrowKeysPanTime" @bind:after="ApplyOptions" />
+                    Arrows pan time
+                </label>
                 <label title="Options.NowLineRefreshMs: how often the red now line catches up with the clock">
                     Now line
                     <select @bind="_nowRefreshMs" @bind:after="ApplyOptions">
@@ -134,6 +151,19 @@
         <span><strong>@LeafResourceCount</strong> resources</span>
         <span><strong>@(_config?.Allocations.Count ?? 0)</strong> allocations</span>
         <span><strong>@_days</strong> days</span>
+        @* Spells out what the arrow keys currently do, so the effect of the
+           "Arrows pan time" toggle is visible before touching the keyboard. *@
+        <span class="demo-keys" title="Click the timeline to give it keyboard focus first">
+            Click the timeline, then
+            @if (_arrowKeysPanTime)
+            {
+                <text><kbd>&larr;</kbd>/<kbd>&rarr;</kbd> pans a day, <kbd>Ctrl</kbd>+<kbd>&larr;</kbd>/<kbd>&rarr;</kbd> a week</text>
+            }
+            else
+            {
+                <text><kbd>&larr;</kbd>/<kbd>&rarr;</kbd> moves between bars</text>
+            }
+        </span>
         @if (_lastEdit is not null)
         {
             <span class="last-edit">Last edit: @_lastEdit</span>
@@ -286,6 +316,9 @@
     private bool _darkTheme;
     private bool _autoScrollToNow = true;
     private bool _preserveScroll = true;
+    // On by default here so the day/week shortcuts work as soon as the page
+    // loads; the library itself defaults to bar-focus arrows.
+    private bool _arrowKeysPanTime = true;
     private int _nowRefreshMs = 60000;
     private string? _lastEdit;
 
@@ -520,6 +553,14 @@
         }
     }
 
+    private async Task PanAsync(int days)
+    {
+        if (_timeline is not null)
+        {
+            await _timeline.PanByDaysAsync(days);
+        }
+    }
+
     private async Task ZoomInAsync()
     {
         if (_timeline is not null)
@@ -606,6 +647,9 @@
         AutoScrollToNow = _autoScrollToNow,
         PreserveScrollOnReload = _preserveScroll,
         NowLineRefreshMs = _nowRefreshMs,
+        ArrowKeyNavigation = _arrowKeysPanTime
+            ? BlazorResourceTimelineArrowKeyNavigation.Time
+            : BlazorResourceTimelineArrowKeyNavigation.Focus,
         Editable = _editable,
         BarHeight = _barHeight,
         BarMargin = _barMargin,

@@ -166,13 +166,21 @@ public partial class BlazorResourceTimeline
     private readonly SemaphoreSlim _windowGate = new(1, 1);
     private long _latestWindowRequestId;
 
-    // Base navigation/selection shortcuts, plus the editing shortcuts when
-    // editing is enabled, advertised to assistive tech via aria-keyshortcuts.
+    // Base navigation/selection shortcuts, plus the week-step and editing
+    // shortcuts when those modes are on, advertised via aria-keyshortcuts.
     private const string BaseKeyShortcuts =
         "ArrowLeft ArrowRight ArrowUp ArrowDown Home End PageUp PageDown Enter Escape";
-    private string KeyShortcuts => Options?.Editable == true
-        ? BaseKeyShortcuts + " Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowLeft Alt+Shift+ArrowRight Alt+Shift+ArrowUp Alt+Shift+ArrowDown"
-        : BaseKeyShortcuts;
+    private const string TimeNavigationKeyShortcuts =
+        " Control+ArrowLeft Control+ArrowRight";
+    private const string EditingKeyShortcuts =
+        " Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowLeft Alt+Shift+ArrowRight Alt+Shift+ArrowUp Alt+Shift+ArrowDown";
+
+    private string KeyShortcuts =>
+        BaseKeyShortcuts
+        + (Options?.ArrowKeyNavigation == BlazorResourceTimelineArrowKeyNavigation.Time
+            ? TimeNavigationKeyShortcuts
+            : "")
+        + (Options?.Editable == true ? EditingKeyShortcuts : "");
 
     /// <summary>
     /// On the first render, imports the JavaScript engine, creates the renderer
@@ -412,6 +420,27 @@ public partial class BlazorResourceTimeline
         }
 
         return await _timelineInstance.InvokeAsync<bool>("scrollToTime", unixMs);
+    }
+
+    /// <summary>
+    /// Pans the view by whole days without changing the zoom - positive moves
+    /// forward in time, negative back - keeping the same time of day at the
+    /// leading edge. Pass 7 or -7 for a week. The pan is clamped to the
+    /// timeline's range, so this returns <c>false</c> when the view is already
+    /// against that end (or the whole range fits on screen).
+    /// This is the same movement the arrow keys make when
+    /// <see cref="BlazorResourceTimelineOptions.ArrowKeyNavigation"/> is
+    /// <see cref="BlazorResourceTimelineArrowKeyNavigation.Time"/>, so toolbar
+    /// buttons and the keyboard stay in step.
+    /// </summary>
+    public async Task<bool> PanByDaysAsync(int days)
+    {
+        if (_timelineInstance is null || !_dataLoaded)
+        {
+            return false;
+        }
+
+        return await _timelineInstance.InvokeAsync<bool>("panByDays", days);
     }
 
     /// <summary>

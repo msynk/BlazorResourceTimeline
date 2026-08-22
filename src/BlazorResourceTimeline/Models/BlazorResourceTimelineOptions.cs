@@ -194,6 +194,19 @@ public class BlazorResourceTimelineOptions
     public int? NowLineRefreshMs { get; set; }
 
     /// <summary>
+    /// What the left/right arrow keys do while the timeline has focus. With
+    /// <see cref="BlazorResourceTimelineArrowKeyNavigation.Focus"/> (the
+    /// default) they move the roving focus between the allocation bars of the
+    /// focused row; with <see cref="BlazorResourceTimelineArrowKeyNavigation.Time"/>
+    /// they pan the time axis instead - one day per press, one week with
+    /// <c>Ctrl</c>/<c>Cmd</c> held - which suits a planner the user reads day by
+    /// day. <c>PageUp</c>/<c>PageDown</c> pan by a viewport either way, and the
+    /// editing shortcuts (<c>Alt</c>+arrows) are unaffected.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public BlazorResourceTimelineArrowKeyNavigation? ArrowKeyNavigation { get; set; }
+
+    /// <summary>
     /// Enables in-timeline editing: allocations can be dragged to move them in time
     /// (and, unless <see cref="AllowResourceChange"/> is <c>false</c>, onto another
     /// resource row) or grabbed near an edge to resize their start/end. Commits

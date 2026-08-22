@@ -38,6 +38,7 @@ export function makeBareEngine(overrides = {}) {
         autoScrollToNow: false,
         preserveScrollOnReload: false,
         nowLineRefreshMs: 60000,
+        arrowKeyNavigation: 'focus',
         barLabelFont: '11px sans-serif',
         dateLabelFont: '12px sans-serif',
         hourLabelFont: '12px sans-serif',

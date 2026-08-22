@@ -1,6 +1,7 @@
 // Where the viewport lands across data loads: the first-load centering on
 // "now" (autoScrollToNow), keeping the view across a reload
-// (preserveScrollOnReload), and the "now" indicator's refresh timer.
+// (preserveScrollOnReload), and the "now" indicator's refresh timer. Plus the
+// day/week steps the arrow keys make under arrowKeyNavigation 'time'.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -48,6 +49,84 @@ function setRows(engine, ids) {
 function contentCenterX(engine) {
     return engine.config.resourceAxisWidth + engine._visibleWidth / 2;
 }
+
+// Just enough of a KeyboardEvent for handleKeyDown.
+function keyEvent(key, { ctrl = false } = {}) {
+    return { key, ctrlKey: ctrl, metaKey: false, altKey: false, shiftKey: false, preventDefault() { } };
+}
+
+// A pannable engine: the range is wide enough that a week-long step still has
+// somewhere to go, and painting is stubbed out (there is no renderer here).
+function makePannableEngine(days, config = {}) {
+    const engine = makeLaidOutEngine({ config });
+    const now = Date.now();
+    engine.timeRange = { start: now, end: now + days * 24 * HOUR };
+    applyScale(engine, 60);
+    engine.render = () => { };
+    return engine;
+}
+
+// The time at the left edge of the content area - what a pan moves.
+function leadTime(engine) {
+    return engine.getXToTime(engine.config.resourceAxisWidth);
+}
+
+test('an arrow key steps the view exactly one day when the arrows pan time', () => {
+    const engine = makePannableEngine(30, { arrowKeyNavigation: 'time' });
+    const before = leadTime(engine);
+
+    engine.handleKeyDown(keyEvent('ArrowRight'));
+
+    assert.ok(Math.abs(leadTime(engine) - (before + 24 * HOUR)) < 1);
+});
+
+test('Ctrl turns the arrow-key day step into a week', () => {
+    const engine = makePannableEngine(30, { arrowKeyNavigation: 'time' });
+    const before = leadTime(engine);
+
+    engine.handleKeyDown(keyEvent('ArrowRight', { ctrl: true }));
+
+    assert.ok(Math.abs(leadTime(engine) - (before + 7 * 24 * HOUR)) < 1);
+});
+
+test('a day step back returns to where a step forward started', () => {
+    const engine = makePannableEngine(30, { arrowKeyNavigation: 'time' });
+    engine._setVirtualScrollX(5000);
+    const before = engine.scrollX;
+
+    engine.panByDays(1);
+    engine.panByDays(-1);
+
+    assert.equal(engine.scrollX, before);
+});
+
+test('the arrow keys still move the bar focus by default', () => {
+    const engine = makePannableEngine(30);
+    let moves = 0;
+    engine._moveFocusHorizontal = () => { moves++; };
+
+    engine.handleKeyDown(keyEvent('ArrowRight'));
+
+    assert.equal(moves, 1);
+    assert.equal(engine.scrollX, 0, 'focus mode must leave the time axis alone');
+});
+
+test('a pan is clamped to the range and reports that it went nowhere', () => {
+    const engine = makePannableEngine(30, { arrowKeyNavigation: 'time' });
+    engine._setVirtualScrollX(engine._virtualScrollMaxX);
+
+    assert.equal(engine.panByDays(1), false);
+    assert.equal(engine.scrollX, engine._virtualScrollMaxX);
+});
+
+test('a pan does not change the horizontal scale', () => {
+    const engine = makePannableEngine(30, { arrowKeyNavigation: 'time' });
+    const scale = engine._pixelsPerHour;
+
+    engine.panByDays(7);
+
+    assert.equal(engine._pixelsPerHour, scale);
+});
 
 test('the first load centers "now" in the content area when autoScrollToNow is set', () => {
     const engine = makeLaidOutEngine({ config: { autoScrollToNow: true } });

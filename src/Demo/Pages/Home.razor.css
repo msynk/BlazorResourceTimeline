@@ -112,7 +112,8 @@
     background-color: #1864ab;
 }
 
-.ctl-zoom {
+.ctl-zoom,
+.ctl-pan {
     display: flex;
     align-items: center;
     gap: 0.25rem;
@@ -120,7 +121,8 @@
     color: #495057;
 }
 
-.btn-zoom {
+.btn-zoom,
+.btn-step {
     min-width: 1.6rem;
     padding: 0.25rem 0.4rem;
     border: 1px solid #ced4da;
@@ -132,7 +134,8 @@
     line-height: 1;
 }
 
-.btn-zoom:hover {
+.btn-zoom:hover,
+.btn-step:hover {
     background-color: #f1f3f5;
 }
 
@@ -275,6 +278,23 @@
 
 .demo-stats .selection strong {
     color: #1971c2;
+}
+
+.demo-stats .demo-keys {
+    color: #868e96;
+}
+
+.demo-stats .demo-keys kbd {
+    display: inline-block;
+    padding: 0.05rem 0.3rem;
+    border: 1px solid #ced4da;
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    background-color: #fff;
+    color: #495057;
+    font-family: inherit;
+    font-size: 0.72rem;
+    line-height: 1.4;
 }
 
 .btn-clear {
@@ -471,7 +491,8 @@
 }
 
 .demo-page.theme-dark .demo-toolbar label,
-.demo-page.theme-dark .ctl-zoom {
+.demo-page.theme-dark .ctl-zoom,
+.demo-page.theme-dark .ctl-pan {
     color: #ced4da;
 }
 
@@ -485,13 +506,15 @@
     color: #868e96;
 }
 
-.demo-page.theme-dark .btn-zoom {
+.demo-page.theme-dark .btn-zoom,
+.demo-page.theme-dark .btn-step {
     border-color: #495057;
     background-color: #1a1d21;
     color: #ced4da;
 }
 
-.demo-page.theme-dark .btn-zoom:hover {
+.demo-page.theme-dark .btn-zoom:hover,
+.demo-page.theme-dark .btn-step:hover {
     background-color: #25292e;
 }
 
@@ -548,6 +571,12 @@
 
 .demo-page.theme-dark .demo-stats .last-edit {
     color: #adb5bd;
+}
+
+.demo-page.theme-dark .demo-stats .demo-keys kbd {
+    border-color: #495057;
+    background-color: #141618;
+    color: #ced4da;
 }
 
 .demo-page.theme-dark .btn-clear {

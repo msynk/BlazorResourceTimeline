@@ -141,6 +141,10 @@ export class TimelineEngine {
             // How often (ms) the "now" indicator is repainted so it keeps up
             // with the wall clock on an idle timeline. 0 stops the ticking.
             nowLineRefreshMs: 60 * 1000,
+            // What the left/right arrow keys do: 'focus' (default) moves the
+            // roving focus between the bars of the focused row, 'time' pans the
+            // time axis by a day per press (a week with Ctrl/Cmd held).
+            arrowKeyNavigation: 'focus',
             // Editing. When editable, a bar can be dragged to move it in time
             // (and, if allowResourceChange, onto another resource row), or
             // grabbed near an edge to resize its start/end. Moves/resizes snap
@@ -1748,6 +1752,16 @@ export class TimelineEngine {
     }
 
     handlePointerDown(e) {
+        // Most presses below preventDefault (to stop a native text/image
+        // selection from starting under a marquee or edit drag), and that also
+        // suppresses the browser's own focus handling - a canceled pointerdown
+        // never produces the mousedown that would focus the wrapper. Without
+        // this the timeline could only be focused with Tab, so every keyboard
+        // shortcut looked dead after clicking it. preventScroll because the
+        // wrapper *is* the scroll container: focusing it normally would scroll
+        // the press out from under the pointer.
+        this.wrapper.focus({ preventScroll: true });
+
         // Touch is reserved for native panning of the wrapper. Remember the
         // press so a quick, stationary touch can be treated as a tap-to-select
         // on release; do not capture or preventDefault so scrolling still works.
@@ -2011,15 +2025,16 @@ export class TimelineEngine {
     // ---- Keyboard interaction (accessibility) ----
     //
     // Arrow Left/Right move a roving focus between allocations in the current
-    // resource row; Up/Down move to the nearest allocation in the adjacent
-    // row; Home/End jump to the first/last in the row. Enter selects the
-    // focused bar (Ctrl/Cmd+Enter or Space toggles it into a multi-selection),
-    // Escape clears the selection. PageUp/PageDown pan the time axis, and
-    // Ctrl/Cmd +/-/0 zoom. When editing is enabled, Alt+Left/Right move the
-    // focused bar, Alt+Up/Down change its resource, Alt+Shift+Left/Right resize
-    // the end edge and Alt+Shift+Up/Down resize the start edge. The focused bar
-    // is scrolled into view and announced through the live region so
-    // screen-reader users can follow along.
+    // resource row - or, with arrowKeyNavigation 'time', pan the axis by a day
+    // (a week with Ctrl/Cmd held) instead. Up/Down move to the nearest
+    // allocation in the adjacent row; Home/End jump to the first/last in the
+    // row. Enter selects the focused bar (Ctrl/Cmd+Enter or Space toggles it
+    // into a multi-selection), Escape clears the selection. PageUp/PageDown pan
+    // the time axis by a viewport, and Ctrl/Cmd +/-/0 zoom. When editing is
+    // enabled, Alt+Left/Right move the focused bar, Alt+Up/Down change its
+    // resource, Alt+Shift+Left/Right resize the end edge and Alt+Shift+Up/Down
+    // resize the start edge. The focused bar is scrolled into view and
+    // announced through the live region so screen-reader users can follow along.
     handleKeyDown(e) {
         if (!this._hasTimeRange()) return;
         const mod = e.ctrlKey || e.metaKey;
@@ -2061,9 +2076,20 @@ export class TimelineEngine {
             }
         }
 
+        // Ctrl/Cmd turns a day step into a week step; in focus mode it is
+        // ignored, as it always has been.
+        const timeNav = this._arrowsPanTime();
+        const arrowStep = mod ? 7 : 1;
+
         switch (key) {
-            case 'ArrowLeft': e.preventDefault(); this._moveFocusHorizontal(-1); break;
-            case 'ArrowRight': e.preventDefault(); this._moveFocusHorizontal(1); break;
+            case 'ArrowLeft':
+                e.preventDefault();
+                if (timeNav) this.panByDays(-arrowStep); else this._moveFocusHorizontal(-1);
+                break;
+            case 'ArrowRight':
+                e.preventDefault();
+                if (timeNav) this.panByDays(arrowStep); else this._moveFocusHorizontal(1);
+                break;
             case 'ArrowUp': e.preventDefault(); this._moveFocusVertical(-1); break;
             case 'ArrowDown': e.preventDefault(); this._moveFocusVertical(1); break;
             case 'Home': e.preventDefault(); this._moveFocusToEdge(-1); break;
@@ -2166,6 +2192,38 @@ export class TimelineEngine {
             this._setVirtualScrollX(target);
             this.render();
         }
+    }
+
+    // Whether the left/right arrow keys pan the time axis rather than moving
+    // the roving bar focus.
+    _arrowsPanTime() {
+        return String(this.config.arrowKeyNavigation || 'focus').toLowerCase() === 'time';
+    }
+
+    // Pans the time axis by whole days (negative moves back), keeping the same
+    // time of day at the left edge: a step is exactly 24 hours rather than a
+    // jump to the next day boundary. Clamped to the timeline's range, so a
+    // press at either end is a no-op. Returns whether the view moved.
+    panByDays(days) {
+        if (!this._hasTimeRange() || !(this._pixelsPerHour > 0) || !days) return false;
+
+        const target = Math.max(
+            0, Math.min(this.scrollX + days * 24 * this._pixelsPerHour, this._virtualScrollMaxX));
+        if (target === this.scrollX) return false;
+
+        this._setVirtualScrollX(target);
+        this.render();
+        this._announceVisibleRange();
+        return true;
+    }
+
+    // Announces where the view has landed after a pan. The bar focus has not
+    // moved, so the time at the leading edge is what changed and what a
+    // screen-reader user needs to hear. Formatting is skipped outright when
+    // there is no live region to hear it.
+    _announceVisibleRange() {
+        if (!this._liveRegion) return;
+        this._announce(this._time.formatDateTime(this.getXToTime(this.config.resourceAxisWidth)));
     }
 
     // Selects the focused bar. additive toggles it within a multi-selection;

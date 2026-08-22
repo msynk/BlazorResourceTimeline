@@ -71,6 +71,32 @@ public class ComponentTests : BunitContext
     }
 
     [Fact]
+    public void Advertises_Week_Step_Only_When_Arrows_Pan_Time()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+
+        var cut = Render<TimelineComponent>(p => p
+            .Add(c => c.Config, SampleConfig())
+            .Add(c => c.Options, new BlazorResourceTimelineOptions()));
+
+        // Focus is the default, and leaves Ctrl+arrows unbound.
+        Assert.DoesNotContain(
+            "Control+ArrowLeft",
+            cut.Find(".timeline-wrapper").GetAttribute("aria-keyshortcuts"));
+
+        cut.Render(p => p
+            .Add(c => c.Config, SampleConfig())
+            .Add(c => c.Options, new BlazorResourceTimelineOptions
+            {
+                ArrowKeyNavigation = BlazorResourceTimelineArrowKeyNavigation.Time,
+            }));
+
+        var shortcuts = cut.Find(".timeline-wrapper").GetAttribute("aria-keyshortcuts");
+        Assert.Contains("Control+ArrowLeft", shortcuts);
+        Assert.Contains("Control+ArrowRight", shortcuts);
+    }
+
+    [Fact]
     public void Windowed_Mode_Requests_Initial_Window_From_Host()
     {
         JSInterop.Mode = JSRuntimeMode.Loose;

@@ -18,7 +18,7 @@ and CI only has to add a `setup-node` step.
 | `allocation-index.test.mjs` | Per-resource index, stacking lanes, incremental re-index on edit |
 | `engine-state.test.mjs` | Resource hierarchy, coordinate mapping, row heights, options, selection |
 | `scene.test.mjs` | Scene building, and the stale state pooled/refilled bar nodes can leak between frames |
-| `view-scroll.test.mjs` | Where the viewport lands on the first load and across reloads, and the "now" indicator's refresh timer |
+| `view-scroll.test.mjs` | Where the viewport lands on the first load and across reloads, the arrow-key day/week panning, and the "now" indicator's refresh timer |
 | `tooltip.test.mjs` | Show delay, subject switching and viewport-edge flipping, against a minimal DOM stub |
 
 `helpers/engine-fixture.mjs` builds an engine on the prototype with only the

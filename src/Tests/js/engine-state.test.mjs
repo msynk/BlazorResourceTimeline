@@ -89,6 +89,22 @@ test('unknown options are rejected instead of silently stored', () => {
     assert.equal(warnings.length, 2);
 });
 
+test('arrowKeyNavigation is accepted in the casing .NET serializes it as', () => {
+    const engine = makeBareEngine();
+    const warnings = [];
+    const realWarn = console.warn;
+    console.warn = (m) => warnings.push(m);
+    try {
+        // JsonStringEnumConverter writes the member name verbatim, so the
+        // engine sees 'Time', not 'time'.
+        engine._applyOptions({ arrowKeyNavigation: 'Time' });
+    } finally {
+        console.warn = realWarn;
+    }
+    assert.deepEqual(warnings, [], 'the option must not be rejected as unknown');
+    assert.equal(engine._arrowsPanTime(), true);
+});
+
 test('null and undefined option values leave the default in place', () => {
     const engine = makeBareEngine();
     engine._applyOptions({ barHeight: null, barMargin: undefined });

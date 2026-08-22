@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `PanByDaysAsync(days)`: steps the view forward or back by whole days at the
+  current zoom, keeping the same time of day at the leading edge. Returns
+  `false` when the view is already against that end of the range.
+- `Options.ArrowKeyNavigation`: with
+  `BlazorResourceTimelineArrowKeyNavigation.Time`, the `←`/`→` keys pan the time
+  axis one day per press and `Ctrl`/`Cmd`+`←`/`→` pan one week, instead of
+  moving the roving focus between bars. Defaults to `Focus`, the previous
+  behavior; every other shortcut is unchanged either way.
+
+### Fixed
+
+- Clicking the timeline now gives it keyboard focus. The press handler cancels
+  the `pointerdown` default action to stop a native selection from starting
+  under a drag, which also suppressed the browser's own focusing, so the
+  timeline could previously only be reached with `Tab` and every keyboard
+  shortcut appeared dead after a click.
+
 ## [0.3.0] - 2026-08-15
 
 ### Added
