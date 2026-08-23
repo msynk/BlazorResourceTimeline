@@ -649,6 +649,25 @@ only while it holds focus.
 | `Alt` + `Shift` + `↑` / `↓` | Resize the focused bar's start edge (editing only) |
 | `Alt` + `↑` / `↓` | Move the focused bar to the previous / next resource (editing only) |
 
+## Mouse and pointer shortcuts
+
+A click or a still tap also focuses the timeline. Mouse and pen share these
+gestures; a moving touch pans natively instead of starting a drag.
+
+| Gesture | Action |
+| --- | --- |
+| Click a bar | Select it (replaces the current selection) |
+| `Ctrl`/`Cmd`-click a bar | Toggle it in the selection |
+| Click empty content or an axis | Clear the selection; `Ctrl`/`Cmd`-click on empty space leaves it |
+| Click a group row | Expand or collapse the group |
+| Click-and-drag | Marquee-select every bar the rectangle covers |
+| `Ctrl`/`Cmd` + drag | Additive marquee (unions with the existing selection) |
+| Right-click | Raise `OnContextMenu` (not on the time axis); does not change the selection |
+| `Ctrl`/`Cmd` + wheel, or pinch | Zoom around the cursor |
+| Wheel, scrollbar, or touch-drag | Pan (native scrolling) |
+| Hover a bar | Show its tooltip |
+| Drag a bar's body / edge | Move / resize it (editing only) |
+
 ## Notable parameters
 
 - `Config` - resources, time window, and allocation bars.
