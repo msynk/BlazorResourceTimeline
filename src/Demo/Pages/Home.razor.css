@@ -113,12 +113,23 @@
 }
 
 .ctl-zoom,
-.ctl-pan {
+.ctl-pan,
+.ctl-view {
     display: flex;
     align-items: center;
     gap: 0.25rem;
     font-size: 0.78rem;
     color: #495057;
+}
+
+.demo-toolbar .ctl-view {
+    font-size: 0.75rem;
+}
+
+.demo-toolbar .btn-step {
+    min-width: auto;
+    padding: 0.15rem 0.4rem;
+    font-size: 0.75rem;
 }
 
 .btn-zoom,
@@ -492,7 +503,8 @@
 
 .demo-page.theme-dark .demo-toolbar label,
 .demo-page.theme-dark .ctl-zoom,
-.demo-page.theme-dark .ctl-pan {
+.demo-page.theme-dark .ctl-pan,
+.demo-page.theme-dark .ctl-view {
     color: #ced4da;
 }
 

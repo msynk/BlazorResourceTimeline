@@ -377,6 +377,78 @@ test('a half-hour zone offsets the UTC row horizontally', () => {
     assert.ok(Math.abs(shift - 20) < 0.001, `expected a 20px shift, got ${shift}`);
 });
 
+// Date-row labels: a 10-character stub so widths are an oracle (7px/char in
+// the fixture) rather than depending on the viewer's locale.
+const DAY_LABEL = 'Mon, Aug 9';
+const DAY_LABEL_W = DAY_LABEL.length * 7;
+const DAY_LABEL_PAD = 6;
+
+function sceneAtScroll(scrollX) {
+    const engine = makeSceneEngine([]);
+    engine._time.formatDate = () => DAY_LABEL;
+    engine.scrollX = scrollX;
+    engine.visibleTimeRange = engine.calculateVisibleTimeRange();
+    return { engine, scene: engine.buildScene() };
+}
+
+test('a day that started off-screen pins its title to the left of the content area', () => {
+    const startX = 150;
+    const { scene } = sceneAtScroll(200);
+    const labeled = scene.days.filter(d => d.label != null);
+    assert.ok(labeled.length >= 1);
+    assert.equal(labeled[0].labelX, startX + DAY_LABEL_PAD);
+});
+
+test('the incoming day title pushes the previous title left instead of stacking on it', () => {
+    // Day 2's midnight is 40px into the content area: closer than the previous
+    // label's width, so the sticky title must slide left rather than sit at
+    // the viewport edge on top of "Mon, Aug 10".
+    const startX = 150;
+    const { engine, scene } = sceneAtScroll(920);
+    const labeled = scene.days.filter(d => d.label != null);
+    assert.ok(labeled.length >= 2, 'both the outgoing and incoming days must still be labeled');
+
+    const outgoing = labeled[0];
+    const incoming = labeled[1];
+    assert.ok(outgoing.labelX < startX + DAY_LABEL_PAD, 'the outgoing title must have been pushed');
+    assert.ok(
+        outgoing.labelX + DAY_LABEL_W <= incoming.labelX,
+        'the two titles must not overlap');
+
+    const day2StartX = engine.getTimeToX(START + 24 * HOUR);
+    assert.ok(Math.abs(incoming.labelX - (day2StartX + DAY_LABEL_PAD)) < 1e-6,
+        'the incoming title sits at its own midnight, not at the viewport edge');
+});
+
+test('a title fully pushed past the left edge is omitted', () => {
+    // Midnight is only a few pixels into the content area - not enough room
+    // for the outgoing label after the incoming one takes its padding.
+    const startX = 150;
+    const { engine, scene } = sceneAtScroll(957);
+    const day2StartX = engine.getTimeToX(START + 24 * HOUR);
+    const wouldBeX = day2StartX - DAY_LABEL_PAD - DAY_LABEL_W;
+    assert.ok(wouldBeX + DAY_LABEL_W <= startX,
+        'fixture: the outgoing title would sit entirely left of the content area');
+
+    const labeled = scene.days.filter(d => d.label != null);
+    assert.ok(
+        !labeled.some(d => Math.abs(d.labelX - wouldBeX) < 1e-6),
+        'a title that has been fully pushed out must not stay in the scene');
+    assert.ok(
+        labeled.some(d => Math.abs(d.labelX - (day2StartX + DAY_LABEL_PAD)) < 1e-6),
+        'the incoming day must still be labeled');
+});
+
+test('adjacent day titles never overlap', () => {
+    const { scene } = sceneAtScroll(400);
+    const labeled = scene.days.filter(d => d.label != null);
+    for (let i = 1; i < labeled.length; i++) {
+        assert.ok(
+            labeled[i - 1].labelX + DAY_LABEL_W <= labeled[i].labelX,
+            `day ${i - 1} overlaps day ${i}`);
+    }
+});
+
 test('UTC ticks do not linger in the scene once the row is turned off', () => {
     const engine = makeSceneEngine([]);
     engine.config.showUtcTime = true;

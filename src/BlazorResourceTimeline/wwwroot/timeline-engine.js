@@ -141,10 +141,6 @@ export class TimelineEngine {
             // How often (ms) the "now" indicator is repainted so it keeps up
             // with the wall clock on an idle timeline. 0 stops the ticking.
             nowLineRefreshMs: 60 * 1000,
-            // What the left/right arrow keys do: 'focus' (default) moves the
-            // roving focus between the bars of the focused row, 'time' pans the
-            // time axis by a day per press (a week with Ctrl/Cmd held).
-            arrowKeyNavigation: 'focus',
             // Editing. When editable, a bar can be dragged to move it in time
             // (and, if allowResourceChange, onto another resource row), or
             // grabbed near an edge to resize its start/end. Moves/resizes snap
@@ -1229,25 +1225,24 @@ export class TimelineEngine {
                 day.sepX = dayStartX;
             }
 
-            // Pin the label within the day's visible span (clamped to the axis
-            // content area). As the next day's boundary approaches, push the
-            // label left so it does not overlap the following day's label.
+            // Sticky-header pinning: sit at the left of the day's visible
+            // span. When the next day's title approaches from the right, this
+            // one is pushed left so the two never overlap, and slides out of
+            // the content area (renderers clip at the resource-axis edge)
+            // rather than stacking on the incoming title.
             const segLeft = Math.max(dayStartX, startX);
             const segRight = Math.min(dayEndX, visibleEndX);
             if (segRight > segLeft) {
                 const label = this._time.formatDate(dayStart);
                 const padding = 6;
                 const textWidth = ctx.measureText(label).width;
-                let labelX = segLeft + padding;
-                // Keep the label inside the day's own span.
-                if (labelX + textWidth > dayEndX - padding) {
-                    labelX = dayEndX - padding - textWidth;
+                const preferredX = segLeft + padding;
+                const pushedX = dayEndX - padding - textWidth;
+                const labelX = Math.min(preferredX, pushedX);
+                if (labelX + textWidth > startX && labelX < visibleEndX) {
+                    day.label = label;
+                    day.labelX = labelX;
                 }
-                if (labelX < segLeft + padding) {
-                    labelX = segLeft + padding;
-                }
-                day.label = label;
-                day.labelX = labelX;
             }
 
             if (day.sepX != null || day.label != null) scene.days.push(day);
@@ -2025,16 +2020,16 @@ export class TimelineEngine {
     // ---- Keyboard interaction (accessibility) ----
     //
     // Arrow Left/Right move a roving focus between allocations in the current
-    // resource row - or, with arrowKeyNavigation 'time', pan the axis by a day
-    // (a week with Ctrl/Cmd held) instead. Up/Down move to the nearest
-    // allocation in the adjacent row; Home/End jump to the first/last in the
-    // row. Enter selects the focused bar (Ctrl/Cmd+Enter or Space toggles it
-    // into a multi-selection), Escape clears the selection. PageUp/PageDown pan
-    // the time axis by a viewport, and Ctrl/Cmd +/-/0 zoom. When editing is
-    // enabled, Alt+Left/Right move the focused bar, Alt+Up/Down change its
-    // resource, Alt+Shift+Left/Right resize the end edge and Alt+Shift+Up/Down
-    // resize the start edge. The focused bar is scrolled into view and
-    // announced through the live region so screen-reader users can follow along.
+    // resource row. Up/Down move to the nearest allocation in the adjacent
+    // row; Home/End jump to the first/last in the row. Enter selects the
+    // focused bar (Ctrl/Cmd+Enter or Space toggles it into a multi-selection),
+    // Escape clears the selection. PageUp/PageDown pan the time axis by a
+    // viewport, and Ctrl/Cmd +/-/0 zoom. When editing is enabled, Alt+Left/
+    // Right move the focused bar, Alt+Up/Down change its resource, Alt+Shift+
+    // Left/Right resize the end edge and Alt+Shift+Up/Down resize the start
+    // edge. The focused bar is scrolled into view and announced through the
+    // live region so screen-reader users can follow along. Day/week panning
+    // is left to the host via panByDays.
     handleKeyDown(e) {
         if (!this._hasTimeRange()) return;
         const mod = e.ctrlKey || e.metaKey;
@@ -2076,19 +2071,14 @@ export class TimelineEngine {
             }
         }
 
-        // Ctrl/Cmd turns a day step into a week step; in focus mode it is
-        // ignored, as it always has been.
-        const timeNav = this._arrowsPanTime();
-        const arrowStep = mod ? 7 : 1;
-
         switch (key) {
             case 'ArrowLeft':
                 e.preventDefault();
-                if (timeNav) this.panByDays(-arrowStep); else this._moveFocusHorizontal(-1);
+                this._moveFocusHorizontal(-1);
                 break;
             case 'ArrowRight':
                 e.preventDefault();
-                if (timeNav) this.panByDays(arrowStep); else this._moveFocusHorizontal(1);
+                this._moveFocusHorizontal(1);
                 break;
             case 'ArrowUp': e.preventDefault(); this._moveFocusVertical(-1); break;
             case 'ArrowDown': e.preventDefault(); this._moveFocusVertical(1); break;
@@ -2192,12 +2182,6 @@ export class TimelineEngine {
             this._setVirtualScrollX(target);
             this.render();
         }
-    }
-
-    // Whether the left/right arrow keys pan the time axis rather than moving
-    // the roving bar focus.
-    _arrowsPanTime() {
-        return String(this.config.arrowKeyNavigation || 'focus').toLowerCase() === 'time';
     }
 
     // Pans the time axis by whole days (negative moves back), keeping the same
@@ -3443,6 +3427,16 @@ export class TimelineEngine {
 
     zoomIn(anchorCanvasX) { return this.zoomBy(1.5, anchorCanvasX); }
     zoomOut(anchorCanvasX) { return this.zoomBy(1 / 1.5, anchorCanvasX); }
+
+    // Zooms so exactly `days` days fill the content area (the viewport minus
+    // the resource axis), keeping the time under the given surface x (or the
+    // viewport center) fixed. The resulting scale is clamped to the configured
+    // min/max. days that are not a finite positive number are a no-op.
+    zoomToDays(days, anchorCanvasX) {
+        if (!(days > 0) || !Number.isFinite(days)) return this._pixelsPerHour;
+        this._applyZoom(this._visibleWidth / (days * 24), anchorCanvasX);
+        return this._pixelsPerHour;
+    }
 
     // Returns to auto/config scale.
     resetZoom() {

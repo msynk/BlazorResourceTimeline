@@ -29,14 +29,15 @@ lot of data must stay readable and interactive.
   runtime.
 - **Zoom** from a multi-day overview down to hour-level detail
   (`Ctrl`/`Cmd` + mouse wheel, trackpad pinch, or the programmatic API), with
-  adaptive tick/label density.
+  adaptive tick/label density. `ZoomToDaysAsync(days)` fits a given number of
+  days into the current viewport.
 - **Viewport control**: open with the current time centered
   (`Options.AutoScrollToNow`), keep the view where it was across a data reload
   (`Options.PreserveScrollOnReload`), and set how often the "now" line catches
   up with the wall clock (`Options.NowLineRefreshMs`).
 - **Day/week navigation**: step the view a day at a time - or a week - with
-  `PanByDaysAsync()`, and optionally put the same steps on the arrow keys
-  (`Options.ArrowKeyNavigation`).
+  `PanByDaysAsync()`. Hosts can put the same steps on their own keyboard
+  shortcuts.
 - **Selection**: click, `Ctrl`/`Cmd`-click to toggle, and click-and-drag
   marquee selection.
 - **Editing** (opt-in): drag a bar to move it in time (or onto another
@@ -255,32 +256,39 @@ planner can be walked day by day (or week by week, with `7`) from your own
 toolbar:
 
 ```razor
-<button @onclick="() => _timeline.PanByDaysAsync(-1)">&lsaquo; Day</button>
-<button @onclick="() => _timeline.PanByDaysAsync(1)">Day &rsaquo;</button>
-<button @onclick="() => _timeline.PanByDaysAsync(7)">Week &raquo;</button>
+<button title="Back one day (←)" @onclick="() => _timeline.PanByDaysAsync(-1)">&lsaquo; Day</button>
+<button title="Forward one day (→)" @onclick="() => _timeline.PanByDaysAsync(1)">Day &rsaquo;</button>
+<button title="Forward one week (Ctrl+→)" @onclick="() => _timeline.PanByDaysAsync(7)">Week &raquo;</button>
 
 <BlazorResourceTimeline @ref="_timeline" Config="_config" Options="_options" />
 ```
 
-The same steps can be put on the keyboard with `Options.ArrowKeyNavigation`:
+The component does not bind these steps to the arrow keys itself: `←`/`→`
+always move the roving bar focus. Wire the same `PanByDaysAsync` calls from
+your own page-level key handler if you want `←`/`→` to step a day and
+`Ctrl`/`Cmd`+`←`/`→` a week. A pan is clamped to the timeline's range, so a
+press at either end does nothing, and the new leading time is announced
+through the live region.
+
+### Fitting a number of days into the viewport
+
+`ZoomToDaysAsync(days)` sets the horizontal scale so exactly that many days
+fill the content area (the viewport minus the resource axis), keeping the
+time under the center where it is. Useful when a planner should open - or
+switch - to a one-day, three-day or week view without the host computing
+pixels-per-hour from the layout:
 
 ```razor
-@code {
-    private BlazorResourceTimelineOptions _options = new()
-    {
-        // ← / → pan one day, Ctrl/Cmd + ← / → pan one week
-        ArrowKeyNavigation = BlazorResourceTimelineArrowKeyNavigation.Time,
-    };
-}
+<button @onclick="() => _timeline.ZoomToDaysAsync(1)">1 day</button>
+<button @onclick="() => _timeline.ZoomToDaysAsync(3)">3 days</button>
+<button @onclick="() => _timeline.ZoomToDaysAsync(7)">7 days</button>
+
+<BlazorResourceTimeline @ref="_timeline" Config="_config" Options="_options" />
 ```
 
-It defaults to `Focus`, where `←`/`→` move the roving focus between the bars of
-the focused row and `PageUp`/`PageDown` are what pan the axis. Switching to
-`Time` swaps only that pair of keys: `↑`/`↓` still move between rows,
-`Home`/`End` still jump to the first/last bar in a row, and the editing
-shortcuts (`Alt`+arrows) are unaffected. A pan is clamped to the timeline's
-range, so a press at either end does nothing, and the new leading time is
-announced through the live region.
+The resulting scale is clamped to `Options.MinPixelsPerHour` /
+`Options.MaxPixelsPerHour`. A non-positive or non-finite value is ignored
+and the current scale is returned.
 
 ### Dual time rows (UTC)
 
@@ -613,6 +621,7 @@ Capture the component with `@ref` to drive it from code:
 | `ScrollToTimeAsync(unixMs)` | Centers the given time in view. |
 | `PanByDaysAsync(days)` | Steps the view forward (or back) by whole days at the current zoom; pass `±7` for a week. `false` when already at that end of the range. |
 | `ZoomInAsync()` / `ZoomOutAsync()` | Zoom around the viewport center. |
+| `ZoomToDaysAsync(days)` | Zooms so exactly that many days fill the current viewport, keeping the center time fixed. |
 | `SetPixelsPerHourAsync(value?)` | Sets an explicit scale, or `null` for auto. |
 | `ResetZoomAsync()` | Returns to the auto/config scale. |
 | `GetPixelsPerHourAsync()` | Current horizontal scale. |
@@ -634,10 +643,6 @@ Capture the component with `@ref` to drive it from code:
 | `Alt` + `Shift` + `↑` / `↓` | Resize the focused bar's start edge (editing only) |
 | `Alt` + `↑` / `↓` | Move the focused bar to the previous / next resource (editing only) |
 
-With `Options.ArrowKeyNavigation = BlazorResourceTimelineArrowKeyNavigation.Time`,
-`←`/`→` pan the axis one day instead of moving between bars, and `Ctrl`/`Cmd` +
-`←`/`→` pan one week. Every other row in the table is unchanged.
-
 ## Notable parameters
 
 - `Config` - resources, time window, and allocation bars.
@@ -658,8 +663,11 @@ With `Options.ArrowKeyNavigation = BlazorResourceTimelineArrowKeyNavigation.Time
 
 `src/Demo` is a Blazor WebAssembly playground for everything above: dataset size
 (7 to 365 days), renderer, bar height and margin, editing, on-demand loading, the
-custom resource column, time zone, zoom, and a light/dark theme toggle - plus a
-live view of the selection, the last edit and the last context-menu action.
+custom resource column, time zone, zoom (including 1 / 3 / 7-day viewport
+presets), and a light/dark theme toggle - plus a live view of the selection, the
+last edit and the last context-menu action. The demo wires `←`/`→` (and
+`Ctrl`/`Cmd`+arrows for a week) to `PanByDaysAsync` itself; those shortcuts are
+not part of the component.
 
 ```bash
 dotnet run --project src/Demo

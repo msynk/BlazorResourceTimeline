@@ -44,18 +44,23 @@ export class SvgRenderer {
         const id = ++instanceCounter;
         this._contentClipId = `brt-svg-content-clip-${id}`;
         this._axisClipId = `brt-svg-axis-clip-${id}`;
+        this._timeAxisClipId = `brt-svg-time-axis-clip-${id}`;
 
-        // Persistent structure: <defs> with the two clip paths, then one group
+        // Persistent structure: <defs> with the clip paths, then one group
         // per layer in paint order, each backed by a pool.
         this._contentClipRect = el('rect');
         this._axisClipRect = el('rect');
+        this._timeAxisClipRect = el('rect');
         const defs = el('defs');
         const contentClip = el('clipPath', { id: this._contentClipId });
         contentClip.appendChild(this._contentClipRect);
         const axisClip = el('clipPath', { id: this._axisClipId });
         axisClip.appendChild(this._axisClipRect);
+        const timeAxisClip = el('clipPath', { id: this._timeAxisClipId });
+        timeAxisClip.appendChild(this._timeAxisClipRect);
         defs.appendChild(contentClip);
         defs.appendChild(axisClip);
+        defs.appendChild(timeAxisClip);
         this.surface.appendChild(defs);
 
         const group = (attrs) => {
@@ -68,6 +73,8 @@ export class SvgRenderer {
         this._barsGroup = group();
         this._nowGroup = group();
         this._timeAxisGroup = group();
+        this._timeAxisLabelGroup = el('g', { 'clip-path': `url(#${this._timeAxisClipId})` });
+        this._timeAxisGroup.appendChild(this._timeAxisLabelGroup);
         this._resourceAxisGroup = group();
         this._resourceLabelGroup = group({ 'clip-path': `url(#${this._axisClipId})` });
         this._overlayGroup = group({ 'clip-path': `url(#${this._contentClipId})` });
@@ -95,7 +102,7 @@ export class SvgRenderer {
             now: pool(this._nowGroup),
             axisBg: pool(this._timeAxisGroup),
             axisLines: pool(this._timeAxisGroup),
-            axisDayLabels: pool(this._timeAxisGroup),
+            axisDayLabels: pool(this._timeAxisLabelGroup),
             axisTicks: pool(this._timeAxisGroup),
             axisTickLabels: pool(this._timeAxisGroup),
             resourceAxis: pool(this._resourceAxisGroup),
@@ -128,6 +135,13 @@ export class SvgRenderer {
             x: 0, y: v.axisHeight,
             width: Math.max(0, v.axisWidth - 1),
             height: Math.max(0, v.height - v.axisHeight)
+        });
+        // Time-axis clip: a pushed-out day title can sit left of the content
+        // area; clip so it slides behind the resource column.
+        applyAttrs(this._timeAxisClipRect, {
+            x: v.axisWidth, y: 0,
+            width: Math.max(0, v.width - v.axisWidth),
+            height: Math.max(0, v.dateRowHeight)
         });
 
         for (const key in this._pools) this._pools[key].begin();

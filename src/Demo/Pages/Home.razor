@@ -1,6 +1,7 @@
 ﻿@page "/"
 @using global::BlazorResourceTimeline
 @using global::BlazorResourceTimeline.Demo.Data
+@implements IAsyncDisposable
 @inject IJSRuntime JS
 
 <PageTitle>Resource Timeline</PageTitle>
@@ -12,18 +13,18 @@
         <div class="demo-titlebar">
             <h1>Resource Timeline</h1>
             <div class="demo-actions">
-                @* PanByDaysAsync is the same movement the arrow keys make, so
-                   these buttons and the keyboard shortcuts stay in step. *@
+                @* PanByDaysAsync is the same movement the page-level arrow
+                   keys make, so these buttons and the shortcuts stay in step. *@
                 <span class="ctl-pan">
                     Pan
                     <button class="btn-step" @onclick="() => PanAsync(-7)"
-                            title="Back one week (Ctrl+&larr;)" aria-label="Back one week">&laquo;</button>
+                            title="Back one week (Ctrl+←)" aria-label="Back one week">&laquo;</button>
                     <button class="btn-step" @onclick="() => PanAsync(-1)"
-                            title="Back one day (&larr;)" aria-label="Back one day">&lsaquo;</button>
+                            title="Back one day (←)" aria-label="Back one day">&lsaquo;</button>
                     <button class="btn-step" @onclick="() => PanAsync(1)"
-                            title="Forward one day (&rarr;)" aria-label="Forward one day">&rsaquo;</button>
+                            title="Forward one day (→)" aria-label="Forward one day">&rsaquo;</button>
                     <button class="btn-step" @onclick="() => PanAsync(7)"
-                            title="Forward one week (Ctrl+&rarr;)" aria-label="Forward one week">&raquo;</button>
+                            title="Forward one week (Ctrl+→)" aria-label="Forward one week">&raquo;</button>
                 </span>
                 <span class="ctl-zoom">
                     Zoom
@@ -60,6 +61,21 @@
                     <input type="checkbox" @bind="_windowed" @bind:after="ToggleWindowed" />
                     On-demand
                 </label>
+            </div>
+
+            <div class="ctl-group">
+                @* ZoomToDaysAsync fits this many days into the content area
+                   (the viewport minus the resource axis), leaving the time
+                   under the center where it is. *@
+                <span class="ctl-view" title="ZoomToDaysAsync: fit this many days into the current viewport">
+                    Days in view
+                    <button class="btn-step" @onclick="() => ZoomToDaysAsync(1)"
+                            title="Fit one day in the viewport">1 day</button>
+                    <button class="btn-step" @onclick="() => ZoomToDaysAsync(3)"
+                            title="Fit three days in the viewport">3 days</button>
+                    <button class="btn-step" @onclick="() => ZoomToDaysAsync(7)"
+                            title="Fit seven days in the viewport">7 days</button>
+                </span>
             </div>
 
             <div class="ctl-group">
@@ -130,10 +146,6 @@
                     <input type="checkbox" @bind="_preserveScroll" @bind:after="ApplyOptions" />
                     Keep view
                 </label>
-                <label class="ctl-check" title="Options.ArrowKeyNavigation: make the arrow keys step the view a day at a time (a week with Ctrl/Cmd) instead of moving focus between bars. Click the timeline first so it has keyboard focus.">
-                    <input type="checkbox" @bind="_arrowKeysPanTime" @bind:after="ApplyOptions" />
-                    Arrows pan time
-                </label>
                 <label title="Options.NowLineRefreshMs: how often the red now line catches up with the clock">
                     Now line
                     <select @bind="_nowRefreshMs" @bind:after="ApplyOptions">
@@ -151,18 +163,8 @@
         <span><strong>@LeafResourceCount</strong> resources</span>
         <span><strong>@(_config?.Allocations.Count ?? 0)</strong> allocations</span>
         <span><strong>@_days</strong> days</span>
-        @* Spells out what the arrow keys currently do, so the effect of the
-           "Arrows pan time" toggle is visible before touching the keyboard. *@
-        <span class="demo-keys" title="Click the timeline to give it keyboard focus first">
-            Click the timeline, then
-            @if (_arrowKeysPanTime)
-            {
-                <text><kbd>&larr;</kbd>/<kbd>&rarr;</kbd> pans a day, <kbd>Ctrl</kbd>+<kbd>&larr;</kbd>/<kbd>&rarr;</kbd> a week</text>
-            }
-            else
-            {
-                <text><kbd>&larr;</kbd>/<kbd>&rarr;</kbd> moves between bars</text>
-            }
+        <span class="demo-keys" title="Click the timeline to give it focus and use the arrows to move between bars instead">
+            <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> pans a day, <kbd>Ctrl</kbd>+<kbd>&larr;</kbd>/<kbd>&rarr;</kbd> a week
         </span>
         @if (_lastEdit is not null)
         {
@@ -303,7 +305,7 @@
     private BlazorResourceTimeline? _timeline;
     private BlazorResourceTimelineConfig? _config;
     private IReadOnlyList<BlazorResourceTimelineAllocation> _selectedBars = Array.Empty<BlazorResourceTimelineAllocation>();
-    private int _days = 7;
+    private int _days = 30;
     private int _barHeight = 4;
     private int _barMargin = 2;
     private string _renderer = "canvas";
@@ -316,10 +318,8 @@
     private bool _darkTheme;
     private bool _autoScrollToNow = true;
     private bool _preserveScroll = true;
-    // On by default here so the day/week shortcuts work as soon as the page
-    // loads; the library itself defaults to bar-focus arrows.
-    private bool _arrowKeysPanTime = true;
     private int _nowRefreshMs = 60000;
+    private DotNetObjectReference<Home>? _selfRef;
     private string? _lastEdit;
 
     // Right-click state: the args of the open context menu (null when closed)
@@ -465,6 +465,15 @@
             // Resolve the system scheme here (JS is guaranteed ready) and sync
             // both the page class and the document data-theme together.
             await InitializeThemeFromSystemAsync();
+            _selfRef = DotNetObjectReference.Create(this);
+            try
+            {
+                await JS.InvokeVoidAsync("registerDemoPanKeys", _selfRef);
+            }
+            catch
+            {
+                // Demo-only helper; ignore if the host page omitted it.
+            }
         }
 
         // Focus the freshly opened menu so Escape (and tabbing to the items)
@@ -561,6 +570,24 @@
         }
     }
 
+    [JSInvokable]
+    public Task PanFromKeyboard(int days) => PanAsync(days);
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("unregisterDemoPanKeys");
+        }
+        catch
+        {
+            // Page is tearing down; the listener is gone with the document.
+        }
+        _selfRef?.Dispose();
+        _generationCts?.Cancel();
+        _generationCts?.Dispose();
+    }
+
     private async Task ZoomInAsync()
     {
         if (_timeline is not null)
@@ -582,6 +609,14 @@
         if (_timeline is not null)
         {
             await _timeline.ResetZoomAsync();
+        }
+    }
+
+    private async Task ZoomToDaysAsync(double days)
+    {
+        if (_timeline is not null)
+        {
+            await _timeline.ZoomToDaysAsync(days);
         }
     }
 
@@ -647,9 +682,6 @@
         AutoScrollToNow = _autoScrollToNow,
         PreserveScrollOnReload = _preserveScroll,
         NowLineRefreshMs = _nowRefreshMs,
-        ArrowKeyNavigation = _arrowKeysPanTime
-            ? BlazorResourceTimelineArrowKeyNavigation.Time
-            : BlazorResourceTimelineArrowKeyNavigation.Focus,
         Editable = _editable,
         BarHeight = _barHeight,
         BarMargin = _barMargin,

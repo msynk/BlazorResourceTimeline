@@ -11,12 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `PanByDaysAsync(days)`: steps the view forward or back by whole days at the
   current zoom, keeping the same time of day at the leading edge. Returns
-  `false` when the view is already against that end of the range.
-- `Options.ArrowKeyNavigation`: with
-  `BlazorResourceTimelineArrowKeyNavigation.Time`, the `←`/`→` keys pan the time
-  axis one day per press and `Ctrl`/`Cmd`+`←`/`→` pan one week, instead of
-  moving the roving focus between bars. Defaults to `Focus`, the previous
-  behavior; every other shortcut is unchanged either way.
+  `false` when the view is already against that end of the range. Hosts that
+  want keyboard day/week steps call this from their own key handler.
+- `ZoomToDaysAsync(days)`: zooms so exactly that many days fill the current
+  viewport, keeping the time under the center fixed. The resulting scale is
+  clamped to `MinPixelsPerHour` / `MaxPixelsPerHour`. Returns the new scale in
+  pixels per hour.
 
 ### Fixed
 
@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under a drag, which also suppressed the browser's own focusing, so the
   timeline could previously only be reached with `Tab` and every keyboard
   shortcut appeared dead after a click.
+- Day titles on the time axis no longer stack when a midnight scrolls into
+  view. The incoming day's label pushes the previous title left, and it
+  slides out of the viewport instead of drawing on top of the new one.
 
 ## [0.3.0] - 2026-08-15
 

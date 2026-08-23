@@ -295,11 +295,18 @@ export class CanvasRenderer {
         ctx.textBaseline = 'middle';
         ctx.textAlign = 'left';
         ctx.fillStyle = colors.dateLabel;
+        // A pushed-out day title can sit left of the content area; clip so it
+        // slides behind the resource column instead of painting over it.
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(startX, 0, visibleEndX - startX, dateRowHeight);
+        ctx.clip();
         for (const day of scene.days) {
             if (day.label != null) {
                 ctx.fillText(day.label, day.labelX, day.labelY);
             }
         }
+        ctx.restore();
 
         // Hour row(s): ticks batched into one stroke, then the hour-of-day
         // labels. The optional UTC row is drawn exactly like the zone row, with

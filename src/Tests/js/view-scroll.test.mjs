@@ -1,7 +1,7 @@
 // Where the viewport lands across data loads: the first-load centering on
 // "now" (autoScrollToNow), keeping the view across a reload
-// (preserveScrollOnReload), and the "now" indicator's refresh timer. Plus the
-// day/week steps the arrow keys make under arrowKeyNavigation 'time'.
+// (preserveScrollOnReload), the "now" indicator's refresh timer, and the
+// day/week steps panByDays makes.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -71,26 +71,46 @@ function leadTime(engine) {
     return engine.getXToTime(engine.config.resourceAxisWidth);
 }
 
-test('an arrow key steps the view exactly one day when the arrows pan time', () => {
-    const engine = makePannableEngine(30, { arrowKeyNavigation: 'time' });
+// Visible duration of the content area, in days: the quantity zoomToDays sets.
+function visibleDays(engine) {
+    return engine._visibleWidth / (engine._pixelsPerHour * 24);
+}
+
+// A zoomable engine: _applyZoom's relayout path is stubbed to the scale +
+// scroll-extent math without a renderer or spacer element.
+function makeZoomableEngine(days) {
+    const engine = makePannableEngine(days);
+    engine._relayout = function () {
+        this._updateScale();
+        const virtualWidth =
+            this.config.resourceAxisWidth
+            + (this.timeRange.end - this.timeRange.start) * this._pixelsPerMs;
+        this._virtualScrollMaxX = Math.max(0, virtualWidth - this._viewportW);
+    };
+    engine._scheduleWindowCheck = () => { };
+    return engine;
+}
+
+test('an arrow key steps the view exactly one day via panByDays', () => {
+    const engine = makePannableEngine(30);
     const before = leadTime(engine);
 
-    engine.handleKeyDown(keyEvent('ArrowRight'));
+    engine.panByDays(1);
 
     assert.ok(Math.abs(leadTime(engine) - (before + 24 * HOUR)) < 1);
 });
 
-test('Ctrl turns the arrow-key day step into a week', () => {
-    const engine = makePannableEngine(30, { arrowKeyNavigation: 'time' });
+test('a week step is seven day steps', () => {
+    const engine = makePannableEngine(30);
     const before = leadTime(engine);
 
-    engine.handleKeyDown(keyEvent('ArrowRight', { ctrl: true }));
+    engine.panByDays(7);
 
     assert.ok(Math.abs(leadTime(engine) - (before + 7 * 24 * HOUR)) < 1);
 });
 
 test('a day step back returns to where a step forward started', () => {
-    const engine = makePannableEngine(30, { arrowKeyNavigation: 'time' });
+    const engine = makePannableEngine(30);
     engine._setVirtualScrollX(5000);
     const before = engine.scrollX;
 
@@ -100,7 +120,7 @@ test('a day step back returns to where a step forward started', () => {
     assert.equal(engine.scrollX, before);
 });
 
-test('the arrow keys still move the bar focus by default', () => {
+test('the arrow keys move the bar focus and leave the time axis alone', () => {
     const engine = makePannableEngine(30);
     let moves = 0;
     engine._moveFocusHorizontal = () => { moves++; };
@@ -108,11 +128,11 @@ test('the arrow keys still move the bar focus by default', () => {
     engine.handleKeyDown(keyEvent('ArrowRight'));
 
     assert.equal(moves, 1);
-    assert.equal(engine.scrollX, 0, 'focus mode must leave the time axis alone');
+    assert.equal(engine.scrollX, 0, 'arrow keys must leave the time axis alone');
 });
 
 test('a pan is clamped to the range and reports that it went nowhere', () => {
-    const engine = makePannableEngine(30, { arrowKeyNavigation: 'time' });
+    const engine = makePannableEngine(30);
     engine._setVirtualScrollX(engine._virtualScrollMaxX);
 
     assert.equal(engine.panByDays(1), false);
@@ -120,12 +140,63 @@ test('a pan is clamped to the range and reports that it went nowhere', () => {
 });
 
 test('a pan does not change the horizontal scale', () => {
-    const engine = makePannableEngine(30, { arrowKeyNavigation: 'time' });
+    const engine = makePannableEngine(30);
     const scale = engine._pixelsPerHour;
 
     engine.panByDays(7);
 
     assert.equal(engine._pixelsPerHour, scale);
+});
+
+test('zoomToDays fits exactly that many days into the content area', () => {
+    const engine = makeZoomableEngine(30);
+    engine._setVirtualScrollX(2000);
+    const center = engine.getXToTime(contentCenterX(engine));
+
+    engine.zoomToDays(3);
+
+    assert.ok(Math.abs(visibleDays(engine) - 3) < 1e-9);
+    assert.ok(
+        Math.abs(engine.getXToTime(contentCenterX(engine)) - center) < 1,
+        'the time under the viewport center must stay put');
+});
+
+test('zoomToDays(1) is one day in the viewport', () => {
+    const engine = makeZoomableEngine(30);
+
+    engine.zoomToDays(1);
+
+    assert.ok(Math.abs(visibleDays(engine) - 1) < 1e-9);
+});
+
+test('zoomToDays(7) is a week in the viewport', () => {
+    const engine = makeZoomableEngine(30);
+
+    engine.zoomToDays(7);
+
+    assert.ok(Math.abs(visibleDays(engine) - 7) < 1e-9);
+});
+
+test('zoomToDays ignores a non-positive span and leaves the scale alone', () => {
+    const engine = makeZoomableEngine(30);
+    const scale = engine._pixelsPerHour;
+
+    assert.equal(engine.zoomToDays(0), scale);
+    assert.equal(engine.zoomToDays(-3), scale);
+    assert.equal(engine.zoomToDays(Number.NaN), scale);
+    assert.equal(engine._pixelsPerHour, scale);
+});
+
+test('zoomToDays clamps to the configured min and max scale', () => {
+    const engine = makeZoomableEngine(30);
+    engine.config.minPixelsPerHour = 10;
+    engine.config.maxPixelsPerHour = 20;
+
+    engine.zoomToDays(1);
+    assert.equal(engine._pixelsPerHour, 20, 'a one-day fit is tighter than the max');
+
+    engine.zoomToDays(100);
+    assert.equal(engine._pixelsPerHour, 10, 'a hundred-day fit is looser than the min');
 });
 
 test('the first load centers "now" in the content area when autoScrollToNow is set', () => {

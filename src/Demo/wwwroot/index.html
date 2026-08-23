@@ -38,6 +38,37 @@
             document.documentElement.setAttribute('data-theme', theme);
         };
         window.setDemoTheme(window.getPreferredDemoTheme());
+
+        // Page-level day/week panning. The component exposes PanByDaysAsync
+        // but does not bind those keys itself, so the demo owns them - except
+        // when the timeline is focused, in which case its bar-focus arrows
+        // take priority and this handler stands aside.
+        window.registerDemoPanKeys = function (dotNetRef) {
+            window.unregisterDemoPanKeys();
+            window._demoPanKeys = {
+                ref: dotNetRef,
+                handler: function (e) {
+                    if (e.altKey || e.shiftKey) return;
+                    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                    const target = e.target;
+                    if (target && target.closest &&
+                        target.closest('input, select, textarea, [contenteditable="true"], .ctx-menu, .timeline-wrapper')) {
+                        return;
+                    }
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const days = (e.ctrlKey || e.metaKey) ? 7 : 1;
+                    const dir = e.key === 'ArrowLeft' ? -days : days;
+                    window._demoPanKeys.ref.invokeMethodAsync('PanFromKeyboard', dir);
+                }
+            };
+            document.addEventListener('keydown', window._demoPanKeys.handler, true);
+        };
+        window.unregisterDemoPanKeys = function () {
+            if (!window._demoPanKeys) return;
+            document.removeEventListener('keydown', window._demoPanKeys.handler, true);
+            window._demoPanKeys = null;
+        };
     </script>
     <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
 </body>
