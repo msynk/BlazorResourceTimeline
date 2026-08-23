@@ -14,7 +14,7 @@ built for dense, glanceable planning boards - flight/gate planning, train
 scheduling, fleet and crew rostering, and similar transport use-cases - where a
 lot of data must stay readable and interactive.
 
-![BlazorResourceTimeline](https://raw.githubusercontent.com/msynk/BlazorResourceTimeline/main/docs/screenshot-0.3.0.png)
+![BlazorResourceTimeline](https://raw.githubusercontent.com/msynk/BlazorResourceTimeline/main/docs/screenshot-0.4.0.png)
 
 <sub>The demo in its dark theme: 68 resources and ~3,300 allocations on the canvas renderer.</sub>
 
@@ -59,12 +59,14 @@ lot of data must stay readable and interactive.
   refetches as the user scrolls/zooms.
 - **Resource-column template**: replace the renderer-drawn resource labels with a
   rich, interactive HTML template per row (badges, links, avatars, …).
-- **Keyboard & screen-reader accessible**: focusable region with `role`/
-  `aria-label`, arrow-key bar navigation, keyboard selection, and live-region
-  announcements.
+- **Keyboard & screen-reader accessible**: a click (or Tab) focuses the region
+  (`role`/`aria-label`); arrow keys then move between bars, with keyboard
+  selection, editing, and live-region announcements.
 - **Time-zone-aware axes** (IANA ids via `Intl`), correct across DST, with an
   optional `Locale` for day labels, tooltips and announcements, and an optional
-  second hour row in UTC (`Options.ShowUtcTime`) above the local one.
+  second hour row in UTC (`Options.ShowUtcTime`) above the local one. Day titles
+  pin to the leading edge of their day and yield as the next midnight scrolls
+  in, so they never stack.
 - **Touch & pen** support via Pointer Events.
 - **Streaming data load** for very large datasets (batched interop instead of
   one giant payload).
@@ -266,9 +268,10 @@ toolbar:
 The component does not bind these steps to the arrow keys itself: `←`/`→`
 always move the roving bar focus. Wire the same `PanByDaysAsync` calls from
 your own page-level key handler if you want `←`/`→` to step a day and
-`Ctrl`/`Cmd`+`←`/`→` a week. A pan is clamped to the timeline's range, so a
-press at either end does nothing, and the new leading time is announced
-through the live region.
+`Ctrl`/`Cmd`+`←`/`→` a week, and ignore those keys while the timeline holds
+focus so a click still hands the arrows to bar navigation. A pan is clamped
+to the timeline's range, so a press at either end does nothing, and the new
+leading time is announced through the live region.
 
 ### Fitting a number of days into the viewport
 
@@ -628,6 +631,9 @@ Capture the component with `@ref` to drive it from code:
 
 ## Keyboard shortcuts
 
+Click the timeline, or Tab to it, to give it keyboard focus. Shortcuts apply
+only while it holds focus.
+
 | Key | Action |
 | --- | --- |
 | `←` / `→` | Move between allocations in the focused row |
@@ -666,8 +672,9 @@ Capture the component with `@ref` to drive it from code:
 custom resource column, time zone, zoom (including 1 / 3 / 7-day viewport
 presets), and a light/dark theme toggle - plus a live view of the selection, the
 last edit and the last context-menu action. The demo wires `←`/`→` (and
-`Ctrl`/`Cmd`+arrows for a week) to `PanByDaysAsync` itself; those shortcuts are
-not part of the component.
+`Ctrl`/`Cmd`+arrows for a week) to `PanByDaysAsync` itself while the timeline
+is unfocused; those shortcuts are not part of the component. Click the
+timeline and the same keys move between bars instead.
 
 ```bash
 dotnet run --project src/Demo
