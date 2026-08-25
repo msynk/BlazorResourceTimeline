@@ -1,5 +1,7 @@
 using Bunit;
 using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.JSInterop;
 using TimelineComponent = global::BlazorResourceTimeline.BlazorResourceTimeline;
 
 namespace BlazorResourceTimeline.Tests;
@@ -135,5 +137,160 @@ public class ComponentTests : BunitContext
         // should let DisposeAsync complete without throwing.
         var exception = Record.Exception(Dispose);
         Assert.Null(exception);
+    }
+
+    [Fact]
+    public async Task Initialization_Interrupted_By_Disposal_Marshals_Nothing_And_Leaks_Nothing()
+    {
+        // The real runtime is used here (bUnit's mock cannot hold a module import
+        // open) so the component is torn down between importing the engine and
+        // creating the renderer against it.
+        var runtime = new PausedImportJSRuntime();
+        Services.AddSingleton<IJSRuntime>(runtime);
+
+        var cut = Render<TimelineComponent>(p => p.Add(c => c.Config, SampleConfig()));
+        await WaitUntil(() => runtime.Invocations.Contains("import"));
+
+        await DisposeAsync(cut);
+        runtime.CompleteImport();
+
+        // The engine is created with a DotNetObjectReference to the component, so
+        // resuming into createTimeline after disposal cannot work - the reference is
+        // already gone. Initialization has to stop there, and release the module that
+        // arrived too late for DisposeAsync to see.
+        await WaitUntil(() => runtime.ModuleReleased || runtime.Invocations.Contains("createTimeline"));
+        Assert.Null(runtime.MarshallingFailure);
+        Assert.DoesNotContain("createTimeline", runtime.Invocations);
+        Assert.True(runtime.ModuleReleased, "The module imported after disposal was leaked.");
+    }
+
+    [Fact]
+    public async Task Load_In_Flight_Stops_When_Disposed()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        // Hold the initial load inside JS so disposal lands in the middle of it.
+        var setData = JSInterop.SetupVoid("setData", _ => true);
+
+        var cut = Render<TimelineComponent>(p => p.Add(c => c.Config, SampleConfig()));
+        await WaitUntil(() => setData.Invocations.Count > 0);
+
+        await DisposeAsync(cut);
+        setData.SetVoidResult();
+
+        // Let the load's continuation resume: the rest of the load must be skipped
+        // rather than pushed into a renderer that no longer exists (and releasing
+        // the load gate afterwards must not throw either).
+        await Task.Delay(100);
+        Assert.Empty(JSInterop.Invocations["whenRendered"]);
+    }
+
+    [Fact]
+    public async Task Dispose_Runs_The_Js_Teardown_Once()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+
+        var cut = Render<TimelineComponent>(p => p.Add(c => c.Config, SampleConfig()));
+        await WaitUntil(() => JSInterop.Invocations["setData"].Count > 0);
+
+        await DisposeAsync(cut);
+        var exception = await Record.ExceptionAsync(() => DisposeAsync(cut));
+
+        Assert.Null(exception);
+        Assert.Single(JSInterop.Invocations["dispose"]);
+    }
+
+    // Tears the component down the way the framework does when the host stops
+    // rendering it: IAsyncDisposable, on the renderer's dispatcher.
+    private static Task DisposeAsync(IRenderedComponent<TimelineComponent> cut) =>
+        cut.InvokeAsync(async () => await cut.Instance.DisposeAsync());
+
+    // Continuations resume on the renderer's dispatcher, so state that a disposed
+    // component settles into is only observable after yielding a few times.
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        for (var i = 0; i < 200 && !condition(); i++)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.True(condition(), "The expected state was never reached.");
+    }
+
+    /// <summary>
+    /// A JS runtime that keeps the engine's module import pending until the test
+    /// releases it, and that marshals arguments the way the real runtime does: a
+    /// <see cref="DotNetObjectReference{TValue}"/> belonging to a disposed component
+    /// cannot be passed to JavaScript, which is recorded here rather than thrown so
+    /// the test can assert on it.
+    /// </summary>
+    private sealed class PausedImportJSRuntime : IJSRuntime
+    {
+        private readonly TaskCompletionSource<IJSObjectReference> import =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private readonly ModuleReference module;
+
+        public PausedImportJSRuntime() => module = new ModuleReference(this);
+
+        public List<string> Invocations { get; } = [];
+
+        public Exception? MarshallingFailure { get; private set; }
+
+        public bool ModuleReleased => module.Released;
+
+        public void CompleteImport() => import.SetResult(module);
+
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) =>
+            InvokeAsync<TValue>(identifier, CancellationToken.None, args);
+
+        public ValueTask<TValue> InvokeAsync<TValue>(
+            string identifier, CancellationToken cancellationToken, object?[]? args)
+        {
+            Invocations.Add(identifier);
+            Marshal(args);
+
+            return identifier == "import"
+                ? new ValueTask<TValue>(import.Task.ContinueWith(
+                    imported => (TValue)imported.Result, TaskScheduler.Default))
+                : ValueTask.FromResult<TValue>(default!);
+        }
+
+        private void Marshal(object?[]? args)
+        {
+            foreach (var arg in args ?? [])
+            {
+                if (arg is not DotNetObjectReference<TimelineComponent> callbackTarget)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    _ = callbackTarget.Value;
+                }
+                catch (Exception exception)
+                {
+                    MarshallingFailure ??= exception;
+                }
+            }
+        }
+
+        private sealed class ModuleReference(PausedImportJSRuntime runtime) : IJSObjectReference
+        {
+            public bool Released { get; private set; }
+
+            public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) =>
+                runtime.InvokeAsync<TValue>(identifier, CancellationToken.None, args);
+
+            public ValueTask<TValue> InvokeAsync<TValue>(
+                string identifier, CancellationToken cancellationToken, object?[]? args) =>
+                runtime.InvokeAsync<TValue>(identifier, cancellationToken, args);
+
+            public ValueTask DisposeAsync()
+            {
+                Released = true;
+                return ValueTask.CompletedTask;
+            }
+        }
     }
 }

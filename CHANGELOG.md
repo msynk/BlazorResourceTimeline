@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-08-23
+## [0.4.1] - 2026-08-25
+
+### Fixed
+
+- Removing the timeline while it is still starting up no longer throws. Its
+  first render imports the JS engine and creates the renderer with a
+  `DotNetObjectReference` to the component, so a host that navigates away (or
+  remounts via `@key`) in that window used to marshal an already-disposed
+  reference and surface `ObjectDisposedException` in the host's error boundary.
+  Initialization now stops at the first await that resumes after disposal, and
+  releases the module/renderer that arrived too late for `DisposeAsync` to see.
+- A data load that is in flight when the component is disposed stops instead of
+  pushing the rest of the load into a renderer that no longer exists, and the
+  internal load gates are no longer disposed underneath it (disposing a
+  `SemaphoreSlim` throws into everything waiting on or releasing it).
+- `DisposeAsync` is idempotent: the JS teardown runs once, no matter how many
+  times the host disposes the component.
 
 ### Added
 
@@ -106,7 +122,8 @@ First public release.
   drop properties that only reflection-based serialization reads. AOT is not
   declared, since interop marshalling is reflection-based.
 
-[Unreleased]: https://github.com/msynk/BlazorResourceTimeline/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/msynk/BlazorResourceTimeline/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/msynk/BlazorResourceTimeline/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/msynk/BlazorResourceTimeline/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/msynk/BlazorResourceTimeline/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/msynk/BlazorResourceTimeline/compare/v0.1.0...v0.2.0

@@ -30,6 +30,12 @@ public partial class BlazorResourceTimeline
     private bool _dataLoaded;
     private bool _isLoading;
 
+    // Set as the very first statement of DisposeAsync. Every await in this file is
+    // a point where the host can remove the component (a route change, a @key
+    // remount, a parent that stops rendering it), so anything resuming after an
+    // await must re-check this before touching JS interop, _selfRef or the render tree.
+    private bool _disposed;
+
     // Serializes data loads so rapid Config swaps can't interleave two loads
     // and race _isLoading/_loadedConfig.
     private readonly SemaphoreSlim _loadGate = new(1, 1);
@@ -184,32 +190,73 @@ public partial class BlazorResourceTimeline
     /// </summary>
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender)
+        if (!firstRender || _disposed)
         {
-            _selfRef = DotNetObjectReference.Create(this);
-            _jsModule = await JS.InvokeAsync<IJSObjectReference>("import", ModulePath);
-            _timelineInstance = await _jsModule.InvokeAsync<IJSObjectReference>(
-                "createTimeline", _wrapperElement, _selfRef, Options);
-            _loadedOptions = Options;
+            return;
+        }
 
-            // Read the effective layout back so the top-start corner overlay is
-            // sized correctly (and the C# defaults never drift from the JS ones).
-            _layout = await _timelineInstance.InvokeAsync<BlazorResourceTimelineLayout>("getLayout");
-            StateHasChanged();
-
-            // Enable the HTML resource-column overlay before loading data, so the
-            // renderer suppresses its own labels and the engine reports its rows.
-            if (ResourceTemplate is not null)
-            {
-                await _timelineInstance.InvokeVoidAsync("enableResourceTemplate", _resourceOverlayInner);
-            }
-
-            if (HasData)
-            {
-                await LoadDataAsync();
-            }
+        try
+        {
+            await InitializeAsync();
+        }
+        catch (JSDisconnectedException)
+        {
+            // The circuit is gone; there is no JS side left to initialize.
+        }
+        catch (Exception exception) when (_disposed && IsTeardownFailure(exception))
+        {
+            // Removed part-way through initialization: DisposeAsync ran before the JS
+            // objects existed, so release whatever arrived after it looked for them.
+            await ReleaseJsResourcesAsync();
         }
     }
+
+    // Brings up the JS side of the component. Each await here can resume after the
+    // host has already removed the component, which is why every one of them is
+    // followed by a disposal check: the very next interop call would otherwise
+    // marshal an already-disposed handle (notably _selfRef, passed to createTimeline).
+    private async Task InitializeAsync()
+    {
+        _selfRef = DotNetObjectReference.Create(this);
+
+        _jsModule = await JS.InvokeAsync<IJSObjectReference>("import", ModulePath);
+        ThrowIfDisposed();
+
+        _timelineInstance = await _jsModule.InvokeAsync<IJSObjectReference>(
+            "createTimeline", _wrapperElement, _selfRef, Options);
+        ThrowIfDisposed();
+
+        _loadedOptions = Options;
+
+        // Read the effective layout back so the top-start corner overlay is
+        // sized correctly (and the C# defaults never drift from the JS ones).
+        _layout = await _timelineInstance.InvokeAsync<BlazorResourceTimelineLayout>("getLayout");
+        ThrowIfDisposed();
+        StateHasChanged();
+
+        // Enable the HTML resource-column overlay before loading data, so the
+        // renderer suppresses its own labels and the engine reports its rows.
+        if (ResourceTemplate is not null)
+        {
+            await _timelineInstance.InvokeVoidAsync("enableResourceTemplate", _resourceOverlayInner);
+            ThrowIfDisposed();
+        }
+
+        if (HasData)
+        {
+            await LoadDataAsync();
+        }
+    }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
+
+    // How interop fails when it is in flight while the component is being removed
+    // or the circuit is dropping: the JS handle or the .NET object reference it
+    // marshals has been disposed, the circuit is gone, or the call was cancelled.
+    // None of these are actionable - they all mean this instance no longer has a
+    // JS side to talk to - so they are only swallowed on the teardown paths below.
+    private static bool IsTeardownFailure(Exception exception) =>
+        exception is JSDisconnectedException or ObjectDisposedException or OperationCanceledException;
 
     /// <summary>
     /// Re-applies <see cref="Options"/> and reloads <see cref="Config"/> when
@@ -218,7 +265,7 @@ public partial class BlazorResourceTimeline
     /// </summary>
     protected override async Task OnParametersSetAsync()
     {
-        if (_timelineInstance is null)
+        if (_disposed || _timelineInstance is null)
         {
             return;
         }
@@ -228,6 +275,12 @@ public partial class BlazorResourceTimeline
             _loadedOptions = Options;
             await _timelineInstance.InvokeVoidAsync("setOptions", Options);
             _layout = await _timelineInstance.InvokeAsync<BlazorResourceTimelineLayout>("getLayout");
+
+            if (_disposed)
+            {
+                return;
+            }
+
             StateHasChanged();
         }
 
@@ -249,27 +302,27 @@ public partial class BlazorResourceTimeline
 
     private async Task LoadDataAsync()
     {
-        if (_timelineInstance is null || !HasData)
+        // Capture the targets now; another load may be requested while we wait on
+        // the gate, in which case this (older) one is skipped below.
+        var timeline = _timelineInstance;
+        var config = Config;
+        if (_disposed || timeline is null || config is null)
         {
             return;
         }
-
-        // Capture the target now; another load may be requested while we wait
-        // on the gate, in which case this (older) one is skipped below.
-        var config = Config!;
 
         // Serialize loads so a rapid Config swap can't interleave two runs.
         await _loadGate.WaitAsync();
         try
         {
-            // A newer Config superseded this one while we were queued; its own
-            // load will run, so drop this stale one.
-            if (!ReferenceEquals(Config, config))
+            // A newer Config superseded this one while we were queued (or the
+            // component went away): that load will run, so drop this stale one.
+            if (_disposed || !ReferenceEquals(Config, config))
             {
                 return;
             }
 
-            await LoadDataCoreAsync(_timelineInstance, config);
+            await LoadDataCoreAsync(timeline, config);
         }
         finally
         {
@@ -286,6 +339,11 @@ public partial class BlazorResourceTimeline
         // but doesn't guarantee a browser paint on WebAssembly.
         await Task.Delay(1);
 
+        if (_disposed)
+        {
+            return;
+        }
+
         var startedAt = DateTime.UtcNow;
         try
         {
@@ -301,6 +359,12 @@ public partial class BlazorResourceTimeline
                 var window = await timeline.InvokeAsync<long[]>("getVisibleWindow");
                 _latestWindowRequestId = 0;
                 await FetchAndApplyWindowAsync(timeline, 0, window[0], window[1]);
+
+                if (_disposed)
+                {
+                    return;
+                }
+
                 await timeline.InvokeVoidAsync("whenRendered");
                 _loadedConfig = config;
                 _dataLoaded = true;
@@ -317,6 +381,13 @@ public partial class BlazorResourceTimeline
 
                 for (var i = 0; i < allocations.Count; i += LoadBatchSize)
                 {
+                    // Streaming a large dataset spans many awaits; stop as soon as
+                    // there is nothing left to stream into.
+                    if (_disposed)
+                    {
+                        return;
+                    }
+
                     var count = Math.Min(LoadBatchSize, allocations.Count - i);
                     var batch = allocations.GetRange(i, count);
                     await timeline.InvokeVoidAsync("appendAllocations", batch);
@@ -328,6 +399,11 @@ public partial class BlazorResourceTimeline
             {
                 await timeline.InvokeVoidAsync(
                     "setData", config.Resources, start, end, allocations);
+            }
+
+            if (_disposed)
+            {
+                return;
             }
 
             // Wait until the renderer has painted the bars before hiding the overlay.
@@ -349,13 +425,16 @@ public partial class BlazorResourceTimeline
             // flash by imperceptibly on fast renders.
             var elapsed = (DateTime.UtcNow - startedAt).TotalMilliseconds;
             var remaining = LoadingMinDurationMs - (int)elapsed;
-            if (remaining > 0)
+            if (remaining > 0 && !_disposed)
             {
                 await Task.Delay(remaining);
             }
 
             _isLoading = false;
-            StateHasChanged();
+            if (!_disposed)
+            {
+                StateHasChanged();
+            }
         }
     }
 
@@ -370,7 +449,7 @@ public partial class BlazorResourceTimeline
     /// <summary>Clears the current bar selection programmatically.</summary>
     public async Task ClearSelectionAsync()
     {
-        if (_timelineInstance is not null && _dataLoaded)
+        if (!_disposed && _timelineInstance is not null && _dataLoaded)
         {
             await _timelineInstance.InvokeVoidAsync("clearSelection");
         }
@@ -379,7 +458,7 @@ public partial class BlazorResourceTimeline
     /// <summary>Returns the currently selected bars, in selection order. Empty when nothing is selected.</summary>
     public async Task<IReadOnlyList<BlazorResourceTimelineAllocation>> GetSelectedBarsAsync()
     {
-        if (_timelineInstance is null || !_dataLoaded)
+        if (_disposed || _timelineInstance is null || !_dataLoaded)
         {
             return Array.Empty<BlazorResourceTimelineAllocation>();
         }
@@ -395,7 +474,7 @@ public partial class BlazorResourceTimeline
     /// </summary>
     public async Task<bool> GoToTodayAsync()
     {
-        if (_timelineInstance is null || !_dataLoaded)
+        if (_disposed || _timelineInstance is null || !_dataLoaded)
         {
             return false;
         }
@@ -409,7 +488,7 @@ public partial class BlazorResourceTimeline
     /// </summary>
     public async Task<bool> ScrollToTimeAsync(long unixMs)
     {
-        if (_timelineInstance is null || !_dataLoaded)
+        if (_disposed || _timelineInstance is null || !_dataLoaded)
         {
             return false;
         }
@@ -427,7 +506,7 @@ public partial class BlazorResourceTimeline
     /// </summary>
     public async Task<bool> PanByDaysAsync(int days)
     {
-        if (_timelineInstance is null || !_dataLoaded)
+        if (_disposed || _timelineInstance is null || !_dataLoaded)
         {
             return false;
         }
@@ -441,7 +520,7 @@ public partial class BlazorResourceTimeline
     /// </summary>
     public async Task<double> ZoomInAsync()
     {
-        if (_timelineInstance is null)
+        if (_disposed || _timelineInstance is null)
         {
             return 0;
         }
@@ -452,7 +531,7 @@ public partial class BlazorResourceTimeline
     /// <summary>Zooms out around the viewport center. Returns the new scale in pixels per hour.</summary>
     public async Task<double> ZoomOutAsync()
     {
-        if (_timelineInstance is null)
+        if (_disposed || _timelineInstance is null)
         {
             return 0;
         }
@@ -472,7 +551,7 @@ public partial class BlazorResourceTimeline
     /// </summary>
     public async Task<double> ZoomToDaysAsync(double days)
     {
-        if (_timelineInstance is null)
+        if (_disposed || _timelineInstance is null)
         {
             return 0;
         }
@@ -487,7 +566,7 @@ public partial class BlazorResourceTimeline
     /// </summary>
     public async Task<double> SetPixelsPerHourAsync(double? pixelsPerHour)
     {
-        if (_timelineInstance is null)
+        if (_disposed || _timelineInstance is null)
         {
             return 0;
         }
@@ -498,7 +577,7 @@ public partial class BlazorResourceTimeline
     /// <summary>Returns to the auto/config scale. Returns the new effective scale.</summary>
     public async Task<double> ResetZoomAsync()
     {
-        if (_timelineInstance is null)
+        if (_disposed || _timelineInstance is null)
         {
             return 0;
         }
@@ -509,7 +588,7 @@ public partial class BlazorResourceTimeline
     /// <summary>Returns the current horizontal scale in pixels per hour.</summary>
     public async Task<double> GetPixelsPerHourAsync()
     {
-        if (_timelineInstance is null)
+        if (_disposed || _timelineInstance is null)
         {
             return 0;
         }
@@ -531,7 +610,7 @@ public partial class BlazorResourceTimeline
     [JSInvokable]
     public async Task RequestAllocationWindow(long requestId, long startMs, long endMs)
     {
-        if (_timelineInstance is null || LoadAllocationsAsync is null)
+        if (_disposed || _timelineInstance is null || LoadAllocationsAsync is null)
         {
             return;
         }
@@ -553,8 +632,9 @@ public partial class BlazorResourceTimeline
         await _windowGate.WaitAsync();
         try
         {
-            // Superseded while queued behind the gate: skip the (now stale) fetch.
-            if (requestId < _latestWindowRequestId)
+            // Superseded while queued behind the gate (or nothing left to render
+            // into): skip the now-stale fetch.
+            if (_disposed || requestId < _latestWindowRequestId)
             {
                 return;
             }
@@ -567,8 +647,9 @@ public partial class BlazorResourceTimeline
 
             var allocations = await LoadAllocationsAsync(window) ?? Array.Empty<BlazorResourceTimelineAllocation>();
 
-            // A newer request arrived while the host was working; drop this result.
-            if (requestId < _latestWindowRequestId)
+            // A newer request arrived while the host was working, or the component
+            // was removed; either way, drop this result.
+            if (_disposed || requestId < _latestWindowRequestId)
             {
                 return;
             }
@@ -599,6 +680,11 @@ public partial class BlazorResourceTimeline
     [JSInvokable]
     public void OnResourceRowsChanged(ResourceRow[] rows)
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         _resourceRows = rows;
         if (Config is not null)
         {
@@ -614,7 +700,7 @@ public partial class BlazorResourceTimeline
     // Collapses/expands a group from the overlay's chevron.
     private async Task ToggleGroupAsync(string id)
     {
-        if (_timelineInstance is not null)
+        if (!_disposed && _timelineInstance is not null)
         {
             await _timelineInstance.InvokeVoidAsync("toggleGroup", id);
         }
@@ -668,7 +754,7 @@ public partial class BlazorResourceTimeline
     [JSInvokable]
     public async Task OnSelectionUpdated(string[] selectedIds)
     {
-        if (OnSelectionChanged.HasDelegate)
+        if (!_disposed && OnSelectionChanged.HasDelegate)
         {
             await OnSelectionChanged.InvokeAsync(ResolveAllocations(selectedIds));
         }
@@ -688,6 +774,11 @@ public partial class BlazorResourceTimeline
     [JSInvokable]
     public async Task OnAllocationEdited(string id, string resourceId, long startTime, long endTime)
     {
+        if (_disposed)
+        {
+            return;
+        }
+
         if (!_allocationsById.TryGetValue(id, out var allocation))
         {
             return;
@@ -718,7 +809,7 @@ public partial class BlazorResourceTimeline
     public async Task OnTimelineContextMenu(
         string? allocationId, string? resourceId, long? time, double clientX, double clientY)
     {
-        if (!OnContextMenu.HasDelegate)
+        if (_disposed || !OnContextMenu.HasDelegate)
         {
             return;
         }
@@ -761,37 +852,75 @@ public partial class BlazorResourceTimeline
     }
 
     /// <summary>
-    /// Disposes the JavaScript renderer and module, the .NET object reference the
-    /// engine calls back through, and the internal load gates. A disconnected
-    /// circuit is treated as already cleaned up.
+    /// Disposes the JavaScript renderer and module and the .NET object reference the
+    /// engine calls back through. A disconnected circuit is treated as already
+    /// cleaned up. Safe to call while initialization or a data load is still in
+    /// flight: those stop at their next await rather than failing on the handles
+    /// disposed here.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        // Set before the first await so in-flight interop sees it the moment it resumes.
+        _disposed = true;
+
         try
         {
-            if (_timelineInstance is not null)
-            {
-                await _timelineInstance.InvokeVoidAsync("dispose");
-                await _timelineInstance.DisposeAsync();
-            }
-
-            if (_jsModule is not null)
-            {
-                await _jsModule.DisposeAsync();
-            }
-        }
-        catch (JSDisconnectedException)
-        {
-            // The circuit is already gone; nothing to clean up on the JS side.
+            await ReleaseJsResourcesAsync();
         }
         finally
         {
-            _selfRef?.Dispose();
-            _loadGate.Dispose();
-            _windowGate.Dispose();
+            // The load gates are deliberately left undisposed: a load may still be
+            // queued on one, and disposing a SemaphoreSlim throws
+            // ObjectDisposedException into everyone waiting on it. Nothing leaks -
+            // SemaphoreSlim only holds a disposable resource once its
+            // AvailableWaitHandle is used, which this component never does.
+
             // No finalizer here, but a derived component that introduces one
             // should not have to re-implement disposal to suppress it (CA1816).
             GC.SuppressFinalize(this);
+        }
+    }
+
+    // Tears down the JS side of the component: the renderer instance, the module and
+    // the .NET object reference the engine calls back through. Idempotent, and safe
+    // to call from either DisposeAsync or an initialization that finished after it,
+    // since the fields are cleared before the first await.
+    private async ValueTask ReleaseJsResourcesAsync()
+    {
+        var timeline = _timelineInstance;
+        var module = _jsModule;
+        var selfRef = _selfRef;
+
+        _timelineInstance = null;
+        _jsModule = null;
+        _selfRef = null;
+        _dataLoaded = false;
+
+        try
+        {
+            if (timeline is not null)
+            {
+                await timeline.InvokeVoidAsync("dispose");
+                await timeline.DisposeAsync();
+            }
+
+            if (module is not null)
+            {
+                await module.DisposeAsync();
+            }
+        }
+        catch (Exception exception) when (IsTeardownFailure(exception))
+        {
+            // The circuit or the handle is already gone; nothing to clean up on the JS side.
+        }
+        finally
+        {
+            selfRef?.Dispose();
         }
     }
 }
