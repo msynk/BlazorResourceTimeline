@@ -147,6 +147,39 @@ public class AllocationWireFormatTests
     }
 
     [Fact]
+    public void Options_SerializeResourceAxisResizeKeysWithExpectedNames()
+    {
+        var options = new BlazorResourceTimelineOptions
+        {
+            ResourceAxisWidth = 220,
+            ResourceAxisResizable = false,
+            ResourceAxisMinWidth = 64,
+            ResourceAxisMaxWidth = 400,
+        };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(options, Web));
+        var root = doc.RootElement;
+
+        Assert.Equal(220, root.GetProperty("resourceAxisWidth").GetInt32());
+        Assert.False(root.GetProperty("resourceAxisResizable").GetBoolean());
+        Assert.Equal(64, root.GetProperty("resourceAxisMinWidth").GetInt32());
+        Assert.Equal(400, root.GetProperty("resourceAxisMaxWidth").GetInt32());
+    }
+
+    [Fact]
+    public void Options_OmitResourceAxisResizeKeysWhenNull()
+    {
+        var options = new BlazorResourceTimelineOptions();
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(options, Web));
+        var root = doc.RootElement;
+
+        Assert.False(root.TryGetProperty("resourceAxisResizable", out _));
+        Assert.False(root.TryGetProperty("resourceAxisMinWidth", out _));
+        Assert.False(root.TryGetProperty("resourceAxisMaxWidth", out _));
+    }
+
+    [Fact]
     public void Options_SerializeZeroNowLineRefresh()
     {
         // 0 is what turns the "now" ticking off, so it must reach the renderer

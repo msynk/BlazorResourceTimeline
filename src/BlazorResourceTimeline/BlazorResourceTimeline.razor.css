@@ -115,6 +115,51 @@
     color: #1971c2;
 }
 
+/* Divider at the right edge of the resource column. Created by the engine
+   (not Razor) so it stays above the HTML overlay and receives pointer events
+   without a Blazor round-trip per drag. ::deep because the element is not in
+   the component's markup and therefore has no scoped attribute. */
+::deep .timeline-axis-splitter {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 8px;
+    margin-left: -4px;
+    z-index: 25;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+    background: transparent;
+    box-sizing: border-box;
+}
+
+::deep .timeline-axis-splitter::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 0;
+    transform: translateX(-50%);
+    background: var(--timeline-splitter-hover, #1971c2);
+    pointer-events: none;
+}
+
+::deep .timeline-axis-splitter:hover::after,
+::deep .timeline-axis-splitter.is-dragging::after,
+::deep .timeline-axis-splitter:focus-visible::after {
+    width: 3px;
+}
+
+::deep .timeline-axis-splitter:focus {
+    outline: none;
+}
+
+::deep .timeline-axis-splitter:focus-visible {
+    outline: 2px solid var(--timeline-splitter-hover, #1971c2);
+    outline-offset: -2px;
+}
+
 .timeline-loading {
     position: absolute;
     inset: 0;

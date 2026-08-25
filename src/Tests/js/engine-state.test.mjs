@@ -174,3 +174,75 @@ test('selection order is preserved', () => {
     for (const id of ['c', 'a', 'b']) engine.selectedBars.add(id);
     assert.deepEqual(engine.getSelectedBarIds(), ['c', 'a', 'b']);
 });
+
+test('resource-axis width clamp honours min, max and the viewport floor', () => {
+    const engine = makeBareEngine();
+    engine._viewportW = 1000;
+    engine.config.resourceAxisMinWidth = 80;
+    engine.config.resourceAxisMaxWidth = 0;
+
+    assert.equal(engine._clampResourceAxisWidth(40), 80, 'below min');
+    assert.equal(engine._clampResourceAxisWidth(200), 200, 'inside range');
+    // Viewport keeps 100px of content: 1000 - 100 = 900.
+    assert.equal(engine._clampResourceAxisWidth(2000), 900, 'viewport cap when no host max');
+
+    engine.config.resourceAxisMaxWidth = 240;
+    assert.equal(engine._clampResourceAxisWidth(400), 240, 'host max tighter than viewport');
+    engine.config.resourceAxisMaxWidth = 5000;
+    assert.equal(engine._clampResourceAxisWidth(4000), 900, 'viewport still wins over a huge host max');
+});
+
+test('resource-axis width bounds never invert when the viewport is tiny', () => {
+    const engine = makeBareEngine();
+    engine._viewportW = 50;
+    engine.config.resourceAxisMinWidth = 80;
+    const { min, max } = engine._resourceAxisWidthBounds();
+    assert.equal(min, 80);
+    assert.ok(max >= min);
+});
+
+test('resource-axis resize options are accepted by name', () => {
+    const engine = makeBareEngine();
+    const warnings = [];
+    const realWarn = console.warn;
+    console.warn = (m) => warnings.push(m);
+    try {
+        engine._applyOptions({
+            resourceAxisResizable: false,
+            resourceAxisMinWidth: 64,
+            resourceAxisMaxWidth: 320
+        });
+    } finally {
+        console.warn = realWarn;
+    }
+    assert.equal(warnings.length, 0);
+    assert.equal(engine.config.resourceAxisResizable, false);
+    assert.equal(engine.config.resourceAxisMinWidth, 64);
+    assert.equal(engine.config.resourceAxisMaxWidth, 320);
+});
+
+test('setting the resource-axis width updates config and notifies only when asked', () => {
+    const engine = makeBareEngine();
+    engine._viewportW = 1000;
+    engine.config.resourceAxisWidth = 150;
+    let relayouts = 0;
+    const notified = [];
+    engine._hasTimeRange = () => true;
+    engine._relayout = () => { relayouts += 1; };
+    engine._syncAxisOverlays = () => {};
+    engine._syncAxisSplitterChrome = () => {};
+    engine.render = () => {};
+    engine._notifyResourceAxisWidth = (w) => notified.push(w);
+
+    assert.equal(engine._setResourceAxisWidth(220, false), 220);
+    assert.equal(engine.config.resourceAxisWidth, 220);
+    assert.equal(relayouts, 1);
+    assert.deepEqual(notified, []);
+
+    assert.equal(engine._setResourceAxisWidth(260, true), 260);
+    assert.deepEqual(notified, [260]);
+
+    assert.equal(engine._setResourceAxisWidth(10, true), 80, 'clamped to min before notify');
+    assert.equal(engine.config.resourceAxisWidth, 80);
+    assert.equal(notified.at(-1), 80);
+});

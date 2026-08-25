@@ -215,7 +215,8 @@
                               ResourceTemplate="@(_customColumn ? ColumnTemplate : null)"
                               OnSelectionChanged="HandleSelectionChanged"
                               OnAllocationChanged="HandleAllocationChanged"
-                              OnContextMenu="ShowContextMenu">
+                              OnContextMenu="ShowContextMenu"
+                              OnResourceAxisWidthChanged="HandleResourceAxisWidthChanged">
                 <TopStartContent>
                     <div class="corner">
                         <span class="corner-title">Resources</span>
@@ -308,6 +309,7 @@
     private int _days = 30;
     private int _barHeight = 4;
     private int _barMargin = 2;
+    private int _resourceAxisWidth = 150;
     private string _renderer = "canvas";
     private string _timeZone = "";
     private bool _showUtcTime;
@@ -677,6 +679,10 @@
         // more room keeps them comfortable. Sent explicitly both ways - Options
         // merges, so a null here would keep the taller axis after toggling off.
         TimeAxisHeight = _showUtcTime ? 76 : 60,
+        // Keep a user-dragged resource-column width across Options rebuilds
+        // (theme, renderer, …) and across the remount that toggling the custom
+        // column causes.
+        ResourceAxisWidth = _resourceAxisWidth,
         // Open on the current time instead of the start of the generated range,
         // and stay where the user left the view when the data is regenerated.
         AutoScrollToNow = _autoScrollToNow,
@@ -775,6 +781,17 @@
     }
 
     private void HandleSelectionChanged(BlazorResourceTimelineAllocation[] bars) => _selectedBars = bars;
+
+    private void HandleResourceAxisWidthChanged(int width)
+    {
+        _resourceAxisWidth = width;
+        // Mutate in place so a remount (toggling the custom column) keeps the
+        // dragged width without a redundant setOptions on the live instance.
+        if (_options is not null)
+        {
+            _options.ResourceAxisWidth = width;
+        }
+    }
 
     private void ShowContextMenu(BlazorResourceTimelineContextMenuArgs args)
     {

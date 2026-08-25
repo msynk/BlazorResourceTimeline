@@ -59,6 +59,8 @@ lot of data must stay readable and interactive.
   refetches as the user scrolls/zooms.
 - **Resource-column template**: replace the renderer-drawn resource labels with a
   rich, interactive HTML template per row (badges, links, avatars, …).
+- **Resizable resource column**: drag the divider at the right edge of the left
+  panel (or focus it and use the arrow keys) to change its width.
 - **Keyboard & screen-reader accessible**: a click (or Tab) focuses the region
   (`role`/`aria-label`); arrow keys then move between bars, with keyboard
   selection, editing, and live-region announcements.
@@ -76,7 +78,7 @@ lot of data must stay readable and interactive.
 - **Rich bars**: per-bar colors and heights, labels (above/below/start/end),
   image/SVG icons anchored to any side, and start/end "edge" (delay) bars.
 - **Dimensions & fonts**: axis sizes, row height, bar sizing and every label
-  font are configurable.
+  font are configurable. The resource column is resizable by default.
 
 ## Installation
 
@@ -292,6 +294,33 @@ pixels-per-hour from the layout:
 The resulting scale is clamped to `Options.MinPixelsPerHour` /
 `Options.MaxPixelsPerHour`. A non-positive or non-finite value is ignored
 and the current scale is returned.
+
+### Resizing the resource column
+
+The left resource column is resizable by default. Drag the divider on its right
+edge, or Tab to the divider and use `←`/`→` (Shift for a larger step, Home/End
+for the min/max). The starting width is `Options.ResourceAxisWidth` (default
+150). The committed width is reported via `OnResourceAxisWidthChanged` so a host
+can persist it and pass it back:
+
+```razor
+<BlazorResourceTimeline Config="_config"
+                        Options="_options"
+                        OnResourceAxisWidthChanged="OnResourceAxisWidthChanged" />
+
+@code {
+    private BlazorResourceTimelineOptions _options = new() { ResourceAxisWidth = 150 };
+
+    private void OnResourceAxisWidthChanged(int width)
+    {
+        _options = new() { ResourceAxisWidth = width };
+    }
+}
+```
+
+`Options.ResourceAxisMinWidth` (default 80) and `Options.ResourceAxisMaxWidth`
+clamp the gesture; the column also cannot grow past the viewport minus 100px of
+content area. Set `Options.ResourceAxisResizable = false` for a fixed column.
 
 ### Dual time rows (UTC)
 
@@ -543,6 +572,8 @@ drawing the labels and an HTML overlay renders your template once per visible ro
 (row counts are bounded, so this stays cheap). Group rows automatically get an
 expand/collapse chevron before your content, and the overlay follows vertical
 scroll. The context exposes the resource, its `Depth`, and its group state.
+The column stays resizable: the divider sits above the overlay so a drag still
+reaches it.
 
 ```razor
 <BlazorResourceTimeline Config="_config">
@@ -632,7 +663,8 @@ Capture the component with `@ref` to drive it from code:
 ## Keyboard shortcuts
 
 Click the timeline, or Tab to it, to give it keyboard focus. Shortcuts apply
-only while it holds focus.
+only while it holds focus. The resource-column divider is a separate tab stop;
+its `←`/`→` / Home/End shortcuts apply while *it* is focused.
 
 | Key | Action |
 | --- | --- |
@@ -648,6 +680,8 @@ only while it holds focus.
 | `Alt` + `Shift` + `←` / `→` | Resize the focused bar's end edge (editing only) |
 | `Alt` + `Shift` + `↑` / `↓` | Resize the focused bar's start edge (editing only) |
 | `Alt` + `↑` / `↓` | Move the focused bar to the previous / next resource (editing only) |
+| Resource-column divider: `←` / `→` | Narrow / widen the column (`Shift` for a larger step) |
+| Resource-column divider: `Home` / `End` | Min / max column width |
 
 ## Mouse and pointer shortcuts
 
@@ -667,6 +701,7 @@ gestures; a moving touch pans natively instead of starting a drag.
 | Wheel, scrollbar, or touch-drag | Pan (native scrolling) |
 | Hover a bar | Show its tooltip |
 | Drag a bar's body / edge | Move / resize it (editing only) |
+| Drag the resource-column divider | Resize the left panel |
 
 ## Notable parameters
 
@@ -676,6 +711,8 @@ gestures; a moving touch pans natively instead of starting a drag.
 - `OnAllocationChanged` - raised after a move/resize (editing) with the updated instance.
 - `OnContextMenu` - raised on right-click with the bar/resource/time under the
   pointer and the click's viewport coordinates.
+- `OnResourceAxisWidthChanged` - raised after the resource column is resized,
+  with the new width in pixels.
 - `AriaLabel` - accessible name (default `"Resource timeline"`).
 - `LoadBatchSize` - allocations per interop call for streaming large datasets
   (default `10000`; `0` sends everything at once).
@@ -690,7 +727,8 @@ gestures; a moving touch pans natively instead of starting a drag.
 (7 to 365 days), renderer, bar height and margin, editing, on-demand loading, the
 custom resource column, time zone, zoom (including 1 / 3 / 7-day viewport
 presets), and a light/dark theme toggle - plus a live view of the selection, the
-last edit and the last context-menu action. The demo wires `←`/`→` (and
+last edit and the last context-menu action. Drag the divider at the right edge of
+the resource column to resize it. The demo wires `←`/`→` (and
 `Ctrl`/`Cmd`+arrows for a week) to `PanByDaysAsync` itself while the timeline
 is unfocused; those shortcuts are not part of the component. Click the
 timeline and the same keys move between bars instead.

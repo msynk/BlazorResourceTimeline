@@ -110,6 +110,18 @@ public partial class BlazorResourceTimeline
     [Parameter] public EventCallback<BlazorResourceTimelineContextMenuArgs> OnContextMenu { get; set; }
 
     /// <summary>
+    /// Raised after the user finishes resizing the resource column (pointer
+    /// release, or a keyboard step on the divider). The argument is the new
+    /// width in pixels, already clamped to
+    /// <see cref="BlazorResourceTimelineOptions.ResourceAxisMinWidth"/> /
+    /// <see cref="BlazorResourceTimelineOptions.ResourceAxisMaxWidth"/> and
+    /// the viewport. Does not fire for every pointermove. Hosts that want to
+    /// persist the width should store it and pass it back as
+    /// <see cref="BlazorResourceTimelineOptions.ResourceAxisWidth"/>.
+    /// </summary>
+    [Parameter] public EventCallback<int> OnResourceAxisWidthChanged { get; set; }
+
+    /// <summary>
     /// Optional custom content rendered in the top-start corner of the component
     /// (the otherwise blank cell where the time axis and resource axis meet).
     /// </summary>
@@ -121,7 +133,8 @@ public partial class BlazorResourceTimeline
     /// template per visible row instead, enabling rich, interactive content
     /// (badges, links, avatars, etc.). Group rows automatically get an
     /// expand/collapse chevron before the template. The overlay follows vertical
-    /// scroll. The context exposes the resource, its depth and its group state.
+    /// scroll. The resource-column divider stays above the overlay so the column
+    /// remains resizable. The context exposes the resource, its depth and its group state.
     /// </summary>
     [Parameter] public RenderFragment<BlazorResourceTimelineRowContext>? ResourceTemplate { get; set; }
 
@@ -832,6 +845,33 @@ public partial class BlazorResourceTimeline
             ClientX = clientX,
             ClientY = clientY,
         });
+    }
+
+    /// <summary>
+    /// Invoked by the renderer after a resource-column resize commits. Updates
+    /// the layout used to size the overlay and top-start corner, then raises
+    /// <see cref="OnResourceAxisWidthChanged"/>. Public only because JS interop
+    /// requires it; not part of the consumer API.
+    /// </summary>
+    /// <param name="width">New resource-column width, in pixels.</param>
+    [JSInvokable]
+    public async Task OnResourceAxisResized(int width)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (_layout.ResourceAxisWidth != width)
+        {
+            _layout = _layout with { ResourceAxisWidth = width };
+            StateHasChanged();
+        }
+
+        if (OnResourceAxisWidthChanged.HasDelegate)
+        {
+            await OnResourceAxisWidthChanged.InvokeAsync(width);
+        }
     }
 
     // Maps allocation ids reported by the renderer to the instances supplied

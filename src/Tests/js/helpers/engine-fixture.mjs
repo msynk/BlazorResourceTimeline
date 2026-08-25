@@ -45,6 +45,9 @@ export function makeBareEngine(overrides = {}) {
         resourceGroupFont: 'bold 13px sans-serif',
         resourceChevronFont: '10px sans-serif',
         resourceChevronGap: 14,
+        resourceAxisResizable: true,
+        resourceAxisMinWidth: 80,
+        resourceAxisMaxWidth: 0,
         ...(overrides.config || {}),
         // Always present on the real config, and _applyOptions merges into it.
         colors: { bar: '#74c0fc', barSelected: '#4dabf7', label: '#495057' }

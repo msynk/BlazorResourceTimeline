@@ -127,6 +127,28 @@ public class ComponentTests : BunitContext
     }
 
     [Fact]
+    public async Task Resource_Axis_Resize_Updates_Overlay_Width_And_Raises_Callback()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+
+        var widths = new List<int>();
+        RenderFragment<BlazorResourceTimelineRowContext> template = ctx => builder =>
+            builder.AddMarkupContent(0, "<span class=\"tpl\">row</span>");
+
+        var cut = Render<TimelineComponent>(p => p
+            .Add(c => c.Config, SampleConfig())
+            .Add(c => c.ResourceTemplate, template)
+            .Add(c => c.TopStartContent, (RenderFragment)(b => b.AddMarkupContent(0, "<span>corner</span>")))
+            .Add(c => c.OnResourceAxisWidthChanged, EventCallback.Factory.Create<int>(this, w => widths.Add(w))));
+
+        await cut.InvokeAsync(() => cut.Instance.OnResourceAxisResized(220));
+
+        Assert.Contains("220px", cut.Find(".timeline-resource-overlay").GetAttribute("style"));
+        Assert.Contains("220px", cut.Find(".timeline-top-start").GetAttribute("style"));
+        Assert.Equal(220, Assert.Single(widths));
+    }
+
+    [Fact]
     public void Disposes_Without_Throwing()
     {
         JSInterop.Mode = JSRuntimeMode.Loose;

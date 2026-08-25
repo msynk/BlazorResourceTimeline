@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Resizable resource column: drag the divider at the right edge of the left
+  panel (or focus it and use the arrow keys) to change its width. The gesture
+  is on by default, clamped by `Options.ResourceAxisMinWidth` /
+  `Options.ResourceAxisMaxWidth` and the viewport, and reports the committed
+  width through `OnResourceAxisWidthChanged`. Set
+  `Options.ResourceAxisResizable = false` to keep a fixed column.
+
 ## [0.4.1] - 2026-08-25
 
 ### Fixed

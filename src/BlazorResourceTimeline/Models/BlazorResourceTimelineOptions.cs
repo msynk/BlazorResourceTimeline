@@ -27,6 +27,33 @@ public class BlazorResourceTimelineOptions
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? ResourceAxisWidth { get; set; }
 
+    /// <summary>
+    /// Whether the user can drag (or keyboard-resize) the divider at the right
+    /// edge of the resource column to change its width. Defaults to <c>true</c>.
+    /// The starting width is <see cref="ResourceAxisWidth"/>; the committed
+    /// width is reported via the component's <c>OnResourceAxisWidthChanged</c>
+    /// callback so a host can persist it.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ResourceAxisResizable { get; set; }
+
+    /// <summary>
+    /// Minimum width (in pixels) the resource column can be resized to.
+    /// Defaults to 80. The viewport still keeps a 100px content area, so a
+    /// very narrow host may not be able to reach this floor.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ResourceAxisMinWidth { get; set; }
+
+    /// <summary>
+    /// Maximum width (in pixels) the resource column can be resized to.
+    /// <c>null</c> / unset means no host cap: the column still cannot grow
+    /// past the viewport minus 100px of content area. Set an explicit value
+    /// to stop earlier.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ResourceAxisMaxWidth { get; set; }
+
     /// <summary>Height of the date row within the time axis, in pixels.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? DateRowHeight { get; set; }

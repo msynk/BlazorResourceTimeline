@@ -171,6 +171,14 @@ export class TimelineEngine {
             // overlay renders them instead) and the engine reports its visible
             // rows to .NET.
             resourceTemplate: false,
+            // Drag (or keyboard) the divider at the right edge of the resource
+            // column to change its width. Off restores a fixed column.
+            resourceAxisResizable: true,
+            // Clamp for an interactive (or programmatic) resource-column resize.
+            // The viewport still keeps at least 100px of content area, so a
+            // configured max wider than that is reduced to fit.
+            resourceAxisMinWidth: 80,
+            resourceAxisMaxWidth: 0,
             // Which renderer paints the scene: 'canvas' (default), 'svg' or
             // 'html'. Can be switched at runtime via setOptions.
             renderer: 'canvas'
@@ -264,6 +272,12 @@ export class TimelineEngine {
         // HTML resource-column overlay inner element (set via
         // enableResourceTemplate); translated to follow vertical scroll.
         this._resourceOverlay = null;
+
+        // DOM handle on the resource-axis divider (created lazily). Pointer
+        // capture lives on it so a drag keeps tracking outside the column,
+        // including when the HTML resource overlay is covering the surface.
+        this._axisSplitter = null;
+        this._axisResize = null;
 
         // Pending touch interaction. Touch does not start a marquee (so the
         // wrapper can still be panned); a quick, stationary touch is treated as
@@ -398,6 +412,7 @@ export class TimelineEngine {
         this._createLiveRegion();
 
         this._setupEventListeners();
+        this._syncAxisSplitterChrome();
 
         this._nowTimer = null;
         this._startNowTimer();
@@ -699,6 +714,7 @@ export class TimelineEngine {
     // schedules a repaint. (Formerly resizeCanvas.)
     _relayout() {
         if (!this._hasTimeRange()) {
+            this._syncAxisSplitterChrome();
             return;
         }
 
@@ -710,6 +726,19 @@ export class TimelineEngine {
             // awaiting whenRendered() are not left hanging.
             this._flushRenderedResolvers();
             return;
+        }
+
+        // A narrower viewport can make the current column wider than the
+        // content area allows. Skip while the user is dragging the divider
+        // (the drag already clamps against the live viewport).
+        if (!this._axisResize) {
+            const clamped = this._clampResourceAxisWidth(this.config.resourceAxisWidth);
+            if (clamped !== this.config.resourceAxisWidth) {
+                this.config.resourceAxisWidth = clamped;
+                this._configGen++;
+                this._syncAxisOverlays();
+                this._notifyResourceAxisWidth(clamped);
+            }
         }
 
         // Read the scroll position BEFORE any style is written below. Reading
@@ -782,6 +811,7 @@ export class TimelineEngine {
         // deferring to rAF would present one blank frame (noticeable when a host
         // reflows on selection empty↔non-empty and the ResizeObserver runs).
         this._paintNow();
+        this._syncAxisSplitterChrome();
     }
 
     // Cancels any pending rAF paint and paints the current scene immediately.
@@ -2722,6 +2752,223 @@ export class TimelineEngine {
         };
     }
 
+    // ---- Resource-axis resize (left-panel splitter) ----
+
+    // Hit-area width of the divider. Centered on the axis edge so a few
+    // pixels on each side still grab, including when the HTML overlay covers
+    // the painted border.
+    static get AXIS_SPLITTER_PX() { return 8; }
+
+    // Inclusive min/max for the resource column. The viewport always keeps
+    // 100px of content area (matching _updateScale's visible-width floor);
+    // a configured max of 0 means "no host cap".
+    _resourceAxisWidthBounds() {
+        const min = Math.max(1, this.config.resourceAxisMinWidth || 1);
+        const viewportMax = Math.max(min, this._viewportW - 100);
+        const configuredMax = this.config.resourceAxisMaxWidth;
+        const max = configuredMax > 0 ? Math.min(configuredMax, viewportMax) : viewportMax;
+        return { min, max: Math.max(min, max) };
+    }
+
+    _clampResourceAxisWidth(width) {
+        const { min, max } = this._resourceAxisWidthBounds();
+        const n = Number(width);
+        if (!Number.isFinite(n)) return min;
+        return Math.round(Math.min(Math.max(n, min), max));
+    }
+
+    // Applies a new column width: updates config, the HTML overlays that
+    // Blazor sizes from getLayout(), the splitter, and the scene. notify
+    // (default false) reports the committed width to .NET - used on pointer
+    // up and keyboard, not on every pointermove.
+    _setResourceAxisWidth(width, notify) {
+        const prev = this.config.resourceAxisWidth;
+        const next = this._clampResourceAxisWidth(width);
+        if (next !== prev) {
+            this.config.resourceAxisWidth = next;
+            this._configGen++;
+            this._syncAxisOverlays();
+            if (this._hasTimeRange()) {
+                this._relayout();
+            } else {
+                this.render();
+                this._syncAxisSplitterChrome();
+            }
+        } else {
+            this._syncAxisSplitterChrome();
+        }
+        if (notify && next !== prev) this._notifyResourceAxisWidth(next);
+        return next;
+    }
+
+    _notifyResourceAxisWidth(width) {
+        if (!this.dotNetRef) return;
+        this.dotNetRef.invokeMethodAsync('OnResourceAxisResized', width)
+            .catch((error) => console.error(
+                'BlazorResourceTimeline resource-axis resize callback failed:', error));
+    }
+
+    // Writes the live width onto the Blazor-owned overlay and top-start
+    // corner so they track the drag without a round-trip per pointermove.
+    // C# catches up from OnResourceAxisResized after the gesture commits.
+    _syncAxisOverlays() {
+        const parent = this.wrapper && this.wrapper.parentElement;
+        if (!parent) return;
+        const w = this.config.resourceAxisWidth + 'px';
+        const overlay = parent.querySelector('.timeline-resource-overlay');
+        if (overlay) overlay.style.width = w;
+        const corner = parent.querySelector('.timeline-top-start');
+        if (corner) corner.style.width = w;
+    }
+
+    _syncAxisSplitterChrome() {
+        if (!this.config.resourceAxisResizable) {
+            if (this._axisSplitter) this._axisSplitter.style.display = 'none';
+            return;
+        }
+        const el = this._ensureAxisSplitter();
+        if (!el) return;
+        el.style.display = '';
+        el.style.left = this.config.resourceAxisWidth + 'px';
+        el.style.setProperty('--timeline-splitter-hover', this.config.colors.focus);
+        this._updateAxisSplitterAria();
+    }
+
+    _updateAxisSplitterAria() {
+        const el = this._axisSplitter;
+        if (!el) return;
+        const { min, max } = this._resourceAxisWidthBounds();
+        el.setAttribute('aria-valuemin', String(min));
+        el.setAttribute('aria-valuemax', String(max));
+        el.setAttribute('aria-valuenow', String(this.config.resourceAxisWidth));
+    }
+
+    _ensureAxisSplitter() {
+        if (this._axisSplitter) return this._axisSplitter;
+        const parent = this.wrapper && this.wrapper.parentElement;
+        if (!parent) return null;
+
+        const el = document.createElement('div');
+        el.className = 'timeline-axis-splitter';
+        el.setAttribute('role', 'separator');
+        el.setAttribute('aria-orientation', 'vertical');
+        el.setAttribute('aria-label', 'Resize resource column');
+        el.tabIndex = 0;
+
+        this._onAxisSplitterPointerDown = (e) => this._handleAxisSplitterPointerDown(e);
+        this._onAxisSplitterPointerMove = (e) => this._handleAxisSplitterPointerMove(e);
+        this._onAxisSplitterPointerUp = (e) => this._handleAxisSplitterPointerUp(e);
+        this._onAxisSplitterPointerCancel = (e) => this._handleAxisSplitterPointerCancel(e);
+        this._onAxisSplitterKeyDown = (e) => this._handleAxisSplitterKeyDown(e);
+
+        el.addEventListener('pointerdown', this._onAxisSplitterPointerDown);
+        el.addEventListener('pointermove', this._onAxisSplitterPointerMove);
+        el.addEventListener('pointerup', this._onAxisSplitterPointerUp);
+        el.addEventListener('pointercancel', this._onAxisSplitterPointerCancel);
+        el.addEventListener('keydown', this._onAxisSplitterKeyDown);
+
+        parent.appendChild(el);
+        this._axisSplitter = el;
+        return el;
+    }
+
+    _teardownAxisSplitter() {
+        this._endAxisResize(null);
+        const el = this._axisSplitter;
+        if (!el) return;
+        el.removeEventListener('pointerdown', this._onAxisSplitterPointerDown);
+        el.removeEventListener('pointermove', this._onAxisSplitterPointerMove);
+        el.removeEventListener('pointerup', this._onAxisSplitterPointerUp);
+        el.removeEventListener('pointercancel', this._onAxisSplitterPointerCancel);
+        el.removeEventListener('keydown', this._onAxisSplitterKeyDown);
+        el.remove();
+        this._axisSplitter = null;
+    }
+
+    _handleAxisSplitterPointerDown(e) {
+        if (!this.config.resourceAxisResizable) return;
+        if (e.pointerType !== 'touch' && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this._hideTooltip();
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        this._axisResize = {
+            pointerId: e.pointerId,
+            startX: e.clientX,
+            startWidth: this.config.resourceAxisWidth
+        };
+        this._axisSplitter.classList.add('is-dragging');
+        this._lockAxisResizeCursor();
+        this._axisSplitter.focus({ preventScroll: true });
+    }
+
+    _handleAxisSplitterPointerMove(e) {
+        if (!this._axisResize || e.pointerId !== this._axisResize.pointerId) return;
+        e.preventDefault();
+        const dx = e.clientX - this._axisResize.startX;
+        this._setResourceAxisWidth(this._axisResize.startWidth + dx, false);
+    }
+
+    _handleAxisSplitterPointerUp(e) {
+        if (!this._axisResize || e.pointerId !== this._axisResize.pointerId) return;
+        const startWidth = this._axisResize.startWidth;
+        this._endAxisResize(e.pointerId);
+        const width = this.config.resourceAxisWidth;
+        if (width !== startWidth) this._notifyResourceAxisWidth(width);
+    }
+
+    _handleAxisSplitterPointerCancel(e) {
+        if (!this._axisResize || e.pointerId !== this._axisResize.pointerId) return;
+        const startWidth = this._axisResize.startWidth;
+        this._endAxisResize(e.pointerId);
+        this._setResourceAxisWidth(startWidth, false);
+    }
+
+    _endAxisResize(pointerId) {
+        const drag = this._axisResize;
+        this._axisResize = null;
+        if (this._axisSplitter) this._axisSplitter.classList.remove('is-dragging');
+        this._unlockAxisResizeCursor();
+        if (drag && pointerId != null) {
+            try { this._axisSplitter && this._axisSplitter.releasePointerCapture(pointerId); }
+            catch { /* ignore */ }
+        }
+    }
+
+    _lockAxisResizeCursor() {
+        if (this._axisResizeCursorLocked) return;
+        if (typeof document === 'undefined' || !document.body) return;
+        this._axisResizeCursorLocked = true;
+        this._prevBodyCursor = document.body.style.cursor;
+        this._prevBodyUserSelect = document.body.style.userSelect;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    }
+
+    _unlockAxisResizeCursor() {
+        if (!this._axisResizeCursorLocked) return;
+        this._axisResizeCursorLocked = false;
+        if (typeof document === 'undefined' || !document.body) return;
+        document.body.style.cursor = this._prevBodyCursor || '';
+        document.body.style.userSelect = this._prevBodyUserSelect || '';
+    }
+
+    _handleAxisSplitterKeyDown(e) {
+        if (!this.config.resourceAxisResizable) return;
+        const key = e.key;
+        const { min, max } = this._resourceAxisWidthBounds();
+        let next = null;
+        const step = e.shiftKey ? 50 : 10;
+        if (key === 'ArrowLeft') next = this.config.resourceAxisWidth - step;
+        else if (key === 'ArrowRight') next = this.config.resourceAxisWidth + step;
+        else if (key === 'Home') next = min;
+        else if (key === 'End') next = max;
+        else return;
+        e.preventDefault();
+        e.stopPropagation();
+        this._setResourceAxisWidth(next, true);
+    }
+
     // ---- HTML resource-column template ----
 
     // Enables the HTML resource-column overlay: the renderer stops drawing
@@ -3399,6 +3646,7 @@ export class TimelineEngine {
             this._relayout();
         } else {
             this.render();
+            this._syncAxisSplitterChrome();
         }
     }
 
@@ -3627,6 +3875,7 @@ export class TimelineEngine {
         this.wrapper.removeEventListener('focus', this._onFocusIn);
         this.wrapper.removeEventListener('blur', this._onFocusOut);
         this._unbindSurfaceEvents();
+        this._teardownAxisSplitter();
         if (this.renderer) {
             this.renderer.dispose();
             this.renderer = null;
