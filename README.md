@@ -14,7 +14,7 @@ built for dense, glanceable planning boards - flight/gate planning, train
 scheduling, fleet and crew rostering, and similar transport use-cases - where a
 lot of data must stay readable and interactive.
 
-![BlazorResourceTimeline](https://raw.githubusercontent.com/msynk/BlazorResourceTimeline/main/docs/screenshot-0.5.0.png)
+![BlazorResourceTimeline](https://raw.githubusercontent.com/msynk/BlazorResourceTimeline/main/docs/screenshot-0.6.0.png)
 
 <sub>The demo in its dark theme: 68 resources and ~3,300 allocations on the canvas renderer.</sub>
 
