@@ -76,6 +76,10 @@
                     <button class="btn-step" @onclick="() => ZoomToDaysAsync(7)"
                             title="Fit seven days in the viewport">7 days</button>
                 </span>
+                <label class="ctl-check" title="Options.PanToDayStart: PanByDaysAsync lands on local midnight instead of shifting by exactly 24 hours">
+                    <input type="checkbox" @bind="_panToDayStart" @bind:after="ApplyOptions" />
+                    Pan to day start
+                </label>
             </div>
 
             <div class="ctl-group">
@@ -320,6 +324,7 @@
     private bool _darkTheme;
     private bool _autoScrollToNow = true;
     private bool _preserveScroll = true;
+    private bool _panToDayStart;
     private int _nowRefreshMs = 60000;
     private DotNetObjectReference<Home>? _selfRef;
     private string? _lastEdit;
@@ -687,6 +692,7 @@
         // and stay where the user left the view when the data is regenerated.
         AutoScrollToNow = _autoScrollToNow,
         PreserveScrollOnReload = _preserveScroll,
+        PanToDayStart = _panToDayStart,
         NowLineRefreshMs = _nowRefreshMs,
         Editable = _editable,
         BarHeight = _barHeight,

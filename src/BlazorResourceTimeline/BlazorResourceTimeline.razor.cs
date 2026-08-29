@@ -511,20 +511,25 @@ public partial class BlazorResourceTimeline
 
     /// <summary>
     /// Pans the view by whole days without changing the zoom - positive moves
-    /// forward in time, negative back - keeping the same time of day at the
-    /// leading edge. Pass 7 or -7 for a week. The pan is clamped to the
-    /// timeline's range, so this returns <c>false</c> when the view is already
-    /// against that end (or the whole range fits on screen). Hosts that want
-    /// keyboard day/week steps should call this from their own key handler.
+    /// forward in time, negative back. By default a step is exactly 24 hours,
+    /// keeping the same time of day at the leading edge. With
+    /// <see cref="BlazorResourceTimelineOptions.PanToDayStart"/> the leading
+    /// edge lands on a local midnight instead (the start of the day
+    /// <paramref name="days"/> calendar days away). Pass 7 or -7 for a week.
+    /// A non-null <paramref name="panToDayStart"/> wins over that option for
+    /// this call only. The pan is clamped to the timeline's range, so this
+    /// returns <c>false</c> when the view is already against that end (or the
+    /// whole range fits on screen). Hosts that want keyboard day/week steps
+    /// should call this from their own key handler.
     /// </summary>
-    public async Task<bool> PanByDaysAsync(int days)
+    public async Task<bool> PanByDaysAsync(int days, bool? panToDayStart = null)
     {
         if (_disposed || _timelineInstance is null || !_dataLoaded)
         {
             return false;
         }
 
-        return await _timelineInstance.InvokeAsync<bool>("panByDays", days);
+        return await _timelineInstance.InvokeAsync<bool>("panByDays", days, panToDayStart);
     }
 
     /// <summary>

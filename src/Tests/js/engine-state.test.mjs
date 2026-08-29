@@ -221,6 +221,20 @@ test('resource-axis resize options are accepted by name', () => {
     assert.equal(engine.config.resourceAxisMaxWidth, 320);
 });
 
+test('panToDayStart is accepted by name', () => {
+    const engine = makeBareEngine();
+    const warnings = [];
+    const realWarn = console.warn;
+    console.warn = (m) => warnings.push(m);
+    try {
+        engine._applyOptions({ panToDayStart: true });
+    } finally {
+        console.warn = realWarn;
+    }
+    assert.equal(warnings.length, 0);
+    assert.equal(engine.config.panToDayStart, true);
+});
+
 test('setting the resource-axis width updates config and notifies only when asked', () => {
     const engine = makeBareEngine();
     engine._viewportW = 1000;

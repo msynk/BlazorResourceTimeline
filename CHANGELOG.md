@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Options.ResourceAxisMaxWidth` and the viewport, and reports the committed
   width through `OnResourceAxisWidthChanged`. Set
   `Options.ResourceAxisResizable = false` to keep a fixed column.
+- `Options.PanToDayStart`: `PanByDaysAsync` lands the leading edge on a local
+  midnight (the start of the day N calendar days away in `Options.TimeZone`)
+  instead of shifting by exactly 24 hours. DST 23- and 25-hour days count as
+  one step. Off by default, so existing hosts keep the 24-hour behaviour. A
+  non-null `panToDayStart` argument on `PanByDaysAsync` overrides the option
+  for that call.
 
 ## [0.4.1] - 2026-08-25
 

@@ -1,12 +1,12 @@
 // Where the viewport lands across data loads: the first-load centering on
 // "now" (autoScrollToNow), keeping the view across a reload
 // (preserveScrollOnReload), the "now" indicator's refresh timer, and the
-// day/week steps panByDays makes.
+// day/week steps panByDays makes (24-hour or panToDayStart midnight snaps).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { makeBareEngine } from './helpers/engine-fixture.mjs';
+import { makeBareEngine, ZonedTime } from './helpers/engine-fixture.mjs';
 
 const HOUR = 3600000;
 
@@ -146,6 +146,139 @@ test('a pan does not change the horizontal scale', () => {
     engine.panByDays(7);
 
     assert.equal(engine._pixelsPerHour, scale);
+});
+
+// A laid-out engine whose pans snap the leading edge to local midnight.
+function makeDayStartEngine({ timeZone = 'UTC', rangeStart, days = 40, panToDayStart = true } = {}) {
+    const engine = makeLaidOutEngine({ config: { timeZone, panToDayStart } });
+    engine._rebuildDateFormatters();
+    engine.timeRange = { start: rangeStart, end: rangeStart + days * 24 * HOUR };
+    applyScale(engine, 60);
+    engine.render = () => { };
+    return engine;
+}
+
+function setLead(engine, time) {
+    engine._setVirtualScrollX((time - engine.timeRange.start) * engine._pixelsPerMs);
+}
+
+test('panToDayStart steps from mid-day to the next local midnight', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start });
+    setLead(engine, Date.parse('2026-06-10T15:30:00Z'));
+
+    engine.panByDays(1);
+
+    assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-11T00:00:00Z')) < 1);
+});
+
+test('panToDayStart from a midnight is the next calendar day, not 24 hours later', () => {
+    // Sunday 2026-03-08 00:00 America/New_York to Monday 00:00 is 23 hours:
+    // clocks jump 02:00 -> 03:00 that morning.
+    const zone = new ZonedTime('America/New_York');
+    const sunday = zone.wallClockToTs(2026, 3, 8, 0, 0, 0);
+    const monday = zone.addDays(sunday, 1);
+    const engine = makeDayStartEngine({
+        timeZone: 'America/New_York',
+        rangeStart: zone.addDays(sunday, -5)
+    });
+    setLead(engine, sunday);
+
+    engine.panByDays(1);
+
+    assert.ok(Math.abs(leadTime(engine) - monday) < 1);
+    assert.equal(monday - sunday, 23 * HOUR, 'oracle: the stepped day is 23 hours long');
+});
+
+test('panToDayStart treats a fall-back day as one calendar step', () => {
+    // Sunday 2026-11-01 00:00 America/New_York to Monday 00:00 is 25 hours:
+    // clocks repeat 01:00 that morning.
+    const zone = new ZonedTime('America/New_York');
+    const sunday = zone.wallClockToTs(2026, 11, 1, 0, 0, 0);
+    const monday = zone.addDays(sunday, 1);
+    const engine = makeDayStartEngine({
+        timeZone: 'America/New_York',
+        rangeStart: zone.addDays(sunday, -5)
+    });
+    setLead(engine, sunday);
+
+    engine.panByDays(1);
+
+    assert.ok(Math.abs(leadTime(engine) - monday) < 1);
+    assert.equal(monday - sunday, 25 * HOUR);
+});
+
+test('panToDayStart a week lands on the midnight seven calendar days ahead', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start });
+    setLead(engine, Date.parse('2026-06-10T15:30:00Z'));
+
+    engine.panByDays(7);
+
+    assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-17T00:00:00Z')) < 1);
+});
+
+test('panToDayStart from a midnight round-trips', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start });
+    const midnight = Date.parse('2026-06-10T00:00:00Z');
+    setLead(engine, midnight);
+    const before = engine.scrollX;
+
+    engine.panByDays(1);
+    engine.panByDays(-1);
+
+    assert.equal(engine.scrollX, before);
+});
+
+test('panToDayStart back from mid-day lands on that day\'s start, not the original time', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start });
+    setLead(engine, Date.parse('2026-06-10T15:30:00Z'));
+
+    engine.panByDays(-1);
+
+    assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-09T00:00:00Z')) < 1);
+});
+
+test('panToDayStart is still clamped to the range', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start, days: 10 });
+    engine._setVirtualScrollX(engine._virtualScrollMaxX);
+
+    assert.equal(engine.panByDays(1), false);
+    assert.equal(engine.scrollX, engine._virtualScrollMaxX);
+});
+
+test('a panByDays(true) argument snaps to midnight even when the option is off', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start, panToDayStart: false });
+    setLead(engine, Date.parse('2026-06-10T15:30:00Z'));
+
+    engine.panByDays(1, true);
+
+    assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-11T00:00:00Z')) < 1);
+});
+
+test('a panByDays(false) argument keeps a 24-hour step even when the option is on', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start });
+    const afternoon = Date.parse('2026-06-10T15:30:00Z');
+    setLead(engine, afternoon);
+
+    engine.panByDays(1, false);
+
+    assert.ok(Math.abs(leadTime(engine) - (afternoon + 24 * HOUR)) < 1);
+});
+
+test('a null panByDays override defers to the option', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start });
+    setLead(engine, Date.parse('2026-06-10T15:30:00Z'));
+
+    engine.panByDays(1, null);
+
+    assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-11T00:00:00Z')) < 1);
 });
 
 test('zoomToDays fits exactly that many days into the content area', () => {
