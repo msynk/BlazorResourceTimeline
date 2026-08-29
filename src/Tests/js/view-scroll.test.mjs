@@ -218,6 +218,81 @@ test('panToDayStart a week lands on the midnight seven calendar days ahead', () 
     assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-17T00:00:00Z')) < 1);
 });
 
+test('panToDayStart still steps when the lead is a fraction of a pixel before midnight', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start });
+    setLead(engine, Date.parse('2026-06-10T00:00:00Z'));
+    // Native scrollLeft is an integer CSS pixel; after a midnight landing the
+    // read-back virtual offset can sit just before that instant.
+    engine.scrollX -= 0.6;
+
+    engine.panByDays(1);
+
+    assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-11T00:00:00Z')) < 1);
+});
+
+test('panToDayStart back still steps when the lead is a fraction of a pixel before midnight', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start });
+    setLead(engine, Date.parse('2026-06-10T00:00:00Z'));
+    engine.scrollX -= 0.6;
+
+    engine.panByDays(-1);
+
+    assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-09T00:00:00Z')) < 1);
+});
+
+test('panToDayStart a week still steps when the lead is a fraction of a pixel before midnight', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start });
+    setLead(engine, Date.parse('2026-06-10T00:00:00Z'));
+    engine.scrollX -= 0.6;
+
+    engine.panByDays(7);
+
+    assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-17T00:00:00Z')) < 1);
+});
+
+test('panToDayStart still steps after native scrollLeft quantization', () => {
+    const start = Date.parse('2026-06-01T00:07:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start });
+    applyScale(engine, 47);
+    setLead(engine, Date.parse('2026-06-10T00:00:00Z'));
+    engine.wrapper.scrollLeft = Math.floor(engine.scrollX / engine._scrollScaleX);
+    engine.scrollX = engine.wrapper.scrollLeft * engine._scrollScaleX;
+
+    engine.panByDays(1);
+
+    assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-11T00:00:00Z')) < 1);
+});
+
+test('panToDayStart still steps across a scaled scrollbar tick', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start });
+    engine._scrollScaleX = 4;
+    setLead(engine, Date.parse('2026-06-10T00:00:00Z'));
+    engine.scrollX -= 2;
+
+    engine.panByDays(1);
+
+    assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-11T00:00:00Z')) < 1);
+});
+
+test('panToDayStart still steps when the lead is a fraction of a pixel after midnight', () => {
+    const start = Date.parse('2026-06-01T00:00:00Z');
+    const engine = makeDayStartEngine({ rangeStart: start });
+    setLead(engine, Date.parse('2026-06-10T00:00:00Z'));
+    engine.scrollX += 0.6;
+
+    engine.panByDays(1);
+    assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-11T00:00:00Z')) < 1);
+
+    setLead(engine, Date.parse('2026-06-10T00:00:00Z'));
+    engine.scrollX += 0.6;
+    engine.panByDays(-1);
+    assert.ok(Math.abs(leadTime(engine) - Date.parse('2026-06-09T00:00:00Z')) < 1);
+});
+
 test('panToDayStart from a midnight round-trips', () => {
     const start = Date.parse('2026-06-01T00:00:00Z');
     const engine = makeDayStartEngine({ rangeStart: start });
@@ -482,4 +557,44 @@ test('the "now" indicator repaints on its interval, but only when it would move'
     } finally {
         engine._stopNowTimer();
     }
+});
+
+test('setPixelsPerHour notifies OnViewChanged once when the scale changes', () => {
+    const engine = makeZoomableEngine(30);
+    const calls = [];
+    engine.dotNetRef = {
+        invokeMethodAsync: (name, ...args) => { calls.push({ name, args }); return Promise.resolve(); }
+    };
+
+    engine.setPixelsPerHour(40);
+
+    const views = calls.filter(c => c.name === 'OnViewChanged');
+    assert.equal(views.length, 1);
+    assert.equal(views[0].args.length, 3);
+    assert.equal(views[0].args[2], engine._pixelsPerHour);
+});
+
+test('scrollToAllocation puts the bar start in the viewport', () => {
+    const engine = makeLaidOutEngine();
+    const start = engine.timeRange.start + 48 * HOUR;
+    const alloc = {
+        id: 'far',
+        resourceId: engine._rows[0].resource.id,
+        startTime: start,
+        endTime: start + HOUR
+    };
+    engine.allocations = [alloc];
+    engine._rowIndexById.set(alloc.resourceId, 0);
+    engine.render = () => {};
+
+    assert.equal(engine.scrollToAllocation('far'), true);
+    const startC = engine._timeToContentX(start);
+    assert.ok(startC >= engine.scrollX - 1, 'start is not left of the view');
+    assert.ok(startC <= engine.scrollX + engine._visibleWidth + 1, 'start is not right of the view');
+});
+
+test('scrollToAllocation returns false for an unknown id', () => {
+    const engine = makeLaidOutEngine();
+    engine.render = () => {};
+    assert.equal(engine.scrollToAllocation('nope'), false);
 });

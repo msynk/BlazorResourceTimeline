@@ -238,3 +238,99 @@ test('empty resources return a usable empty row index', () => {
     assert.equal(row.maxSpanMs, 0);
     assert.equal(engine._firstVisibleAllocationIndex(row, 12345), 0);
 });
+
+test('upsert one bar keeps an untouched id in the selection', () => {
+    const engine = makeIndexedEngine([
+        alloc('a', 'r0', 100, 200),
+        alloc('b', 'r0', 300, 400)
+    ]);
+    engine._relayout = () => {};
+    engine.selectedBars.add('a');
+    engine.selectedBars.add('b');
+
+    engine.upsertAllocations([alloc('b', 'r0', 300, 500)]);
+
+    assert.ok(engine.selectedBars.has('a'));
+    assert.ok(engine.selectedBars.has('b'));
+    assert.equal(engine.allocations.find(x => x.id === 'b').endTime, 500);
+    assert.deepEqual(indexViolations(engine), []);
+});
+
+test('remove of the focused id clears focus only', () => {
+    const engine = makeIndexedEngine([
+        alloc('a', 'r0', 100, 200),
+        alloc('b', 'r0', 300, 400)
+    ]);
+    engine._relayout = () => {};
+    engine.selectedBars.add('a');
+    engine.selectedBars.add('b');
+    engine._focusAlloc = engine.allocations.find(x => x.id === 'a');
+
+    engine.removeAllocations(['a']);
+
+    assert.equal(engine._focusAlloc, null);
+    assert.ok(engine.selectedBars.has('b'));
+    assert.equal(engine.selectedBars.has('a'), false);
+    assert.equal(engine.allocations.some(x => x.id === 'a'), false);
+    assert.deepEqual(indexViolations(engine), []);
+});
+
+test('sanitize drops inverted ranges and empty ids', () => {
+    const engine = makeIndexedEngine([alloc('ok', 'r0', 0, 50)]);
+    const warnings = [];
+    const realWarn = console.warn;
+    console.warn = (m) => warnings.push(m);
+    try {
+        const cleaned = engine._sanitizeAllocations([
+            alloc('ok', 'r0', 0, 50),
+            alloc('bad', 'r0', 200, 100),
+            { id: '', resourceId: 'r0', startTime: 0, endTime: 10 },
+            alloc('ok', 'r0', 10, 80)
+        ]);
+        assert.deepEqual(cleaned.map(a => a.id), ['ok']);
+        assert.equal(cleaned[0].startTime, 10);
+        engine.allocations = cleaned;
+        engine._indexAllocations();
+        assert.deepEqual(indexViolations(engine), []);
+    } finally {
+        console.warn = realWarn;
+    }
+});
+
+test('MaxStackLanes 3 on 10 overlapping bars yields 3 lanes and overflow 7', () => {
+    const bars = [];
+    for (let i = 0; i < 10; i++) bars.push(alloc('a' + i, 'r0', 0, 100));
+    const engine = makeIndexedEngine(bars, { config: { maxStackLanes: 3 } });
+    const lanes = new Set();
+    let overflow = 0;
+    for (const a of engine.allocations) {
+        const info = engine._laneInfo.get(a);
+        if (info && info.overflow) overflow++;
+        else lanes.add(info.lane);
+    }
+    assert.equal(lanes.size, 3);
+    assert.equal(overflow, 7);
+});
+
+test('windowed apply keeps overlapping ids and object identity', () => {
+    const a1 = alloc('1', 'r0', 0, 50);
+    const a2 = alloc('2', 'r0', 80, 150);
+    const engine = makeIndexedEngine([a1, a2]);
+    engine._relayout = () => {};
+    engine.render = () => {};
+    engine._hideTooltip = () => {};
+    engine._windowAppliedId = -1;
+    engine._windowRequestId = 1;
+    engine.selectedBars.add('2');
+    engine._focusAlloc = a2;
+
+    const a3 = alloc('3', 'r0', 140, 200);
+    engine.applyAllocationWindow(1, [a2, a3], 80, 200);
+
+    assert.equal(engine.allocations.some(a => a.id === '1'), false);
+    assert.equal(engine.allocations.find(a => a.id === '2'), a2);
+    assert.ok(engine.allocations.some(a => a.id === '3'));
+    assert.ok(engine.selectedBars.has('2'));
+    assert.equal(engine._focusAlloc, a2);
+    assert.deepEqual(indexViolations(engine), []);
+});

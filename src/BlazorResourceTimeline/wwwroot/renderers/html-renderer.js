@@ -86,9 +86,14 @@ export class HtmlRenderer {
                 node.removeAttribute('data-bar-id');
                 node.__barId = undefined;
             }
+            if (node.__className !== undefined) {
+                node.className = '';
+                node.__className = undefined;
+            }
         };
         this._pools = {
             bg: new NodePool(this._bgLayer),
+            nonWorking: new NodePool(this._bgLayer),
             gridH: new NodePool(this._gridLayer),
             gridV: new NodePool(this._gridLayer),
             barEdges: new NodePool(this._barsLayer),
@@ -117,6 +122,7 @@ export class HtmlRenderer {
         for (const key in this._pools) this._pools[key].begin();
 
         this._buildBackground(scene);
+        this._buildNonWorking(scene);
         this._buildGrid(scene);
         this._buildBars(scene);
         this._buildNowLine(scene);
@@ -175,6 +181,15 @@ export class HtmlRenderer {
         this._rect(pool, v.axisWidth, 0, contentWidth, v.axisHeight, colors.axisBg);
     }
 
+    _buildNonWorking(scene) {
+        const bands = scene.nonWorking;
+        if (!bands || !bands.length) return;
+        const fill = scene.config.colors.nonWorking || 'rgba(0, 0, 0, 0.06)';
+        for (const b of bands) {
+            this._rect(this._pools.nonWorking, b.x, b.y, b.width, b.height, fill);
+        }
+    }
+
     _buildGrid(scene) {
         const grid = scene.config.colors.grid;
         const v = scene.viewport;
@@ -201,6 +216,11 @@ export class HtmlRenderer {
             if (barEl.__barId !== bar.id) {
                 barEl.dataset.barId = bar.id;
                 barEl.__barId = bar.id;
+            }
+            const nextClass = bar.className || '';
+            if (barEl.__className !== nextClass) {
+                barEl.className = nextClass;
+                barEl.__className = nextClass;
             }
 
             // A 2px stroke centred on the rect covers one extra pixel on each
@@ -247,6 +267,13 @@ export class HtmlRenderer {
                         c.barLabelFont, c.colors.barLabel, label.align, label.baseline);
                 }
             }
+        }
+
+        for (const n of scene.overflow || []) {
+            this._rect(p.barOutlines, n.x, n.y, n.width, n.height,
+                c.colors.axisBg, `1px solid ${c.colors.axisBorder}`);
+            this._text(p.barLabels, n.text, n.x + 3, n.y + n.height / 2,
+                c.barLabelFont, c.colors.dateLabel, 'left', 'middle');
         }
     }
 

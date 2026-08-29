@@ -42,6 +42,13 @@
             </div>
         </div>
     }
+    @if (TooltipTemplate is not null && _hoverAllocation is not null)
+    {
+        <div class="timeline-tooltip-overlay"
+             style="left:@(_hoverClientX.ToString(System.Globalization.CultureInfo.InvariantCulture))px;top:@(_hoverClientY.ToString(System.Globalization.CultureInfo.InvariantCulture))px;">
+            @TooltipTemplate(_hoverAllocation)
+        </div>
+    }
     @if (_isLoading)
     {
         <div class="timeline-loading" role="status" aria-live="polite">

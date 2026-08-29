@@ -1,17 +1,18 @@
 ﻿@page "/"
+@using System.Text.Json
 @using global::BlazorResourceTimeline
 @using global::BlazorResourceTimeline.Demo.Data
 @implements IAsyncDisposable
 @inject IJSRuntime JS
 
-<PageTitle>Resource Timeline - 0.5.0</PageTitle>
+<PageTitle>Resource Timeline - 0.6.0</PageTitle>
 
 <div class="demo-page@(_darkTheme ? " theme-dark" : "")">
     <header class="demo-header">
         @* Actions sit on the title line; the settings below are grouped and
            compact so the header stays a thin band above the timeline. *@
         <div class="demo-titlebar">
-            <h1>Resource Timeline - 0.5.0</h1>
+            <h1>Resource Timeline - 0.6.0</h1>
             <div class="demo-actions">
                 @* PanByDaysAsync is the same movement the page-level arrow
                    keys make, so these buttons and the shortcuts stay in step. *@
@@ -95,6 +96,18 @@
                     <input type="checkbox" @bind="_editable" @bind:after="ApplyOptions" />
                     Editable
                 </label>
+                <label class="ctl-check" title="Options.AllowOverlap: refuse a drop onto a busy slot on the same row (touching ends are still allowed)">
+                    <input type="checkbox" @bind="_preventOverlap" @bind:after="ApplyOptions" />
+                    Prevent overlap
+                </label>
+                <label class="ctl-check" title="Options.EmptyDragAction.Create: drag an empty slot to draw a new bar (Ctrl-drag still marquees)">
+                    <input type="checkbox" @bind="_createOnDrag" @bind:after="ApplyOptions" />
+                    Drag empty to create
+                </label>
+                <label class="ctl-check" title="Options.AllowDelete: Delete/Backspace removes selected bars">
+                    <input type="checkbox" @bind="_allowDelete" @bind:after="ApplyOptions" />
+                    Allow delete
+                </label>
                 <label class="ctl-check" title="Render the resource column with a custom HTML template">
                     <input type="checkbox" @bind="_customColumn" />
                     Custom column
@@ -113,6 +126,12 @@
                     <input type="range" min="0" max="16" step="1"
                            @bind="_barMargin" @bind:event="oninput" @bind:after="ApplyOptions" />
                     <span class="ctl-value">@_barMargin px</span>
+                </label>
+                <label class="ctl-range" title="Options.MaxStackLanes: extra bars hide behind +N (0 = unlimited)">
+                    Max lanes
+                    <input type="range" min="0" max="8" step="1"
+                           @bind="_maxStackLanes" @bind:event="oninput" @bind:after="ApplyOptions" />
+                    <span class="ctl-value">@(_maxStackLanes == 0 ? "off" : _maxStackLanes.ToString())</span>
                 </label>
                 <label class="ctl-check" title="BarIcon.Inside: draw each bar icon within its bar, against the edge its position names, instead of beside it (bars carrying one are grown to fit)">
                     <input type="checkbox" @bind="_insideIcons" @bind:after="ToggleIconPlacement" />
@@ -135,6 +154,14 @@
                 <label class="ctl-check" title="Add a second hour row, in UTC, above the time-zone row">
                     <input type="checkbox" @bind="_showUtcTime" @bind:after="ApplyOptions" />
                     UTC row
+                </label>
+                <label class="ctl-check" title="Options.Hour12: hour-row labels as 3 PM instead of 15">
+                    <input type="checkbox" @bind="_hour12" @bind:after="ApplyOptions" />
+                    12-hour
+                </label>
+                <label class="ctl-check" title="Options.NonWorkingDays + working hours: shade weekends and 09:00–17:00 off-hours (visual only)">
+                    <input type="checkbox" @bind="_shadeWeekends" @bind:after="ApplyOptions" />
+                    Shade weekends
                 </label>
             </div>
 
@@ -167,6 +194,13 @@
         <span><strong>@LeafResourceCount</strong> resources</span>
         <span><strong>@(_config?.Allocations.Count ?? 0)</strong> allocations</span>
         <span><strong>@_days</strong> days</span>
+        @if (_view is not null)
+        {
+            <span title="OnViewChanged: visible content range">
+                View <strong>@_view.Start.ToString("d MMM")</strong>
+                &ndash; <strong>@_view.End.ToString("d MMM")</strong>
+            </span>
+        }
         <span class="demo-keys" title="Click the timeline to give it focus and use the arrows to move between bars instead">
             <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> pans a day, <kbd>Ctrl</kbd>+<kbd>&larr;</kbd>/<kbd>&rarr;</kbd> a week
         </span>
@@ -199,13 +233,17 @@
             }
             else
             {
-                <text>No bar selected &mdash; drag to marquee-select, Ctrl+click to multi-select</text>
+                <text>No bar selected &mdash; drag to marquee-select, Ctrl+click to toggle, Shift+click for a range</text>
             }
         </span>
         <button class="btn-clear@(_selectedBars.Count == 0 ? " is-placeholder" : "")"
                 disabled="@(_selectedBars.Count == 0)"
                 aria-hidden="@(_selectedBars.Count == 0)"
                 @onclick="ClearSelectionAsync">Clear</button>
+        <button class="btn-clear@(_selectedBars.Count == 0 ? " is-placeholder" : "")"
+                disabled="@(_selectedBars.Count == 0)"
+                title="ScrollToAllocationAsync"
+                @onclick="ScrollToSelectedAsync">Go to</button>
     </section>
 
     <div class="demo-timeline">
@@ -218,9 +256,21 @@
                               LoadAllocationsAsync="@(_windowed ? LoadWindowAsync : null)"
                               ResourceTemplate="@(_customColumn ? ColumnTemplate : null)"
                               OnSelectionChanged="HandleSelectionChanged"
+                              OnViewChanged="HandleViewChanged"
                               OnAllocationChanged="HandleAllocationChanged"
+                              OnAllocationChanging="HandleAllocationChanging"
+                              OnAllocationsChanging="HandleAllocationsChanging"
+                              OnAllocationsDeleting="HandleAllocationsDeleting"
+                              OnAllocationsCopying="HandleAllocationsCopying"
+                              OnAllocationCreating="HandleAllocationCreating"
                               OnContextMenu="ShowContextMenu"
                               OnResourceAxisWidthChanged="HandleResourceAxisWidthChanged">
+                <TooltipTemplate>
+                    <div class="demo-tip">
+                        <span class="demo-tip-badge">@ResourceNameFor(context.ResourceId)</span>
+                        <div>@(string.IsNullOrEmpty(context.Tooltip) ? context.Id : context.Tooltip)</div>
+                    </div>
+                </TooltipTemplate>
                 <TopStartContent>
                     <div class="corner">
                         <span class="corner-title">Resources</span>
@@ -310,6 +360,7 @@
     private BlazorResourceTimeline? _timeline;
     private BlazorResourceTimelineConfig? _config;
     private IReadOnlyList<BlazorResourceTimelineAllocation> _selectedBars = Array.Empty<BlazorResourceTimelineAllocation>();
+    private BlazorResourceTimelineView? _view;
     private int _days = 30;
     private int _barHeight = 4;
     private int _barMargin = 2;
@@ -318,6 +369,12 @@
     private string _timeZone = "";
     private bool _showUtcTime;
     private bool _editable;
+    private bool _preventOverlap;
+    private bool _createOnDrag;
+    private bool _allowDelete;
+    private bool _hour12;
+    private bool _shadeWeekends;
+    private int _maxStackLanes;
     private bool _insideIcons;
     private bool _windowed;
     private bool _customColumn;
@@ -544,6 +601,10 @@
             }
 
             DataGenerator.ApplyIconPlacement(config.Allocations, _insideIcons);
+            if (config.Allocations.Count > 0)
+            {
+                config.Allocations[0].ClassName = "demo-striped";
+            }
             _config = config;
         }
         catch (OperationCanceledException)
@@ -695,6 +756,16 @@
         PanToDayStart = _panToDayStart,
         NowLineRefreshMs = _nowRefreshMs,
         Editable = _editable,
+        AllowOverlap = !_preventOverlap,
+        EmptyDragAction = _createOnDrag
+            ? BlazorResourceTimelineEmptyDragAction.Create
+            : BlazorResourceTimelineEmptyDragAction.Marquee,
+        AllowDelete = _allowDelete,
+        Hour12 = _hour12,
+        MaxStackLanes = _maxStackLanes,
+        NonWorkingDays = _shadeWeekends ? [0, 6] : [],
+        WorkingHoursStart = _shadeWeekends ? 540 : 0,
+        WorkingHoursEnd = _shadeWeekends ? 1020 : 0,
         BarHeight = _barHeight,
         BarMargin = _barMargin,
         Renderer = _renderer switch
@@ -727,6 +798,7 @@
         Focus = "#1971c2",
         TooltipBg = "#212529",
         TooltipText = "#ffffff",
+        NonWorking = "rgba(0, 0, 0, 0.05)",
     };
 
     private static readonly BlazorResourceTimelineColors DarkTimelineColors = new()
@@ -748,6 +820,7 @@
         Focus = "#74c0fc",
         TooltipBg = "#f8f9fa",
         TooltipText = "#212529",
+        NonWorking = "rgba(255, 255, 255, 0.06)",
     };
 
     private async Task ToggleThemeAsync()
@@ -776,6 +849,105 @@
         _lastEdit = $"{ResourceNameFor(allocation.ResourceId)} " +
             $"{FormatTime(allocation.StartTime)} \u2013 {FormatTime(allocation.EndTime)}";
         StateHasChanged();
+    }
+
+    // Host-side cancel: Database-01 is closed to incoming bars. Returning false
+    // snaps the bar back without ReloadAsync.
+    private Task<bool> HandleAllocationChanging(BlazorResourceTimelineAllocationChange change)
+    {
+        if (change.Kind == BlazorResourceTimelineAllocationChangeKind.Move
+            && ResourceNameFor(change.Allocation.ResourceId) == "Database-01"
+            && ResourceNameFor(change.PreviousResourceId) != "Database-01")
+        {
+            _lastEdit = "Refused: Database-01 does not accept incoming bars";
+            return Task.FromResult(false);
+        }
+
+        return Task.FromResult(true);
+    }
+
+    private async Task<bool> HandleAllocationsChanging(
+        IReadOnlyList<BlazorResourceTimelineAllocationChange> changes)
+    {
+        foreach (var change in changes)
+        {
+            if (!await HandleAllocationChanging(change))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private Task<bool> HandleAllocationsDeleting(IReadOnlyList<string> ids)
+    {
+        if (_config is null)
+        {
+            return Task.FromResult(false);
+        }
+
+        var drop = ids.ToHashSet(StringComparer.Ordinal);
+        _config.Allocations.RemoveAll(a => drop.Contains(a.Id));
+        _lastEdit = $"Deleted {ids.Count} bar(s)";
+        return Task.FromResult(true);
+    }
+
+    private Task<IReadOnlyList<BlazorResourceTimelineAllocation>?> HandleAllocationsCopying(
+        BlazorResourceTimelineCopyRequest request)
+    {
+        var clones = new List<BlazorResourceTimelineAllocation>(request.Allocations.Count);
+        foreach (var src in request.Allocations)
+        {
+            var clone = new BlazorResourceTimelineAllocation
+            {
+                Id = $"copy-{Guid.NewGuid():N}",
+                ResourceId = src.ResourceId,
+                StartTime = src.StartTime + request.Offset,
+                EndTime = src.EndTime + request.Offset,
+                Color = src.Color,
+                Height = src.Height,
+                TextAbove = src.TextAbove,
+                TextBelow = src.TextBelow,
+                TextStart = src.TextStart,
+                TextEnd = src.TextEnd,
+                Tooltip = src.Tooltip,
+                ClassName = src.ClassName,
+            };
+            clones.Add(clone);
+            _config?.Allocations.Add(clone);
+        }
+
+        _lastEdit = $"Pasted {clones.Count} bar(s)";
+        return Task.FromResult<IReadOnlyList<BlazorResourceTimelineAllocation>?>(clones);
+    }
+
+    private void HandleViewChanged(BlazorResourceTimelineView view) => _view = view;
+
+    private async Task ScrollToSelectedAsync()
+    {
+        if (_timeline is not null && _selectedBars.Count > 0)
+        {
+            await _timeline.ScrollToAllocationAsync(_selectedBars[0].Id);
+        }
+    }
+
+    private Task<BlazorResourceTimelineAllocation?> HandleAllocationCreating(
+        BlazorResourceTimelineCreateRequest request)
+    {
+        var created = new BlazorResourceTimelineAllocation
+        {
+            Id = $"new-{Guid.NewGuid():N}",
+            ResourceId = request.ResourceId,
+            StartTime = request.StartTime,
+            EndTime = request.EndTime,
+            TextAbove = "New",
+            Data = JsonSerializer.SerializeToElement(new { created = true }),
+        };
+        _config?.Allocations.Add(created);
+        _lastEdit = $"Created on {ResourceNameFor(created.ResourceId)} " +
+            $"{FormatTime(created.StartTime)} \u2013 {FormatTime(created.EndTime)}";
+        return Task.FromResult<BlazorResourceTimelineAllocation?>(created);
     }
 
     private async Task ClearSelectionAsync()

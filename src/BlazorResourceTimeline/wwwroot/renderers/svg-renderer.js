@@ -92,6 +92,7 @@ export class SvgRenderer {
         const pool = (parent, onHide) => new NodePool(parent, SVG_NS, onHide);
         this._pools = {
             bg: pool(this._bgGroup),
+            nonWorking: pool(this._bgGroup),
             gridH: pool(this._gridGroup),
             gridV: pool(this._gridGroup),
             barEdges: pool(this._barsGroup),
@@ -147,6 +148,7 @@ export class SvgRenderer {
         for (const key in this._pools) this._pools[key].begin();
 
         this._buildBackground(scene);
+        this._buildNonWorking(scene);
         this._buildGrid(scene);
         this._buildBars(scene);
         this._buildNowLine(scene);
@@ -213,6 +215,15 @@ export class SvgRenderer {
         this._rect(pool, v.axisWidth, 0, contentWidth, v.axisHeight, colors.axisBg);
     }
 
+    _buildNonWorking(scene) {
+        const bands = scene.nonWorking;
+        if (!bands || !bands.length) return;
+        const fill = scene.config.colors.nonWorking || 'rgba(0, 0, 0, 0.06)';
+        for (const b of bands) {
+            this._rect(this._pools.nonWorking, b.x, b.y, b.width, b.height, fill);
+        }
+    }
+
     _buildGrid(scene) {
         const grid = scene.config.colors.grid;
         const v = scene.viewport;
@@ -276,6 +287,13 @@ export class SvgRenderer {
                         c.barLabelFont, c.colors.barLabel, label.align, label.baseline);
                 }
             }
+        }
+
+        for (const n of scene.overflow || []) {
+            this._rect(p.barOutlines, n.x, n.y, n.width, n.height,
+                c.colors.axisBg, c.colors.axisBorder, 1);
+            this._text(p.barLabels, n.text, n.x + 3, n.y + n.height / 2,
+                c.barLabelFont, c.colors.dateLabel, 'left', 'middle');
         }
     }
 

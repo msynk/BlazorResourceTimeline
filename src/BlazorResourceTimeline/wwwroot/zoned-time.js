@@ -163,6 +163,19 @@ export class ZonedTime {
     formatDateTime(ts) {
         return this._dateTimeDtf.format(ts);
     }
+
+    // Hour-row label. 24-hour is a zero-padded number; 12-hour uses the
+    // locale's h12 cycle (en-US → "3 PM").
+    formatHour(hour, hour12) {
+        if (!hour12) return String(hour).padStart(2, '0');
+        if (!this._hour12Dtf) {
+            const opts = { hour: 'numeric', hourCycle: 'h12' };
+            if (this.timeZone) opts.timeZone = this.timeZone;
+            this._hour12Dtf = new Intl.DateTimeFormat(this.locale || undefined, opts);
+        }
+        const ts = this.wallClockToTs(2000, 1, 1, hour, 0, 0);
+        return this._hour12Dtf.format(ts);
+    }
 }
 
 // Hour boundaries in UTC, for the optional second axis row - same shape and

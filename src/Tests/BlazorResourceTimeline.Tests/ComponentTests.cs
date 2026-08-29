@@ -73,6 +73,188 @@ public class ComponentTests : BunitContext
     }
 
     [Fact]
+    public async Task Changing_Func_Is_Invoked_With_Previous_And_New_Then_Restores_On_False()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var config = SampleConfig();
+        var alloc = config.Allocations[0];
+
+        string? resourceDuring = null;
+        DateTimeOffset? startDuring = null;
+        string? previousResource = null;
+        BlazorResourceTimelineAllocationChangeKind? kind = null;
+
+        Task<bool> Changing(BlazorResourceTimelineAllocationChange change)
+        {
+            resourceDuring = change.Allocation.ResourceId;
+            startDuring = change.Allocation.StartTime;
+            previousResource = change.PreviousResourceId;
+            kind = change.Kind;
+            return Task.FromResult(false);
+        }
+
+        var cut = Render<TimelineComponent>(p => p
+            .Add(c => c.Config, config)
+            .Add(c => c.OnAllocationChanging, Changing));
+
+        await WaitUntil(() => JSInterop.Invocations["whenRendered"].Count > 0);
+
+        var allowed = false;
+        await cut.InvokeAsync(async () =>
+        {
+            allowed = await cut.Instance.ConfirmAllocationChange(
+                "a1", "r2", 10_000, 70_000, "r1", 0, 60_000, "move");
+        });
+
+        Assert.False(allowed);
+        Assert.Same(alloc, config.Allocations[0]);
+        Assert.Equal("r2", resourceDuring);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(10_000), startDuring);
+        Assert.Equal("r1", previousResource);
+        Assert.Equal(BlazorResourceTimelineAllocationChangeKind.Move, kind);
+        Assert.Equal("r1", alloc.ResourceId);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(0), alloc.StartTime);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(60_000), alloc.EndTime);
+    }
+
+    [Fact]
+    public async Task Changing_Func_Null_Accepts_The_Edit()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+
+        var cut = Render<TimelineComponent>(p => p.Add(c => c.Config, SampleConfig()));
+        await WaitUntil(() => JSInterop.Invocations["whenRendered"].Count > 0);
+
+        var allowed = false;
+        await cut.InvokeAsync(async () =>
+        {
+            allowed = await cut.Instance.ConfirmAllocationChange(
+                "a1", "r1", 10_000, 70_000, "r1", 0, 60_000, "resize");
+        });
+
+        Assert.True(allowed);
+    }
+
+    [Fact]
+    public async Task UpsertAllocationsAsync_Invokes_Js_After_Init()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var cut = Render<TimelineComponent>(p => p.Add(c => c.Config, SampleConfig()));
+        await WaitUntil(() => JSInterop.Invocations["whenRendered"].Count > 0);
+
+        var extra = new BlazorResourceTimelineAllocation
+        {
+            Id = "a2",
+            ResourceId = "r1",
+            StartTime = DateTimeOffset.FromUnixTimeMilliseconds(120_000),
+            EndTime = DateTimeOffset.FromUnixTimeMilliseconds(180_000),
+        };
+
+        await cut.InvokeAsync(() => cut.Instance.UpsertAllocationsAsync([extra]));
+
+        Assert.True(JSInterop.Invocations["upsertAllocations"].Count > 0);
+    }
+
+    [Fact]
+    public async Task RemoveAllocationsAsync_Invokes_Js_After_Init()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var cut = Render<TimelineComponent>(p => p.Add(c => c.Config, SampleConfig()));
+        await WaitUntil(() => JSInterop.Invocations["whenRendered"].Count > 0);
+
+        await cut.InvokeAsync(() => cut.Instance.RemoveAllocationsAsync(["a1"]));
+
+        Assert.True(JSInterop.Invocations["removeAllocations"].Count > 0);
+    }
+
+    [Fact]
+    public async Task SelectAsync_Invokes_SelectBars()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var cut = Render<TimelineComponent>(p => p.Add(c => c.Config, SampleConfig()));
+        await WaitUntil(() => JSInterop.Invocations["whenRendered"].Count > 0);
+
+        await cut.InvokeAsync(() => cut.Instance.SelectAsync(["a1"]));
+
+        Assert.True(JSInterop.Invocations["selectBars"].Count > 0);
+    }
+
+    [Fact]
+    public async Task View_Callback_Raises_OnViewChanged()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        BlazorResourceTimelineView? view = null;
+        var cut = Render<TimelineComponent>(p => p
+            .Add(c => c.Config, SampleConfig())
+            .Add(c => c.OnViewChanged, EventCallback.Factory.Create<BlazorResourceTimelineView>(this, v => view = v)));
+        await WaitUntil(() => JSInterop.Invocations["whenRendered"].Count > 0);
+
+        await cut.InvokeAsync(() => cut.Instance.NotifyViewChanged(0, 3_600_000, 40));
+
+        Assert.NotNull(view);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(0), view!.Start);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(3_600_000), view.End);
+        Assert.Equal(40, view.PixelsPerHour);
+    }
+
+    [Fact]
+    public async Task Creating_Func_Receives_Resource_And_Range()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var config = SampleConfig();
+        BlazorResourceTimelineCreateRequest? captured = null;
+        Task<BlazorResourceTimelineAllocation?> Creating(BlazorResourceTimelineCreateRequest request)
+        {
+            captured = request;
+            return Task.FromResult<BlazorResourceTimelineAllocation?>(new()
+            {
+                Id = "new-1",
+                ResourceId = request.ResourceId,
+                StartTime = request.StartTime,
+                EndTime = request.EndTime,
+            });
+        }
+
+        var cut = Render<TimelineComponent>(p => p
+            .Add(c => c.Config, config)
+            .Add(c => c.OnAllocationCreating, Creating));
+        await WaitUntil(() => JSInterop.Invocations["whenRendered"].Count > 0);
+
+        BlazorResourceTimelineAllocation? created = null;
+        await cut.InvokeAsync(async () =>
+        {
+            created = await cut.Instance.CreateAllocation("r1", 10_000, 70_000);
+        });
+
+        Assert.NotNull(created);
+        Assert.Equal("new-1", created.Id);
+        Assert.Equal("r1", captured!.ResourceId);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(10_000), captured.StartTime);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(70_000), captured.EndTime);
+    }
+
+    [Fact]
+    public async Task Creating_Func_Null_Return_Does_Not_Upsert()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        Task<BlazorResourceTimelineAllocation?> Creating(BlazorResourceTimelineCreateRequest _) =>
+            Task.FromResult<BlazorResourceTimelineAllocation?>(null);
+
+        var cut = Render<TimelineComponent>(p => p
+            .Add(c => c.Config, SampleConfig())
+            .Add(c => c.OnAllocationCreating, Creating));
+        await WaitUntil(() => JSInterop.Invocations["whenRendered"].Count > 0);
+
+        BlazorResourceTimelineAllocation? created = null;
+        await cut.InvokeAsync(async () =>
+        {
+            created = await cut.Instance.CreateAllocation("r1", 10_000, 70_000);
+        });
+
+        Assert.Null(created);
+    }
+
+    [Fact]
     public void Windowed_Mode_Requests_Initial_Window_From_Host()
     {
         JSInterop.Mode = JSRuntimeMode.Loose;

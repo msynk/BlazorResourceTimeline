@@ -34,6 +34,22 @@ public class AllocationWireFormatTests
     }
 
     [Fact]
+    public void Allocation_SerializesClassName()
+    {
+        var alloc = new BlazorResourceTimelineAllocation
+        {
+            Id = "a1",
+            ResourceId = "r1",
+            StartTime = DateTimeOffset.FromUnixTimeMilliseconds(0),
+            EndTime = DateTimeOffset.FromUnixTimeMilliseconds(1000),
+            ClassName = "hatch",
+        };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(alloc, Web));
+        Assert.Equal("hatch", doc.RootElement.GetProperty("className").GetString());
+    }
+
+    [Fact]
     public void EdgeBar_SerializesDurationAsMillisecondNumber()
     {
         var alloc = new BlazorResourceTimelineAllocation
@@ -63,6 +79,16 @@ public class AllocationWireFormatTests
             EditResizeHandlePx = 8,
             EditMinDurationMinutes = 10,
             AllowResourceChange = false,
+            AllowOverlap = false,
+            EmptyDragAction = BlazorResourceTimelineEmptyDragAction.Create,
+            SnapToTimeZone = true,
+            Hour12 = true,
+            MaxStackLanes = 3,
+            AllowDelete = true,
+            FirstDayOfWeek = DayOfWeek.Sunday,
+            NonWorkingDays = [0, 6],
+            WorkingHoursStart = 540,
+            WorkingHoursEnd = 1020,
         };
 
         using var doc = JsonDocument.Parse(JsonSerializer.Serialize(options, Web));
@@ -74,6 +100,17 @@ public class AllocationWireFormatTests
         Assert.Equal(8, root.GetProperty("editResizeHandlePx").GetInt32());
         Assert.Equal(10, root.GetProperty("editMinDurationMinutes").GetInt32());
         Assert.False(root.GetProperty("allowResourceChange").GetBoolean());
+        Assert.False(root.GetProperty("allowOverlap").GetBoolean());
+        Assert.Equal(JsonValueKind.String, root.GetProperty("emptyDragAction").ValueKind);
+        Assert.Equal("create", root.GetProperty("emptyDragAction").GetString(), ignoreCase: true);
+        Assert.True(root.GetProperty("snapToTimeZone").GetBoolean());
+        Assert.True(root.GetProperty("hour12").GetBoolean());
+        Assert.Equal(3, root.GetProperty("maxStackLanes").GetInt32());
+        Assert.True(root.GetProperty("allowDelete").GetBoolean());
+        Assert.Equal(0, root.GetProperty("firstDayOfWeek").GetInt32());
+        Assert.Equal(JsonValueKind.Array, root.GetProperty("nonWorkingDays").ValueKind);
+        Assert.Equal(540, root.GetProperty("workingHoursStart").GetInt32());
+        Assert.Equal(1020, root.GetProperty("workingHoursEnd").GetInt32());
     }
 
     [Fact]
@@ -87,6 +124,12 @@ public class AllocationWireFormatTests
         Assert.False(root.TryGetProperty("editable", out _));
         Assert.False(root.TryGetProperty("editSnapMinutes", out _));
         Assert.False(root.TryGetProperty("allowResourceChange", out _));
+        Assert.False(root.TryGetProperty("allowOverlap", out _));
+        Assert.False(root.TryGetProperty("emptyDragAction", out _));
+        Assert.False(root.TryGetProperty("snapToTimeZone", out _));
+        Assert.False(root.TryGetProperty("hour12", out _));
+        Assert.False(root.TryGetProperty("maxStackLanes", out _));
+        Assert.False(root.TryGetProperty("allowDelete", out _));
     }
 
     [Fact]
@@ -96,7 +139,7 @@ public class AllocationWireFormatTests
         {
             ShowTooltips = false,
             TooltipDelayMs = 500,
-            Colors = new() { TooltipBg = "#000", TooltipText = "#fff", Focus = "#f00" },
+            Colors = new() { TooltipBg = "#000", TooltipText = "#fff", Focus = "#f00", NonWorking = "rgba(0,0,0,0.06)" },
         };
 
         using var doc = JsonDocument.Parse(JsonSerializer.Serialize(options, Web));
@@ -108,6 +151,7 @@ public class AllocationWireFormatTests
         Assert.Equal("#000", colors.GetProperty("tooltipBg").GetString());
         Assert.Equal("#fff", colors.GetProperty("tooltipText").GetString());
         Assert.Equal("#f00", colors.GetProperty("focus").GetString());
+        Assert.Equal("rgba(0,0,0,0.06)", colors.GetProperty("nonWorking").GetString());
     }
 
     [Fact]
@@ -288,5 +332,64 @@ public class AllocationWireFormatTests
         Assert.Equal(alloc.StartTime, restored.StartTime);
         Assert.Equal(alloc.EndTime, restored.EndTime);
         Assert.Equal(alloc.EndBar!.Duration, restored.EndBar!.Duration);
+    }
+
+    [Fact]
+    public void Allocation_SerializesDataAsCamelCasedObjectAndRoundTrips()
+    {
+        var alloc = new BlazorResourceTimelineAllocation
+        {
+            Id = "a1",
+            ResourceId = "r1",
+            StartTime = DateTimeOffset.FromUnixTimeMilliseconds(0),
+            EndTime = DateTimeOffset.FromUnixTimeMilliseconds(1000),
+            Data = JsonSerializer.SerializeToElement(new { flightNo = "LH441" }),
+        };
+
+        var json = JsonSerializer.Serialize(alloc, Web);
+        using var doc = JsonDocument.Parse(json);
+        var data = doc.RootElement.GetProperty("data");
+
+        Assert.Equal(JsonValueKind.Object, data.ValueKind);
+        Assert.Equal("LH441", data.GetProperty("flightNo").GetString());
+
+        var restored = JsonSerializer.Deserialize<BlazorResourceTimelineAllocation>(json, Web)!;
+        Assert.True(restored.Data.HasValue);
+        Assert.Equal("LH441", restored.Data.Value.GetProperty("flightNo").GetString());
+    }
+
+    [Fact]
+    public void Allocation_SerializesLockedWhenTrueAndRoundTrips()
+    {
+        var alloc = new BlazorResourceTimelineAllocation
+        {
+            Id = "a1",
+            ResourceId = "r1",
+            StartTime = DateTimeOffset.FromUnixTimeMilliseconds(0),
+            EndTime = DateTimeOffset.FromUnixTimeMilliseconds(1000),
+            Locked = true,
+        };
+
+        var json = JsonSerializer.Serialize(alloc, Web);
+        using var doc = JsonDocument.Parse(json);
+        Assert.True(doc.RootElement.GetProperty("locked").GetBoolean());
+
+        var restored = JsonSerializer.Deserialize<BlazorResourceTimelineAllocation>(json, Web)!;
+        Assert.True(restored.Locked);
+    }
+
+    [Fact]
+    public void Allocation_OmitsLockedWhenFalse()
+    {
+        var alloc = new BlazorResourceTimelineAllocation
+        {
+            Id = "a1",
+            ResourceId = "r1",
+            StartTime = DateTimeOffset.FromUnixTimeMilliseconds(0),
+            EndTime = DateTimeOffset.FromUnixTimeMilliseconds(1000),
+        };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(alloc, Web));
+        Assert.False(doc.RootElement.TryGetProperty("locked", out _));
     }
 }

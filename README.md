@@ -40,11 +40,19 @@ lot of data must stay readable and interactive.
   `Options.PanToDayStart` (or pass `panToDayStart:` on the call) to land on
   local midnight instead. Hosts can put the same steps on their own keyboard
   shortcuts.
-- **Selection**: click, `Ctrl`/`Cmd`-click to toggle, and click-and-drag
-  marquee selection.
+- **Viewport**: `OnViewChanged` reports the visible time span and pixels-per-hour
+  (at most once per frame). `SelectAsync`, `ScrollToAllocationAsync` and
+  `ScrollToResourceAsync` drive selection and scroll from the host.
+- **Selection**: click, `Ctrl`/`Cmd`-click to toggle, `Shift`-click for a
+  contiguous range, and click-and-drag marquee selection (stacked lanes are
+  hit-tested in 2D).
 - **Editing** (opt-in): drag a bar to move it in time (or onto another
-  resource), or grab an edge to resize it, with configurable snapping and a
-  change callback back to .NET.
+  resource), or grab an edge to resize it, with wall-clock snapping (set
+  `SnapToTimeZone = false` for the old Unix-epoch grid). A host can refuse a
+  drop via `OnAllocationChanging` (no reload). Dragging one selected bar moves
+  the whole selection. Locked bars stay selectable. Drag empty content to create
+  when `EmptyDragAction` is `Create`. `AllowDelete` plus Delete/Backspace, and
+  Ctrl/Cmd+C / Ctrl/Cmd+V for copy/paste via host callbacks.
 - **Context menu (right-click)**: the native browser menu is suppressed and a
   callback reports what was hit - the bar, the resource row, the time under the
   pointer and the click's viewport coordinates - so you can render your own menu.
@@ -52,8 +60,11 @@ lot of data must stay readable and interactive.
   automatically stacked into lanes instead of drawn on top of each other, and
   the row grows to keep the whole stack inside it. `Options.ResourceHeight` is
   the *minimum* row height; `Options.BarMargin` sets the gap between lanes.
-- **Hover tooltips**: per-bar tooltips (custom text or an auto-generated
-  default), on by default and configurable.
+  `Options.MaxStackLanes` caps the stack and draws a `+N` overflow label.
+- **Hover tooltips**: per-bar tooltips (custom text, an auto-generated default,
+  or a `TooltipTemplate` overlay on every renderer), on by default and configurable.
+- **Working-time shading**: `NonWorkingDays` and `WorkingHoursStart` /
+  `WorkingHoursEnd` wash weekends and off-hours (visual only; snap is unchanged).
 - **Resource hierarchy**: nest resources into multi-level, collapsible groups
   via `ParentId`; click a group row (or use it from data) to expand/collapse.
 - **On-demand (windowed) loading**: for effectively unbounded datasets, serve
@@ -67,8 +78,10 @@ lot of data must stay readable and interactive.
   (`role`/`aria-label`); arrow keys then move between bars, with keyboard
   selection, editing, and live-region announcements.
 - **Time-zone-aware axes** (IANA ids via `Intl`), correct across DST, with an
-  optional `Locale` for day labels, tooltips and announcements, and an optional
-  second hour row in UTC (`Options.ShowUtcTime`) above the local one. Day titles
+  optional `Locale` for day labels, tooltips and announcements, an optional
+  12-hour hour row (`Options.Hour12`), `Options.FirstDayOfWeek` (for week
+  banding when present), and an optional second hour row in UTC
+  (`Options.ShowUtcTime`) above the local one. Day titles
   pin to the leading edge of their day and yield as the next midnight scrolls
   in, so they never stack.
 - **Touch & pen** support via Pointer Events.
@@ -78,7 +91,8 @@ lot of data must stay readable and interactive.
   a light, dark or brand palette is just another `Options` instance - switchable
   at runtime (the demo ships a dark theme).
 - **Rich bars**: per-bar colors and heights, labels (above/below/start/end),
-  image/SVG icons anchored to any side, and start/end "edge" (delay) bars.
+  image/SVG icons anchored to any side, start/end "edge" (delay) bars, and
+  `ClassName` on the HTML renderer.
 - **Dimensions & fonts**: axis sizes, row height, bar sizing and every label
   font are configurable. The resource column is resizable by default.
 
@@ -164,8 +178,10 @@ The component sizes itself to its container, so give the wrapping element a
 height.
 
 > **Note:** `Config` is compared by reference. Assign a *new*
-> `BlazorResourceTimelineConfig` instance to trigger a re-render, or call
-> `ReloadAsync()` after mutating the existing one in place.
+> `BlazorResourceTimelineConfig` instance to trigger a full reload (this
+> clears selection and focus). To change a few bars without that, mutate
+> them in place and call `UpsertAllocationsAsync`, or `RemoveAllocationsAsync`
+> to drop ids. `ReloadAsync()` still does a full `setData`.
 
 ## Renderers
 
@@ -178,7 +194,7 @@ across all three.
 | --- | --- | --- |
 | `Canvas` *(default)* | Immediate-mode 2D drawing, HiDPI/Retina-crisp via `ResizeObserver` + `device-pixel-content-box` | Dense boards; the fastest option |
 | `Svg` | Resolution-independent vector nodes | Inspecting, copying or printing the scene |
-| `Html` | One real DOM element per visible bar, carrying `data-bar-id` | Styling bars with your own CSS |
+| `Html` | One real DOM element per visible bar, carrying `data-bar-id` and optional `Allocation.ClassName` | Styling bars with your own CSS |
 
 All three cull to the visible viewport every frame, so cost tracks what is on
 screen rather than the size of the dataset.
@@ -364,6 +380,20 @@ and with `TimeZone = "UTC"` they read the same. The band below the day row is
 split evenly between them, so raise `TimeAxisHeight` (default 60) to give them
 more room.
 
+`Options.Hour12 = true` keeps tick positions on whole hours but labels them with
+the locale's 12-hour clock (`3 PM` in `en-US`). `Options.FirstDayOfWeek` (Sunday
+= 0 … Saturday = 6) is reserved for week-oriented banding; `PanByDaysAsync(7)`
+already steps a week. When null, the engine uses `Intl.Locale` weekInfo where
+available, otherwise Monday.
+
+### Working-time shading
+
+`Options.NonWorkingDays` (0 = Sunday … 6 = Saturday) and
+`WorkingHoursStart` / `WorkingHoursEnd` (minutes from local midnight) draw a wash
+behind bars. `Colors.NonWorking` is the fill. This is visual only: snap, scale
+and hit-testing are unchanged. Empty / omitted days and a missing hours window
+draw nothing.
+
 The rows are not captioned - use [`TopStartContent`](#notable-parameters) to
 label them in the otherwise blank top-start corner, as the demo does.
 
@@ -430,6 +460,9 @@ presentation:
 | `Icons` | Images or data-URI SVGs anchored `Start`, `End`, `Above`, `Below` or `Center`. Several at one position lay out side by side, growing away from the bar - or as one centered group for `Center`. `Inside = true` moves an icon within the bar, against the edge its position names (`Center` is always inside). |
 | `StartBar` / `EndBar` | Decorative "edge" bars extending before the start / after the end, each with its own `Duration` and `Color` - typically delays. |
 | `Tooltip` | Hover text (see [Tooltips](#tooltips)). |
+| `ClassName` | CSS class on the HTML-renderer bar element (paint only; canvas/SVG ignore it). Pointer events still go to the surface, so `:hover` on the bar does not fire. |
+| `Locked` | Selectable, not movable/resizable. |
+| `Data` | Host payload (`JsonElement`). The engine never reads it. |
 
 ```csharp
 new BlazorResourceTimelineAllocation
@@ -445,6 +478,9 @@ new BlazorResourceTimelineAllocation
     // 25 minutes late off-blocks, drawn in red after the planned end.
     EndBar = new() { Duration = TimeSpan.FromMinutes(25), Color = "#e03131" },
     Icons = [new() { Source = "/icons/warning.svg", Position = BlazorResourceTimelineBarIconPosition.Start }],
+    // Host DTO; the engine ignores it. Read it back from the same instance
+    // after selection or OnAllocationChanged.
+    Data = JsonSerializer.SerializeToElement(new { flightNo = "LH441" }),
 }
 ```
 
@@ -462,12 +498,24 @@ on the timeline (mouse/pen):
   resource row under the pointer.
 - **Resize** – drag within `EditResizeHandlePx` of a bar's start or end edge.
 - **Snapping** – moves and resizes snap to `EditSnapMinutes` (default 15; set
-  `0` for continuous). A resize never shrinks a bar below
+  `0` for continuous) on wall-clock multiples from local midnight in
+  `Options.TimeZone` (`SnapToTimeZone`, default `true`). Set `false` for the
+  previous Unix-epoch grid. A resize never shrinks a bar below
   `EditMinDurationMinutes`.
+- **Multi-move** – when the dragged bar is part of a multi-selection, the same
+  time delta (and optional row delta) is applied to every selected unlocked bar.
+  `OnAllocationsChanging` is one round-trip for the list; if that handler is
+  unset, a single-bar edit still uses `OnAllocationChanging`.
+- **Delete** – with `AllowDelete` (default `false`), Delete/Backspace asks
+  `OnAllocationsDeleting` then removes the selected (or focused) bars.
+- **Copy / paste** – Ctrl/Cmd+C copies selected ids; Ctrl/Cmd+V asks
+  `OnAllocationsCopying` for new allocations (new ids). The engine does not
+  invent ids.
 
 ```razor
 <BlazorResourceTimeline Config="_config"
                         Options="_options"
+                        OnAllocationChanging="OnAllocationChanging"
                         OnAllocationChanged="OnAllocationChanged" />
 
 @code {
@@ -475,23 +523,63 @@ on the timeline (mouse/pen):
     {
         Editable = true,
         EditSnapMinutes = 15,
+        // AllowOverlap = false, // refuse drops onto a busy slot on the same row
         // AllowResourceChange = false, // to lock rows and only edit in time
     };
 
+    private Task<bool> OnAllocationChanging(BlazorResourceTimelineAllocationChange change)
+    {
+        // `change.Allocation` is already updated to the preview. Return false
+        // to snap it back (previous resource/times are on `change`).
+        return Task.FromResult(true);
+    }
+
     private void OnAllocationChanged(BlazorResourceTimelineAllocation edited)
     {
-        // `edited` is the same instance from Config.Allocations, already updated
-        // in place with its new StartTime/EndTime/ResourceId. Persist it here.
+        // Fires only after a successful change. Persist `edited` here.
     }
 }
 ```
 
 Editing is also keyboard accessible: focus a bar and use `Alt`+arrows to move it,
 `Alt`+`Shift`+`←`/`→` to resize the end edge, `Alt`+`Shift`+`↑`/`↓` to resize the
-start edge, and `Alt`+`↑`/`↓` to change resource.
+start edge, and `Alt`+`↑`/`↓` to change resource. `Locked` bars are skipped
+(the live region announces that they cannot be edited).
 
-The renderer applies edits optimistically (the bar updates immediately). To
-reject an edit, revert the instance in your handler and call `ReloadAsync()`.
+`Options.AllowOverlap` defaults to `true` (overlapping bars stack). Set it to
+`false` to refuse a commit that would overlap another unlocked bar on the same
+resource; touching end-to-start is still allowed.
+
+To create bars by dragging empty content, set `EmptyDragAction` to `Create`
+(and `Editable`). Ctrl/Cmd-drag still marquees. The engine does not invent
+ids: handle `OnAllocationCreating` and return a full allocation, or `null` to
+cancel.
+
+```razor
+<BlazorResourceTimeline Config="_config"
+                        Options="_options"
+                        OnAllocationCreating="OnAllocationCreating" />
+
+@code {
+    private BlazorResourceTimelineOptions _options = new()
+    {
+        Editable = true,
+        EmptyDragAction = BlazorResourceTimelineEmptyDragAction.Create,
+    };
+
+    private Task<BlazorResourceTimelineAllocation?> OnAllocationCreating(
+        BlazorResourceTimelineCreateRequest request)
+    {
+        return Task.FromResult<BlazorResourceTimelineAllocation?>(new()
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            ResourceId = request.ResourceId,
+            StartTime = request.StartTime,
+            EndTime = request.EndTime,
+        });
+    }
+}
+```
 
 ## Context menu (right-click)
 
@@ -572,6 +660,11 @@ has in a minimum-height row. A row whose bars never overlap stays exactly at
 hit-testing, keyboard navigation and the `ResourceTemplate` overlay all follow
 the per-row heights.
 
+`Options.MaxStackLanes` (`null` or `0` = unlimited) caps how many lanes a cluster
+may use. Extra bars are hidden and a `+N` label is drawn at the cluster's
+trailing edge; clicking it selects the overflow ids. Row height stays at the
+max-lane stack, so a 40-overlap row cannot blow the layout.
+
 ## Resource-column template
 
 By default the sticky resource column is drawn by the renderer (fast, plain text).
@@ -617,7 +710,10 @@ resources and the overall `StartDate`/`EndDate`; its `Allocations` are ignored.
 ```
 
 Requests are debounced, coalesced, and tagged so a slow fetch superseded by newer
-scrolling is discarded rather than overwriting the current window. Tune the buffer
+scrolling is discarded rather than overwriting the current window. Each window
+**merges by id**: incoming bars are upserted, bars that no longer overlap the
+loaded range and are absent from the payload are dropped, and selection/focus
+survive for ids that remain. Tune the buffer
 and refetch sensitivity with `Options.WindowBufferFactor`,
 `Options.WindowRefetchThreshold` and `Options.WindowDebounceMs`.
 
@@ -650,17 +746,39 @@ Hovering a bar (mouse/pen) shows a tooltip after `Options.TooltipDelayMs`
 Disable tooltips entirely with `Options.ShowTooltips = false`, and theme them via
 `Colors.TooltipBg` / `Colors.TooltipText`.
 
+For a rich tooltip on every renderer (including canvas), set `TooltipTemplate`.
+The engine reports the hovered bar and pointer coordinates; Blazor renders the
+fragment in a positioned overlay and the built-in text tooltip is not shown.
+
+```razor
+<BlazorResourceTimeline Config="_config">
+    <TooltipTemplate>
+        <div class="my-tip">
+            <strong>@context.Id</strong>
+            <span>@context.Tooltip</span>
+        </div>
+    </TooltipTemplate>
+</BlazorResourceTimeline>
+```
+
+## Programmatic API
+
 ## Programmatic API
 
 Capture the component with `@ref` to drive it from code:
 
 | Method | Description |
 | --- | --- |
-| `ReloadAsync()` | Re-sends the current `Config` even if the reference is unchanged. |
+| `ReloadAsync()` | Re-sends the current `Config` even if the reference is unchanged (full replace; clears selection). |
+| `UpsertAllocationsAsync(allocations)` | Merge by id without clearing selection or focus. |
+| `RemoveAllocationsAsync(ids)` | Drop ids from the set, selection and focus. |
 | `ClearSelectionAsync()` | Clears the current selection. |
+| `SelectAsync(ids, additive?)` | Sets the selection to the given ids (`additive: true` unions). Unknown ids are ignored. |
 | `GetSelectedBarsAsync()` | Returns the selected allocations, in selection order. |
 | `GoToTodayAsync()` | Centers "now" in view (if within range). `Options.AutoScrollToNow` does this on the first load without a call. |
 | `ScrollToTimeAsync(unixMs)` | Centers the given time in view. |
+| `ScrollToAllocationAsync(id)` | Scrolls so the bar's start and its resource row are on screen. `false` when unknown. |
+| `ScrollToResourceAsync(id)` | Scrolls vertically so the resource row is on screen. Horizontal scroll is unchanged. |
 | `PanByDaysAsync(days, panToDayStart?)` | Steps the view forward (or back) by whole days at the current zoom; pass `±7` for a week. With `Options.PanToDayStart` (or a non-null `panToDayStart` argument, which wins), each step lands on local midnight. `false` when already at that end of the range. |
 | `ZoomInAsync()` / `ZoomOutAsync()` | Zoom around the viewport center. |
 | `ZoomToDaysAsync(days)` | Zooms so exactly that many days fill the current viewport, keeping the center time fixed. |
@@ -688,6 +806,8 @@ its `←`/`→` / Home/End shortcuts apply while *it* is focused.
 | `Alt` + `Shift` + `←` / `→` | Resize the focused bar's end edge (editing only) |
 | `Alt` + `Shift` + `↑` / `↓` | Resize the focused bar's start edge (editing only) |
 | `Alt` + `↑` / `↓` | Move the focused bar to the previous / next resource (editing only) |
+| `Delete` / `Backspace` | Delete selected (or focused) bars when `AllowDelete` is set |
+| `Ctrl`/`Cmd` + `C` / `V` | Copy / paste (paste requires `OnAllocationsCopying`) |
 | Resource-column divider: `←` / `→` | Narrow / widen the column (`Shift` for a larger step) |
 | Resource-column divider: `Home` / `End` | Min / max column width |
 
@@ -700,9 +820,10 @@ gestures; a moving touch pans natively instead of starting a drag.
 | --- | --- |
 | Click a bar | Select it (replaces the current selection) |
 | `Ctrl`/`Cmd`-click a bar | Toggle it in the selection |
+| `Shift`-click a bar | Select the inclusive range from the last selected (or focused) bar to the clicked bar, in row-major display order |
 | Click empty content or an axis | Clear the selection; `Ctrl`/`Cmd`-click on empty space leaves it |
 | Click a group row | Expand or collapse the group |
-| Click-and-drag | Marquee-select every bar the rectangle covers |
+| Click-and-drag | Marquee-select every bar whose body intersects the rectangle (hidden overflow lanes are skipped) |
 | `Ctrl`/`Cmd` + drag | Additive marquee (unions with the existing selection) |
 | Right-click | Raise `OnContextMenu` (not on the time axis); does not change the selection |
 | `Ctrl`/`Cmd` + wheel, or pinch | Zoom around the cursor |
@@ -716,7 +837,13 @@ gestures; a moving touch pans natively instead of starting a drag.
 - `Config` - resources, time window, and allocation bars.
 - `Options` - visual/behavioral configuration.
 - `OnSelectionChanged` - raised with the selected allocations (your own instances).
+- `OnViewChanged` - visible `[Start, End]` and `PixelsPerHour` after scroll/zoom/layout (once per frame max).
 - `OnAllocationChanged` - raised after a move/resize (editing) with the updated instance.
+- `OnAllocationChanging` - return `false` to refuse a previewed single-bar edit without a reload.
+- `OnAllocationsChanging` - same gate for one or more bars (preferred for multi-move).
+- `OnAllocationsDeleting` - return `false` to keep bars on Delete/Backspace.
+- `OnAllocationsCopying` - return new allocations (new ids) on paste, or `null` to cancel.
+- `OnAllocationCreating` - return a new allocation (with `Id`) or `null` to cancel create-on-empty-drag.
 - `OnContextMenu` - raised on right-click with the bar/resource/time under the
   pointer and the click's viewport coordinates.
 - `OnResourceAxisWidthChanged` - raised after the resource column is resized,
@@ -726,17 +853,20 @@ gestures; a moving touch pans natively instead of starting a drag.
   (default `10000`; `0` sends everything at once).
 - `LoadingMinDurationMs` - minimum time the loading overlay stays visible
   (default `0`).
-- `TopStartContent` / `LoadingContent` - custom render fragments for the
-  top-start corner and the loading overlay.
+- `TopStartContent` / `LoadingContent` / `TooltipTemplate` - custom render fragments for the
+  top-start corner, the loading overlay, and a rich hover tooltip.
 
 ## Demo
 
 `src/Demo` is a Blazor WebAssembly playground for everything above: dataset size
-(7 to 365 days), renderer, bar height and margin, editing, on-demand loading, the
-custom resource column, time zone, zoom (including 1 / 3 / 7-day viewport
-presets), pan-to-day-start, and a light/dark theme toggle - plus a live view of
-the selection, the last edit and the last context-menu action. Drag the divider
-at the right edge of the resource column to resize it. The demo wires `←`/`→`
+(7 to 365 days), renderer, bar height and margin, max stack lanes, editing
+(including delete, copy/paste and multi-move), on-demand loading, the
+custom resource column, time zone, 12-hour ticks, weekend/off-hour shading,
+zoom (including 1 / 3 / 7-day viewport presets), pan-to-day-start, and a
+light/dark theme toggle - plus a live view of the visible day range, the
+selection, the last edit and the last context-menu action. Drag the divider
+at the right edge of the resource column to resize it. **Go to** calls
+`ScrollToAllocationAsync` on the first selected bar. The demo wires `←`/`→`
 (and `Ctrl`/`Cmd`+arrows for a week) to `PanByDaysAsync` itself while the
 timeline is unfocused; those shortcuts are not part of the component. Click the
 timeline and the same keys move between bars instead.

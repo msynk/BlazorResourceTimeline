@@ -119,8 +119,10 @@ export class CanvasRenderer {
         // z-order: background -> grid -> bars -> now line -> sticky axes ->
         // marquee -> edit ghost (matches the scene contract).
         this._drawBackground(scene);
+        this._drawNonWorking(scene);
         this._drawGrid(scene);
         this._drawBars(scene);
+        this._drawOverflow(scene);
         this._drawNowLine(scene);
         this._drawTimeAxis(scene);
         this._drawResourceAxis(scene);
@@ -141,6 +143,15 @@ export class CanvasRenderer {
         this.ctx.fillRect(0, 0, v.axisWidth, v.axisHeight);
         this.ctx.fillRect(0, v.axisHeight, v.axisWidth, contentHeight);
         this.ctx.fillRect(v.axisWidth, 0, contentWidth, v.axisHeight);
+    }
+
+    _drawNonWorking(scene) {
+        const bands = scene.nonWorking;
+        if (!bands || !bands.length) return;
+        this.ctx.fillStyle = scene.config.colors.nonWorking || 'rgba(0, 0, 0, 0.06)';
+        for (const b of bands) {
+            this.ctx.fillRect(b.x, b.y, b.width, b.height);
+        }
     }
 
     // All grid lines share one style, so they go into a single path with one
@@ -223,6 +234,24 @@ export class CanvasRenderer {
                     ctx.fillText(label.text, label.x, label.y);
                 }
             }
+        }
+    }
+
+    _drawOverflow(scene) {
+        const labels = scene.overflow;
+        if (!labels || !labels.length) return;
+        const ctx = this.ctx;
+        ctx.fillStyle = scene.config.colors.barLabel;
+        ctx.font = scene.config.barLabelFont;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        for (const n of labels) {
+            ctx.fillStyle = scene.config.colors.axisBg;
+            ctx.fillRect(n.x, n.y, n.width, n.height);
+            ctx.strokeStyle = scene.config.colors.axisBorder;
+            ctx.strokeRect(n.x + 0.5, n.y + 0.5, n.width, n.height);
+            ctx.fillStyle = scene.config.colors.dateLabel;
+            ctx.fillText(n.text, n.x + 3, n.y + n.height / 2);
         }
     }
 

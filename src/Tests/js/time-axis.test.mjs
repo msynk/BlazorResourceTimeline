@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { makeBareEngine, ZonedTime, utcHourBoundaries } from './helpers/engine-fixture.mjs';
+import { makeBareEngine, makeZonedEngine, ZonedTime, utcHourBoundaries } from './helpers/engine-fixture.mjs';
 
 // Oracle: scan the window minute by minute and keep every instant whose local
 // wall clock reads mm:ss = 00:00 on an hour that is a multiple of `step`. Zone
@@ -257,4 +257,61 @@ test('addDays rolls over the year', () => {
     assert.equal(p.year, 2027);
     assert.equal(p.month, 1);
     assert.equal(p.day, 1);
+});
+
+test('wall-clock snap in America/New_York lands on :00/:15/:30/:45 local', () => {
+    const engine = makeZonedEngine('America/New_York');
+    engine.config.editSnapMinutes = 15;
+    engine.config.snapToTimeZone = true;
+    const z = engine._time;
+    const samples = [
+        z.wallClockToTs(2026, 7, 1, 10, 7, 0),
+        z.wallClockToTs(2026, 7, 1, 10, 8, 0),
+        z.wallClockToTs(2026, 3, 8, 1, 52, 0),
+        z.wallClockToTs(2026, 3, 8, 3, 7, 0)
+    ];
+    for (const t of samples) {
+        const snapped = engine._snapTime(t);
+        const p = z.parts(snapped);
+        assert.equal(p.minute % 15, 0, `minute ${p.minute} at ${snapped}`);
+        assert.equal(p.second, 0);
+    }
+});
+
+test('wall-clock snap on Europe/Berlin spring-forward skips 02:00', () => {
+    const engine = makeZonedEngine('Europe/Berlin');
+    engine.config.editSnapMinutes = 15;
+    engine.config.snapToTimeZone = true;
+    const z = engine._time;
+    const around = z.wallClockToTs(2026, 3, 29, 1, 52, 0);
+    const snapped = engine._snapTime(around);
+    const p = z.parts(snapped);
+    assert.notEqual(p.hour, 2);
+    assert.equal(p.minute % 15, 0);
+});
+
+test('wall-clock snap in Asia/Kolkata follows the :30 offset', () => {
+    const engine = makeZonedEngine('Asia/Kolkata');
+    engine.config.editSnapMinutes = 15;
+    engine.config.snapToTimeZone = true;
+    const z = engine._time;
+    const t = z.wallClockToTs(2026, 6, 1, 10, 7, 0);
+    const snapped = engine._snapTime(t);
+    const p = z.parts(snapped);
+    assert.equal(p.minute % 15, 0);
+});
+
+test('Hour12 labels use a 12-hour clock', () => {
+    const z = new ZonedTime('UTC', 'en-US');
+    const label = z.formatHour(15, true);
+    assert.match(label, /3\s*PM/i);
+    assert.equal(z.formatHour(15, false), '15');
+});
+
+test('_weekStartDay honours FirstDayOfWeek Sunday', () => {
+    const engine = makeBareEngine({ config: { firstDayOfWeek: 0 } });
+    assert.equal(engine._weekStartDay(), 0);
+    engine.config.firstDayOfWeek = null;
+    engine.config.locale = 'de-DE';
+    assert.equal(engine._weekStartDay(), 1);
 });

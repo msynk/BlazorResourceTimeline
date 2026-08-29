@@ -422,6 +422,44 @@
     padding: 0.05rem 0.3rem;
 }
 
+/* HTML renderer: Allocation.ClassName hatch. Canvas/SVG ignore className. */
+.demo-page ::deep .timeline-surface [data-bar-id].demo-striped {
+    background-image: repeating-linear-gradient(
+        -45deg,
+        transparent,
+        transparent 3px,
+        rgba(0, 0, 0, 0.18) 3px,
+        rgba(0, 0, 0, 0.18) 6px
+    );
+}
+
+.demo-tip {
+    padding: 0.35rem 0.5rem;
+    border-radius: 4px;
+    background: #212529;
+    color: #fff;
+    font-size: 0.75rem;
+    max-width: 16rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.demo-tip-badge {
+    display: inline-block;
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: #4dabf7;
+    color: #102a43;
+    border-radius: 3px;
+    padding: 0.05rem 0.3rem;
+    margin-bottom: 0.2rem;
+}
+
+.demo-page.theme-dark .demo-tip {
+    background: #f8f9fa;
+    color: #212529;
+}
+
 /* Dummy context menu for the OnContextMenu showcase */
 .ctx-backdrop {
     position: fixed;

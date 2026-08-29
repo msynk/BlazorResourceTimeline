@@ -77,4 +77,11 @@ public class BlazorResourceTimelineColors
     /// <summary>Text color of the hover tooltip.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? TooltipText { get; set; }
+
+    /// <summary>
+    /// Fill for non-working-time shading (weekends and off-hour bands). Defaults
+    /// to a light gray wash.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? NonWorking { get; set; }
 }

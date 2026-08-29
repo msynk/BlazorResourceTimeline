@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace BlazorResourceTimeline;
@@ -77,4 +78,28 @@ public class BlazorResourceTimelineAllocation
     /// the bar in the order they appear in the list.
     /// </summary>
     public List<BlazorResourceTimelineBarIcon>? Icons { get; set; }
+
+    /// <summary>
+    /// Optional host payload preserved on this instance. Serialized as camelCase
+    /// <c>data</c> on the JS wire; the engine never reads it and does not paint it.
+    /// Stuff a host DTO with <c>JsonSerializer.SerializeToElement</c>.
+    /// </summary>
+    public JsonElement? Data { get; set; }
+
+    /// <summary>
+    /// When <c>true</c>, the bar can be selected and shows tooltips but cannot be
+    /// moved or resized (pointer or keyboard). Defaults to <c>false</c>.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Locked { get; set; }
+
+    /// <summary>
+    /// Optional CSS class applied to the bar element by the HTML renderer (in
+    /// addition to <c>data-bar-id</c>). Canvas and SVG ignore it. Pointer events
+    /// still go to the surface, so <c>:hover</c> on the bar does not fire; use
+    /// the class for paint (stripes, hatch) via host CSS on
+    /// <c>.timeline-surface [data-bar-id]</c>.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ClassName { get; set; }
 }

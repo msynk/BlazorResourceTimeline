@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-29
+
+### Added
+
+- `BlazorResourceTimelineAllocation.Data`: optional `JsonElement` host payload
+  (for example `JsonSerializer.SerializeToElement(new { flightNo = "LH441" })`).
+  The engine never reads it and does not paint it; the same instance still
+  carries it after selection.
+- Cancellable edits: `OnAllocationChanging` can return `false` to snap a bar
+  back without `ReloadAsync()`. `Allocation.Locked` bars stay selectable but
+  cannot be moved or resized. `Options.AllowOverlap = false` refuses a drop
+  onto another unlocked bar on the same resource (touching ends are allowed).
+- `UpsertAllocationsAsync` / `RemoveAllocationsAsync`: patch bars by id
+  without a full `setData` (selection and focus of other bars stay put).
+- `Options.EmptyDragAction.Create`: drag empty content (while editing) to draw a
+  new bar. The host assigns the id via `OnAllocationCreating`; Ctrl/Cmd-drag
+  still marquees.
+- `OnViewChanged` (`BlazorResourceTimelineView`: `Start`, `End`, `PixelsPerHour`)
+  after scroll, zoom or layout, at most once per frame.
+- `SelectAsync`, `ScrollToAllocationAsync`, `ScrollToResourceAsync`.
+- `Allocation.ClassName` on the HTML renderer; `TooltipTemplate` overlay on every
+  renderer (canvas included).
+- Working-time wash: `NonWorkingDays`, `WorkingHoursStart` / `WorkingHoursEnd`,
+  `Colors.NonWorking` (visual only).
+- `Options.Hour12` (12-hour hour-row labels) and `Options.FirstDayOfWeek`.
+- `Options.MaxStackLanes`: cap stacked lanes and draw a `+N` overflow label.
+- Delete (`AllowDelete` + Delete/Backspace + `OnAllocationsDeleting`), copy/paste
+  (`OnAllocationsCopying`), and multi-bar move (`OnAllocationsChanging`).
+  Shift-click selects a contiguous range; marquee hit-tests stacked lanes in 2D.
+- Invalid allocations (`end <= start`, empty id, unknown resource, duplicate ids)
+  are skipped with a one-time warning instead of crashing paint.
+
+### Changed
+
+- Edit snap now lands on wall-clock multiples of `EditSnapMinutes` from local
+  midnight in `Options.TimeZone` (`SnapToTimeZone` default `true`, including
+  across DST). Hosts that need the previous Unix-epoch grid set
+  `SnapToTimeZone = false`.
+- Windowed `LoadAllocationsAsync` merges by id instead of replacing the set, so
+  selection and focus survive a refetch for bars that remain in range.
+
+### Fixed
+
+- `PanToDayStart` no longer realigns to the same midnight (or skips a day going
+  back) when the leading edge sits a fraction of a pixel before that midnight
+  after native `scrollLeft` quantization.
+
 ## [0.5.0] - 2026-08-29
 
 ### Added
@@ -139,7 +186,8 @@ First public release.
   drop properties that only reflection-based serialization reads. AOT is not
   declared, since interop marshalling is reflection-based.
 
-[Unreleased]: https://github.com/msynk/BlazorResourceTimeline/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/msynk/BlazorResourceTimeline/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/msynk/BlazorResourceTimeline/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/msynk/BlazorResourceTimeline/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/msynk/BlazorResourceTimeline/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/msynk/BlazorResourceTimeline/compare/v0.3.0...v0.4.0

@@ -49,9 +49,18 @@ export function makeBareEngine(overrides = {}) {
         resourceAxisResizable: true,
         resourceAxisMinWidth: 80,
         resourceAxisMaxWidth: 0,
+        snapToTimeZone: true,
+        hour12: false,
+        firstDayOfWeek: null,
+        nonWorkingDays: [],
+        workingHoursStart: null,
+        workingHoursEnd: null,
+        maxStackLanes: 0,
+        allowDelete: false,
+        tooltipTemplate: false,
         ...(overrides.config || {}),
         // Always present on the real config, and _applyOptions merges into it.
-        colors: { bar: '#74c0fc', barSelected: '#4dabf7', label: '#495057' }
+        colors: { bar: '#74c0fc', barSelected: '#4dabf7', label: '#495057', nonWorking: 'rgba(0,0,0,0.06)' }
     };
 
     engine.allocations = [];
@@ -96,6 +105,14 @@ export function makeBareEngine(overrides = {}) {
     // Reporting rows back to .NET is interop; there is no dotNetRef here.
     engine.dotNetRef = null;
 
+    engine._overflowHits = [];
+    engine._lastView = null;
+    engine._warnedAllocIds = new Set();
+    engine._resourceIdSet = new Set();
+    engine._selectionAnchorId = null;
+    engine._copyClipboard = [];
+    engine._lastHoverId = undefined;
+
     Object.assign(engine, overrides.engine || {});
     return engine;
 }
@@ -128,7 +145,9 @@ export function makeIndexedEngine(allocations, overrides = {}) {
             }
         }
     }
+    engine._rowIndexById = new Map(engine._rows.map((r, i) => [r.resource.id, i]));
     engine._indexAllocations();
+    engine._resourceIdSet = new Set(engine._rows.map(r => r.resource.id));
     return engine;
 }
 

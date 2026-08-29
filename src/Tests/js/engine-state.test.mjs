@@ -260,3 +260,42 @@ test('setting the resource-axis width updates config and notifies only when aske
     assert.equal(engine.config.resourceAxisWidth, 80);
     assert.equal(notified.at(-1), 80);
 });
+
+test('marquee covering only the upper lane selects one stacked id', () => {
+    const engine = makeIndexedEngine([
+        { id: 'low', resourceId: 'r0', startTime: 0, endTime: 400 },
+        { id: 'high', resourceId: 'r0', startTime: 50, endTime: 350 }
+    ]);
+    engine.timeRange = { start: 0, end: 1000 };
+    engine._pixelsPerMs = 1;
+    engine._recomputeRowMetrics();
+    const high = engine.allocations.find(a => a.id === 'high');
+    const low = engine.allocations.find(a => a.id === 'low');
+    const band = engine._barContentBand(high, 0);
+    const lowBand = engine._barContentBand(low, 0);
+    assert.ok(band.bottom <= lowBand.top || lowBand.bottom <= band.top
+        || band.top !== lowBand.top);
+
+    engine.drag = {
+        startX: engine._timeToContentX(high.startTime) + 1,
+        startY: band.top + 0.1,
+        currentX: engine._timeToContentX(high.endTime) - 1,
+        currentY: band.bottom - 0.1,
+        additive: false,
+        baseSelection: new Set()
+    };
+    engine._applyMarqueeSelection();
+    assert.deepEqual([...engine.selectedBars], ['high']);
+});
+
+test('Shift-range select on a 3-bar row selects the middle span', () => {
+    const engine = makeIndexedEngine([
+        { id: 'a', resourceId: 'r0', startTime: 0, endTime: 50 },
+        { id: 'b', resourceId: 'r0', startTime: 100, endTime: 150 },
+        { id: 'c', resourceId: 'r0', startTime: 200, endTime: 250 }
+    ]);
+    engine._selectRange('a', 'c');
+    assert.deepEqual([...engine.selectedBars], ['a', 'b', 'c']);
+    engine._selectRange('b', 'c');
+    assert.deepEqual([...engine.selectedBars], ['b', 'c']);
+});

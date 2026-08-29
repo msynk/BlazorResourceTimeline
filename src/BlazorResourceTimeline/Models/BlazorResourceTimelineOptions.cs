@@ -161,10 +161,66 @@ public class BlazorResourceTimelineOptions
     /// <summary>
     /// BCP 47 locale (for example <c>"de-DE"</c> or <c>"ja-JP"</c>) used to format
     /// day labels, tooltips and screen-reader announcements. <c>null</c> uses the
-    /// viewer's locale. Numeric hour ticks are unaffected (always 24-hour).
+    /// viewer's locale. Hour ticks stay 24-hour unless <see cref="Hour12"/> is set.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Locale { get; set; }
+
+    /// <summary>
+    /// First day of the week (Sunday = 0). <c>null</c> uses the locale's week
+    /// start via <c>Intl.Locale</c> weekInfo where available, otherwise Monday.
+    /// Applies to week-oriented banding when present; <c>PanByDaysAsync(7)</c>
+    /// remains a 7-calendar-day step.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DayOfWeek? FirstDayOfWeek { get; set; }
+
+    /// <summary>
+    /// When <c>true</c>, hour-row labels use a 12-hour clock (for example
+    /// <c>3 PM</c>). Tick positions stay on whole hours. Defaults to <c>false</c>
+    /// (00–23).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Hour12 { get; set; }
+
+    /// <summary>
+    /// Weekdays shaded as non-working (0 = Sunday … 6 = Saturday). Empty /
+    /// <c>null</c> draws no weekend wash. Visual only; does not change snap or
+    /// scale.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int[]? NonWorkingDays { get; set; }
+
+    /// <summary>
+    /// Start of working hours, as minutes from local midnight (for example 540 for
+    /// 09:00). <c>null</c> draws no off-hour bands. Visual only.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? WorkingHoursStart { get; set; }
+
+    /// <summary>
+    /// End of working hours, as minutes from local midnight (for example 1020 for
+    /// 17:00). <c>null</c> draws no off-hour bands. Visual only.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? WorkingHoursEnd { get; set; }
+
+    /// <summary>
+    /// Maximum stacking lanes per overlapping cluster. <c>null</c> or <c>0</c>
+    /// is unlimited (today's behaviour). Extra bars are hidden and a <c>+N</c>
+    /// label is drawn at the cluster's trailing edge; clicking it selects them.
+    /// Row height is capped at the max-lane stack.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? MaxStackLanes { get; set; }
+
+    /// <summary>
+    /// When <c>true</c>, <c>Delete</c> / <c>Backspace</c> on a focused, editable
+    /// timeline asks <c>OnAllocationsDeleting</c> then removes the selected (or
+    /// focused) bars. Defaults to <c>false</c>.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? AllowDelete { get; set; }
 
     /// <summary>
     /// Horizontal scale in pixels per hour. <c>null</c> auto-fits exactly one day
@@ -237,8 +293,9 @@ public class BlazorResourceTimelineOptions
     /// Enables in-timeline editing: allocations can be dragged to move them in time
     /// (and, unless <see cref="AllowResourceChange"/> is <c>false</c>, onto another
     /// resource row) or grabbed near an edge to resize their start/end. Commits
-    /// are reported via the component's <c>OnAllocationChanged</c> callback.
-    /// Defaults to <c>false</c> (read-only).
+    /// are reported via the component's <c>OnAllocationChanged</c> callback; a
+    /// host can refuse one via <c>OnAllocationChanging</c>. Defaults to
+    /// <c>false</c> (read-only).
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? Editable { get; set; }
@@ -249,6 +306,15 @@ public class BlazorResourceTimelineOptions
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? EditSnapMinutes { get; set; }
+
+    /// <summary>
+    /// When <c>true</c> (the default), edit snaps land on wall-clock multiples of
+    /// <see cref="EditSnapMinutes"/> from local midnight in <see cref="TimeZone"/>
+    /// (DST 23- and 25-hour days have fewer or more snap points). Set
+    /// <c>false</c> to keep the previous Unix-epoch grid.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? SnapToTimeZone { get; set; }
 
     /// <summary>
     /// Grab zone (in pixels) at each end of a bar within which a drag resizes
@@ -270,6 +336,26 @@ public class BlazorResourceTimelineOptions
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? AllowResourceChange { get; set; }
+
+    /// <summary>
+    /// Whether two unlocked bars on the same resource may occupy overlapping
+    /// time. <c>true</c> (the default) stacks them as today. When <c>false</c>,
+    /// a move or resize that would overlap another unlocked bar on that row is
+    /// refused (touching end-to-start is still allowed). Locked bars are not
+    /// occupancy. Only has an effect while <see cref="Editable"/> is set.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? AllowOverlap { get; set; }
+
+    /// <summary>
+    /// What a drag on empty content (no bar hit) does while
+    /// <see cref="Editable"/> is set. <see cref="BlazorResourceTimelineEmptyDragAction.Marquee"/>
+    /// (the default) rubber-bands. <see cref="BlazorResourceTimelineEmptyDragAction.Create"/>
+    /// draws a new bar; the host must handle <c>OnAllocationCreating</c> and
+    /// assign an id. Ctrl/Cmd-drag still marquees.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public BlazorResourceTimelineEmptyDragAction? EmptyDragAction { get; set; }
 
     /// <summary>
     /// Whether hovering a bar (mouse/pen) shows a tooltip. The tooltip text is the

@@ -54,6 +54,11 @@ public partial class BlazorResourceTimeline
     // Server's SignalR message size limit) and lets consumers compare selected
     // bars by reference against their own data.
     private Dictionary<string, BlazorResourceTimelineAllocation> _allocationsById = new();
+    private bool _warnedMissingCreate;
+    private bool _warnedMissingCopy;
+    private BlazorResourceTimelineAllocation? _hoverAllocation;
+    private double _hoverClientX;
+    private double _hoverClientY;
 
     /// <summary>
     /// Data the timeline renders: the resource rows, the visible time window and
@@ -88,16 +93,70 @@ public partial class BlazorResourceTimeline
     [Parameter] public EventCallback<BlazorResourceTimelineAllocation[]> OnSelectionChanged { get; set; }
 
     /// <summary>
+    /// Raised at most once per frame after scroll, zoom or layout when the
+    /// visible time span or the effective pixels-per-hour scale changes.
+    /// Use it to drive host chrome (day label, "zoom = 3 days"). Not a
+    /// per-pixel scroll stream.
+    /// </summary>
+    [Parameter] public EventCallback<BlazorResourceTimelineView> OnViewChanged { get; set; }
+
+    /// <summary>
     /// Raised after an allocation is moved or resized in the timeline (only when
     /// editing is enabled via <see cref="BlazorResourceTimelineOptions.Editable"/>).
     /// The argument is the same instance supplied in <see cref="Config"/>, already
     /// updated in place with its new <see cref="BlazorResourceTimelineAllocation.StartTime"/>,
     /// <see cref="BlazorResourceTimelineAllocation.EndTime"/> and
     /// <see cref="BlazorResourceTimelineAllocation.ResourceId"/>, so the handler
-    /// only needs to persist the change. The renderer updates optimistically; to
-    /// reject an edit, restore the instance and call <see cref="ReloadAsync"/>.
+    /// only needs to persist the change. Fires only after a successful commit;
+    /// to refuse an edit without a reload, return <c>false</c> from
+    /// <see cref="OnAllocationChanging"/>.
     /// </summary>
     [Parameter] public EventCallback<BlazorResourceTimelineAllocation> OnAllocationChanged { get; set; }
+
+    /// <summary>
+    /// Called after a move/resize is previewed onto the allocation instance and
+    /// before it is committed. Return <c>false</c> to restore the previous
+    /// resource and times (no <see cref="ReloadAsync"/>). When null, the edit
+    /// is accepted (today's optimistic path). Not an <c>EventCallback</c>
+    /// because those cannot return a value.
+    /// </summary>
+    [Parameter]
+    public Func<BlazorResourceTimelineAllocationChange, Task<bool>>? OnAllocationChanging { get; set; }
+
+    /// <summary>
+    /// Called for every commit that changes one or more bars (including a
+    /// single-bar drag). Return <c>false</c> to restore every bar in the list.
+    /// When null, a single-bar edit still uses <see cref="OnAllocationChanging"/>;
+    /// a multi-bar edit is accepted.
+    /// </summary>
+    [Parameter]
+    public Func<IReadOnlyList<BlazorResourceTimelineAllocationChange>, Task<bool>>? OnAllocationsChanging { get; set; }
+
+    /// <summary>
+    /// Called before selected (or focused) bars are removed via Delete/Backspace
+    /// when <see cref="BlazorResourceTimelineOptions.AllowDelete"/> is set. Return
+    /// <c>false</c> to keep them. When null, the delete is accepted.
+    /// </summary>
+    [Parameter]
+    public Func<IReadOnlyList<string>, Task<bool>>? OnAllocationsDeleting { get; set; }
+
+    /// <summary>
+    /// Called on paste (<c>Ctrl</c>/<c>Cmd</c>+<c>V</c>) with the clipboard bars
+    /// and a suggested offset. Return new allocations (new ids) to insert, or
+    /// <c>null</c>/empty to cancel. The engine does not invent ids.
+    /// </summary>
+    [Parameter]
+    public Func<BlazorResourceTimelineCopyRequest, Task<IReadOnlyList<BlazorResourceTimelineAllocation>?>>? OnAllocationsCopying { get; set; }
+
+    /// <summary>
+    /// Called when the user finishes drawing a new bar (empty-content drag with
+    /// <see cref="BlazorResourceTimelineEmptyDragAction.Create"/>). Return a full
+    /// allocation with <see cref="BlazorResourceTimelineAllocation.Id"/> set, or
+    /// <c>null</c> to cancel. The engine does not invent ids. When null, the
+    /// ghost is discarded.
+    /// </summary>
+    [Parameter]
+    public Func<BlazorResourceTimelineCreateRequest, Task<BlazorResourceTimelineAllocation?>>? OnAllocationCreating { get; set; }
 
     /// <summary>
     /// Raised when the user right-clicks the timeline (the native browser menu
@@ -137,6 +196,15 @@ public partial class BlazorResourceTimeline
     /// remains resizable. The context exposes the resource, its depth and its group state.
     /// </summary>
     [Parameter] public RenderFragment<BlazorResourceTimelineRowContext>? ResourceTemplate { get; set; }
+
+    /// <summary>
+    /// Optional template for the hover tooltip. When set, the engine reports
+    /// the hovered bar and pointer coordinates and this fragment is rendered in
+    /// a positioned overlay (all renderers, including canvas). The built-in
+    /// text tooltip is not shown. Requires
+    /// <see cref="BlazorResourceTimelineOptions.ShowTooltips"/> (default on).
+    /// </summary>
+    [Parameter] public RenderFragment<BlazorResourceTimelineAllocation>? TooltipTemplate { get; set; }
 
     /// <summary>
     /// Optional custom content shown as an overlay while the renderer is
@@ -191,10 +259,13 @@ public partial class BlazorResourceTimeline
         "ArrowLeft ArrowRight ArrowUp ArrowDown Home End PageUp PageDown Enter Escape";
     private const string EditingKeyShortcuts =
         " Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowLeft Alt+Shift+ArrowRight Alt+Shift+ArrowUp Alt+Shift+ArrowDown";
+    private const string DeleteKeyShortcuts = " Delete Backspace";
+    private const string CopyKeyShortcuts = " Control+c Control+v Meta+c Meta+v";
 
     private string KeyShortcuts =>
         BaseKeyShortcuts
-        + (Options?.Editable == true ? EditingKeyShortcuts : "");
+        + (Options?.Editable == true ? EditingKeyShortcuts + CopyKeyShortcuts : "")
+        + (Options?.Editable == true && Options?.AllowDelete == true ? DeleteKeyShortcuts : "");
 
     /// <summary>
     /// On the first render, imports the JavaScript engine, creates the renderer
@@ -252,6 +323,12 @@ public partial class BlazorResourceTimeline
         if (ResourceTemplate is not null)
         {
             await _timelineInstance.InvokeVoidAsync("enableResourceTemplate", _resourceOverlayInner);
+            ThrowIfDisposed();
+        }
+
+        if (TooltipTemplate is not null)
+        {
+            await _timelineInstance.InvokeVoidAsync("enableTooltipTemplate");
             ThrowIfDisposed();
         }
 
@@ -459,6 +536,51 @@ public partial class BlazorResourceTimeline
         return LoadDataAsync();
     }
 
+    /// <summary>
+    /// Merges the given allocations into the current set by id (last-wins)
+    /// without clearing selection or keyboard focus. Mutate instances in place
+    /// and pass them here, or pass new objects (they replace the previous ones
+    /// in the id map). Does not rewrite <see cref="BlazorResourceTimelineConfig.Allocations"/>;
+    /// assign a new <see cref="Config"/> (or call <see cref="ReloadAsync"/>) for
+    /// a full replace. In windowed mode, updates the current window map only.
+    /// </summary>
+    public async Task UpsertAllocationsAsync(IReadOnlyList<BlazorResourceTimelineAllocation> allocations)
+    {
+        if (_disposed || _timelineInstance is null || !_dataLoaded
+            || allocations is null || allocations.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var allocation in allocations)
+        {
+            _allocationsById[allocation.Id] = allocation;
+        }
+
+        await _timelineInstance.InvokeVoidAsync("upsertAllocations", allocations);
+    }
+
+    /// <summary>
+    /// Removes allocations by id from the current set, selection and keyboard
+    /// focus. Other selected bars are left alone. Missing ids are ignored.
+    /// Does not rewrite <see cref="BlazorResourceTimelineConfig.Allocations"/>.
+    /// </summary>
+    public async Task RemoveAllocationsAsync(IReadOnlyList<string> ids)
+    {
+        if (_disposed || _timelineInstance is null || !_dataLoaded
+            || ids is null || ids.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var id in ids)
+        {
+            _allocationsById.Remove(id);
+        }
+
+        await _timelineInstance.InvokeVoidAsync("removeAllocations", ids);
+    }
+
     /// <summary>Clears the current bar selection programmatically.</summary>
     public async Task ClearSelectionAsync()
     {
@@ -466,6 +588,49 @@ public partial class BlazorResourceTimeline
         {
             await _timelineInstance.InvokeVoidAsync("clearSelection");
         }
+    }
+
+    /// <summary>
+    /// Sets the selection to the given allocation ids. When
+    /// <paramref name="additive"/> is <c>true</c>, unions with the current
+    /// selection; otherwise replaces it. Unknown ids are ignored.
+    /// </summary>
+    public async Task SelectAsync(IReadOnlyList<string> ids, bool additive = false)
+    {
+        if (_disposed || _timelineInstance is null || !_dataLoaded || ids is null)
+        {
+            return;
+        }
+
+        await _timelineInstance.InvokeVoidAsync("selectBars", ids, additive);
+    }
+
+    /// <summary>
+    /// Scrolls so the given allocation's start is in view (and its resource row
+    /// is on screen). Returns <c>false</c> when the id is unknown.
+    /// </summary>
+    public async Task<bool> ScrollToAllocationAsync(string id)
+    {
+        if (_disposed || _timelineInstance is null || !_dataLoaded || string.IsNullOrEmpty(id))
+        {
+            return false;
+        }
+
+        return await _timelineInstance.InvokeAsync<bool>("scrollToAllocation", id);
+    }
+
+    /// <summary>
+    /// Scrolls vertically so the given resource row is on screen. Horizontal
+    /// scroll is unchanged. Returns <c>false</c> when the id is unknown.
+    /// </summary>
+    public async Task<bool> ScrollToResourceAsync(string id)
+    {
+        if (_disposed || _timelineInstance is null || !_dataLoaded || string.IsNullOrEmpty(id))
+        {
+            return false;
+        }
+
+        return await _timelineInstance.InvokeAsync<bool>("scrollToResource", id);
     }
 
     /// <summary>Returns the currently selected bars, in selection order. Empty when nothing is selected.</summary>
@@ -672,12 +837,7 @@ public partial class BlazorResourceTimeline
                 return;
             }
 
-            var byId = new Dictionary<string, BlazorResourceTimelineAllocation>(allocations.Count);
-            foreach (var allocation in allocations)
-            {
-                byId[allocation.Id] = allocation;
-            }
-            _allocationsById = byId;
+            MergeWindowAllocations(allocations, startMs, endMs);
 
             await timeline.InvokeVoidAsync(
                 "applyAllocationWindow", requestId, allocations, startMs, endMs);
@@ -779,11 +939,56 @@ public partial class BlazorResourceTimeline
     }
 
     /// <summary>
+    /// Invoked by the renderer at most once per frame when the visible range or
+    /// scale changes. Public only because JS interop requires it.
+    /// </summary>
+    [JSInvokable("OnViewChanged")]
+    public async Task NotifyViewChanged(long startMs, long endMs, double pixelsPerHour)
+    {
+        if (_disposed || !OnViewChanged.HasDelegate)
+        {
+            return;
+        }
+
+        await OnViewChanged.InvokeAsync(new BlazorResourceTimelineView
+        {
+            Start = DateTimeOffset.FromUnixTimeMilliseconds(startMs),
+            End = DateTimeOffset.FromUnixTimeMilliseconds(endMs),
+            PixelsPerHour = pixelsPerHour,
+        });
+    }
+
+    /// <summary>
+    /// Invoked by the renderer when the hovered bar changes (or the pointer
+    /// leaves). Public only because JS interop requires it.
+    /// </summary>
+    [JSInvokable]
+    public void OnBarHover(string? id, double clientX, double clientY)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        BlazorResourceTimelineAllocation? next = null;
+        if (id is not null)
+        {
+            _allocationsById.TryGetValue(id, out next);
+        }
+
+        _hoverAllocation = next;
+        _hoverClientX = clientX;
+        _hoverClientY = clientY;
+        StateHasChanged();
+    }
+
+    /// <summary>
     /// Invoked by the renderer when a bar is moved/resized. The times/resource are
     /// applied to the caller's own instance (resolved by id) so the change is
     /// reflected in <see cref="Config"/> without a reload, then
     /// <see cref="OnAllocationChanged"/> fires. Public only because JS interop
-    /// requires it; not part of the consumer API.
+    /// requires it; not part of the consumer API. Only called after a successful
+    /// <c>OnAllocationChanging</c> gate.
     /// </summary>
     /// <param name="id">Id of the edited allocation.</param>
     /// <param name="resourceId">Resource the allocation now belongs to.</param>
@@ -810,6 +1015,309 @@ public partial class BlazorResourceTimeline
         {
             await OnAllocationChanged.InvokeAsync(allocation);
         }
+    }
+
+    /// <summary>
+    /// Invoked by the renderer after applying a preview, before the post-commit
+    /// <see cref="OnAllocationEdited"/> notification. Returns <c>true</c> when
+    /// the host has no <see cref="OnAllocationChanging"/> handler. Public only
+    /// because JS interop requires it; not part of the consumer API.
+    /// </summary>
+    /// <param name="id">Id of the allocation being changed.</param>
+    /// <param name="resourceId">Resource the preview moved it onto.</param>
+    /// <param name="startTime">Previewed start, as Unix time in milliseconds.</param>
+    /// <param name="endTime">Previewed end, as Unix time in milliseconds.</param>
+    /// <param name="previousResourceId">Resource it belonged to before the preview.</param>
+    /// <param name="previousStartTime">Start before the preview, Unix milliseconds.</param>
+    /// <param name="previousEndTime">End before the preview, Unix milliseconds.</param>
+    /// <param name="kind"><c>move</c>, <c>resize</c> or <c>create</c>.</param>
+    /// <returns><c>true</c> to keep the preview; <c>false</c> to restore.</returns>
+    [JSInvokable("OnAllocationChanging")]
+    public async Task<bool> ConfirmAllocationChange(
+        string id,
+        string resourceId,
+        long startTime,
+        long endTime,
+        string previousResourceId,
+        long previousStartTime,
+        long previousEndTime,
+        string kind)
+    {
+        if (_disposed)
+        {
+            return false;
+        }
+
+        if (OnAllocationChanging is null)
+        {
+            return true;
+        }
+
+        if (!_allocationsById.TryGetValue(id, out var allocation))
+        {
+            return false;
+        }
+
+        var parsedKind = Enum.TryParse<BlazorResourceTimelineAllocationChangeKind>(
+            kind, ignoreCase: true, out var parsed)
+            ? parsed
+            : BlazorResourceTimelineAllocationChangeKind.Move;
+
+        allocation.ResourceId = resourceId;
+        allocation.StartTime = DateTimeOffset.FromUnixTimeMilliseconds(startTime);
+        allocation.EndTime = DateTimeOffset.FromUnixTimeMilliseconds(endTime);
+
+        var change = new BlazorResourceTimelineAllocationChange
+        {
+            Allocation = allocation,
+            PreviousResourceId = previousResourceId,
+            PreviousStartTime = DateTimeOffset.FromUnixTimeMilliseconds(previousStartTime),
+            PreviousEndTime = DateTimeOffset.FromUnixTimeMilliseconds(previousEndTime),
+            Kind = parsedKind
+        };
+
+        try
+        {
+            if (await OnAllocationChanging(change))
+            {
+                return true;
+            }
+        }
+        catch
+        {
+            RestoreAllocation(allocation, previousResourceId, previousStartTime, previousEndTime);
+            throw;
+        }
+
+        RestoreAllocation(allocation, previousResourceId, previousStartTime, previousEndTime);
+        return false;
+    }
+
+    /// <summary>
+    /// Invoked by the renderer for a multi-bar (or single-bar when the list
+    /// handler is wired) commit. Public only because JS interop requires it.
+    /// </summary>
+    [JSInvokable("OnAllocationsChanging")]
+    public async Task<bool> ConfirmAllocationsChange(
+        string[] ids,
+        string[] resourceIds,
+        long[] startTimes,
+        long[] endTimes,
+        string[] previousResourceIds,
+        long[] previousStartTimes,
+        long[] previousEndTimes,
+        string kind)
+    {
+        if (_disposed || ids is null || ids.Length == 0)
+        {
+            return false;
+        }
+
+        if (OnAllocationsChanging is null)
+        {
+            if (ids.Length == 1 && OnAllocationChanging is not null)
+            {
+                return await ConfirmAllocationChange(
+                    ids[0], resourceIds[0], startTimes[0], endTimes[0],
+                    previousResourceIds[0], previousStartTimes[0], previousEndTimes[0],
+                    kind);
+            }
+
+            return true;
+        }
+
+        var parsedKind = Enum.TryParse<BlazorResourceTimelineAllocationChangeKind>(
+            kind, ignoreCase: true, out var parsed)
+            ? parsed
+            : BlazorResourceTimelineAllocationChangeKind.Move;
+
+        var changes = new List<BlazorResourceTimelineAllocationChange>(ids.Length);
+        for (var i = 0; i < ids.Length; i++)
+        {
+            if (!_allocationsById.TryGetValue(ids[i], out var allocation))
+            {
+                return false;
+            }
+
+            allocation.ResourceId = resourceIds[i];
+            allocation.StartTime = DateTimeOffset.FromUnixTimeMilliseconds(startTimes[i]);
+            allocation.EndTime = DateTimeOffset.FromUnixTimeMilliseconds(endTimes[i]);
+            changes.Add(new BlazorResourceTimelineAllocationChange
+            {
+                Allocation = allocation,
+                PreviousResourceId = previousResourceIds[i],
+                PreviousStartTime = DateTimeOffset.FromUnixTimeMilliseconds(previousStartTimes[i]),
+                PreviousEndTime = DateTimeOffset.FromUnixTimeMilliseconds(previousEndTimes[i]),
+                Kind = parsedKind,
+            });
+        }
+
+        try
+        {
+            if (await OnAllocationsChanging(changes))
+            {
+                return true;
+            }
+        }
+        catch
+        {
+            for (var i = 0; i < changes.Count; i++)
+            {
+                RestoreAllocation(
+                    changes[i].Allocation,
+                    previousResourceIds[i],
+                    previousStartTimes[i],
+                    previousEndTimes[i]);
+            }
+
+            throw;
+        }
+
+        for (var i = 0; i < changes.Count; i++)
+        {
+            RestoreAllocation(
+                changes[i].Allocation,
+                previousResourceIds[i],
+                previousStartTimes[i],
+                previousEndTimes[i]);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Invoked by the renderer before Delete/Backspace removes bars. Public only
+    /// because JS interop requires it.
+    /// </summary>
+    [JSInvokable("OnAllocationsDeleting")]
+    public async Task<bool> ConfirmAllocationsDeleting(string[] ids)
+    {
+        if (_disposed)
+        {
+            return false;
+        }
+
+        if (OnAllocationsDeleting is not null
+            && !await OnAllocationsDeleting(ids))
+        {
+            return false;
+        }
+
+        foreach (var id in ids)
+        {
+            _allocationsById.Remove(id);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Invoked by the renderer on paste. Public only because JS interop requires it.
+    /// </summary>
+    [JSInvokable("OnAllocationsCopying")]
+    public async Task<IReadOnlyList<BlazorResourceTimelineAllocation>?> CopyAllocations(
+        string[] ids, long offsetMs, string? resourceId)
+    {
+        if (_disposed)
+        {
+            return null;
+        }
+
+        if (OnAllocationsCopying is null)
+        {
+            if (!_warnedMissingCopy)
+            {
+                _warnedMissingCopy = true;
+                Console.Error.WriteLine(
+                    "BlazorResourceTimeline: Ctrl/Cmd+V requires OnAllocationsCopying.");
+            }
+
+            return null;
+        }
+
+        var sources = ResolveAllocations(ids);
+        if (sources.Length == 0)
+        {
+            return null;
+        }
+
+        var created = await OnAllocationsCopying(new BlazorResourceTimelineCopyRequest
+        {
+            Allocations = sources,
+            Offset = TimeSpan.FromMilliseconds(offsetMs),
+            ResourceId = resourceId,
+        });
+
+        if (created is null || created.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var allocation in created)
+        {
+            if (!string.IsNullOrEmpty(allocation.Id))
+            {
+                _allocationsById[allocation.Id] = allocation;
+            }
+        }
+
+        return created.Where(a => !string.IsNullOrEmpty(a.Id)).ToList();
+    }
+
+    /// <summary>
+    /// Invoked by the renderer after an empty-content create drag. Returns the
+    /// host-built allocation, or <c>null</c> to cancel. Public only because JS
+    /// interop requires it; not part of the consumer API.
+    /// </summary>
+    /// <param name="resourceId">Resource row the new bar should belong to.</param>
+    /// <param name="startTime">Snapped start, as Unix time in milliseconds.</param>
+    /// <param name="endTime">Snapped end, as Unix time in milliseconds.</param>
+    [JSInvokable("OnAllocationCreating")]
+    public async Task<BlazorResourceTimelineAllocation?> CreateAllocation(
+        string resourceId, long startTime, long endTime)
+    {
+        if (_disposed)
+        {
+            return null;
+        }
+
+        if (OnAllocationCreating is null)
+        {
+            if (!_warnedMissingCreate)
+            {
+                _warnedMissingCreate = true;
+                Console.Error.WriteLine(
+                    "BlazorResourceTimeline: EmptyDragAction.Create requires OnAllocationCreating.");
+            }
+
+            return null;
+        }
+
+        var created = await OnAllocationCreating(new BlazorResourceTimelineCreateRequest
+        {
+            ResourceId = resourceId,
+            StartTime = DateTimeOffset.FromUnixTimeMilliseconds(startTime),
+            EndTime = DateTimeOffset.FromUnixTimeMilliseconds(endTime),
+        });
+
+        if (created is null || string.IsNullOrEmpty(created.Id))
+        {
+            return null;
+        }
+
+        _allocationsById[created.Id] = created;
+        return created;
+    }
+
+    private static void RestoreAllocation(
+        BlazorResourceTimelineAllocation allocation,
+        string previousResourceId,
+        long previousStartTime,
+        long previousEndTime)
+    {
+        allocation.ResourceId = previousResourceId;
+        allocation.StartTime = DateTimeOffset.FromUnixTimeMilliseconds(previousStartTime);
+        allocation.EndTime = DateTimeOffset.FromUnixTimeMilliseconds(previousEndTime);
     }
 
     /// <summary>
@@ -894,6 +1402,50 @@ public partial class BlazorResourceTimeline
         }
 
         return result.ToArray();
+    }
+
+    // Windowed fetch: upsert incoming ids; drop ids that are not in the payload
+    // and no longer overlap the loaded range. Survivors keep their instances so
+    // OnAllocationEdited can still resolve them.
+    private void MergeWindowAllocations(
+        IReadOnlyList<BlazorResourceTimelineAllocation> incoming, long startMs, long endMs)
+    {
+        var incomingIds = new HashSet<string>(incoming.Count, StringComparer.Ordinal);
+        foreach (var allocation in incoming)
+        {
+            incomingIds.Add(allocation.Id);
+            _allocationsById[allocation.Id] = allocation;
+        }
+
+        var windowStart = DateTimeOffset.FromUnixTimeMilliseconds(startMs);
+        var windowEnd = DateTimeOffset.FromUnixTimeMilliseconds(endMs);
+        List<string>? drop = null;
+        foreach (var pair in _allocationsById)
+        {
+            if (incomingIds.Contains(pair.Key))
+            {
+                continue;
+            }
+
+            var allocation = pair.Value;
+            if (allocation.StartTime < windowEnd && allocation.EndTime > windowStart)
+            {
+                continue;
+            }
+
+            drop ??= [];
+            drop.Add(pair.Key);
+        }
+
+        if (drop is null)
+        {
+            return;
+        }
+
+        foreach (var id in drop)
+        {
+            _allocationsById.Remove(id);
+        }
     }
 
     /// <summary>
