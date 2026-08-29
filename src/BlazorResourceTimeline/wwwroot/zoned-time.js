@@ -85,13 +85,20 @@ export class ZonedTime {
         return this.wallClockToTs(p.year, p.month, p.day, 0, 0, 0);
     }
 
-    // First local midnight strictly after the given day start. Date.UTC
-    // normalizes month/year rollover.
-    nextDay(dayStart) {
-        const p = this.parts(dayStart);
-        const next = new Date(Date.UTC(p.year, p.month - 1, p.day + 1));
+    // Local midnight of the day `n` calendar days after the day containing
+    // `ts` (`n` may be negative). The time of day is discarded, so a DST
+    // 23- or 25-hour day is a single step. Date.UTC normalizes month/year
+    // rollover.
+    addDays(ts, n) {
+        const p = this.parts(ts);
+        const next = new Date(Date.UTC(p.year, p.month - 1, p.day + n));
         return this.wallClockToTs(
             next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), 0, 0, 0);
+    }
+
+    // First local midnight strictly after the given day start.
+    nextDay(dayStart) {
+        return this.addDays(dayStart, 1);
     }
 
     // Hour boundaries within [visStart, visEnd] that land on a multiple of

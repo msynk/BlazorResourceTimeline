@@ -141,6 +141,13 @@ export class TimelineEngine {
             // How often (ms) the "now" indicator is repainted so it keeps up
             // with the wall clock on an idle timeline. 0 stops the ticking.
             nowLineRefreshMs: 60 * 1000,
+            // When true, panByDays lands the leading edge on a local midnight
+            // (the start of the day `days` calendar days away in `timeZone`)
+            // instead of shifting by exactly 24 hours. DST 23/25-hour days
+            // are a single step. Default keeps the 24-hour behaviour. A
+            // non-null second argument to panByDays wins over this for that
+            // call.
+            panToDayStart: false,
             // Editing. When editable, a bar can be dragged to move it in time
             // (and, if allowResourceChange, onto another resource row), or
             // grabbed near an edge to resize its start/end. Moves/resizes snap
@@ -2214,15 +2221,27 @@ export class TimelineEngine {
         }
     }
 
-    // Pans the time axis by whole days (negative moves back), keeping the same
-    // time of day at the left edge: a step is exactly 24 hours rather than a
-    // jump to the next day boundary. Clamped to the timeline's range, so a
-    // press at either end is a no-op. Returns whether the view moved.
-    panByDays(days) {
+    // Pans the time axis by whole days (negative moves back). By default a
+    // step is exactly 24 hours, keeping the same time of day at the left
+    // edge. With panToDayStart, the left edge lands on a local midnight: the
+    // start of the day `days` calendar days away in the configured zone, so
+    // a DST 23/25-hour day is one step. A boolean second argument overrides
+    // the config for this call (`null`/`undefined` keeps the option). Clamped
+    // to the timeline's range, so a press at either end is a no-op. Returns
+    // whether the view moved.
+    panByDays(days, panToDayStart) {
         if (!this._hasTimeRange() || !(this._pixelsPerHour > 0) || !days) return false;
 
-        const target = Math.max(
-            0, Math.min(this.scrollX + days * 24 * this._pixelsPerHour, this._virtualScrollMaxX));
+        const toDayStart = panToDayStart ?? this.config.panToDayStart;
+        let target;
+        if (toDayStart) {
+            const lead = Math.round(this.getXToTime(this.config.resourceAxisWidth));
+            const targetTime = this._time.addDays(lead, days);
+            target = (targetTime - this.timeRange.start) * this._pixelsPerMs;
+        } else {
+            target = this.scrollX + days * 24 * this._pixelsPerHour;
+        }
+        target = Math.max(0, Math.min(target, this._virtualScrollMaxX));
         if (target === this.scrollX) return false;
 
         this._setVirtualScrollX(target);

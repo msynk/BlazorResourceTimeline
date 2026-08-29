@@ -221,6 +221,19 @@ public class BlazorResourceTimelineOptions
     public int? NowLineRefreshMs { get; set; }
 
     /// <summary>
+    /// When <c>true</c>, <c>PanByDaysAsync</c> lands the leading edge on a local
+    /// midnight: a step of <c>1</c> goes to the start of the next calendar day
+    /// in <see cref="TimeZone"/> (or the viewer's zone), and a step of <c>7</c>
+    /// to the start of the day a week ahead. DST 23- and 25-hour days count as
+    /// one step. When <c>false</c> (the default), each step is exactly 24 hours
+    /// and the time of day at the leading edge stays put. A non-null
+    /// <c>panToDayStart</c> argument on that method overrides this for the
+    /// call.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? PanToDayStart { get; set; }
+
+    /// <summary>
     /// Enables in-timeline editing: allocations can be dragged to move them in time
     /// (and, unless <see cref="AllowResourceChange"/> is <c>false</c>, onto another
     /// resource row) or grabbed near an edge to resize their start/end. Commits

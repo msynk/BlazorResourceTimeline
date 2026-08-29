@@ -136,6 +136,7 @@ public class AllocationWireFormatTests
             AutoScrollToNow = true,
             PreserveScrollOnReload = true,
             NowLineRefreshMs = 1000,
+            PanToDayStart = true,
         };
 
         using var doc = JsonDocument.Parse(JsonSerializer.Serialize(options, Web));
@@ -144,6 +145,7 @@ public class AllocationWireFormatTests
         Assert.True(root.GetProperty("autoScrollToNow").GetBoolean());
         Assert.True(root.GetProperty("preserveScrollOnReload").GetBoolean());
         Assert.Equal(1000, root.GetProperty("nowLineRefreshMs").GetInt32());
+        Assert.True(root.GetProperty("panToDayStart").GetBoolean());
     }
 
     [Fact]

@@ -223,3 +223,38 @@ test('day boundaries are local midnight in the configured zone', () => {
         }
     }
 });
+
+test('addDays lands on local midnight and inverts', () => {
+    for (const zone of ZONES) {
+        const z = new ZonedTime(zone);
+        const mid = Date.parse('2026-06-15T15:45:00Z');
+        const start = z.startOfDay(mid);
+        assert.equal(z.addDays(mid, 0), start, `${zone}: addDays(0) is start of day`);
+        assert.equal(z.addDays(start, 1), z.nextDay(start), `${zone}: addDays(1) matches nextDay`);
+        assert.equal(z.addDays(z.addDays(start, 5), -5), start, `${zone}: addDays inverts`);
+    }
+});
+
+test('addDays treats a DST transition as one calendar day', () => {
+    const z = new ZonedTime('America/New_York');
+    const sunday = z.wallClockToTs(2026, 3, 8, 0, 0, 0);
+    const monday = z.addDays(sunday, 1);
+    assert.equal(monday - sunday, 23 * 3600000);
+    const p = z.parts(monday);
+    assert.equal(p.hour, 0);
+    assert.equal(p.day, 9);
+
+    const novSun = z.wallClockToTs(2026, 11, 1, 0, 0, 0);
+    const novMon = z.addDays(novSun, 1);
+    assert.equal(novMon - novSun, 25 * 3600000);
+});
+
+test('addDays rolls over the year', () => {
+    const z = new ZonedTime('UTC');
+    const nye = z.wallClockToTs(2026, 12, 31, 0, 0, 0);
+    const next = z.addDays(nye, 1);
+    const p = z.parts(next);
+    assert.equal(p.year, 2027);
+    assert.equal(p.month, 1);
+    assert.equal(p.day, 1);
+});

@@ -36,7 +36,9 @@ lot of data must stay readable and interactive.
   (`Options.PreserveScrollOnReload`), and set how often the "now" line catches
   up with the wall clock (`Options.NowLineRefreshMs`).
 - **Day/week navigation**: step the view a day at a time - or a week - with
-  `PanByDaysAsync()`. Hosts can put the same steps on their own keyboard
+  `PanByDaysAsync()`. By default a step is exactly 24 hours; set
+  `Options.PanToDayStart` (or pass `panToDayStart:` on the call) to land on
+  local midnight instead. Hosts can put the same steps on their own keyboard
   shortcuts.
 - **Selection**: click, `Ctrl`/`Cmd`-click to toggle, and click-and-drag
   marquee selection.
@@ -255,14 +257,20 @@ Three independent options decide where the viewport sits and how lively the
 ### Stepping through the timeline a day at a time
 
 `PanByDaysAsync(days)` moves the view forward or back by whole days without
-touching the zoom, keeping the same time of day at the leading edge - so a
-planner can be walked day by day (or week by week, with `7`) from your own
-toolbar:
+touching the zoom. By default a step is exactly 24 hours, keeping the same
+time of day at the leading edge. Set `Options.PanToDayStart = true` to land
+on a local midnight instead - the start of the day `days` calendar days away
+in `Options.TimeZone` (or the viewer's zone) - so a DST 23- or 25-hour day
+is still one step, and a mid-afternoon view jumps to the next (or previous)
+day's start rather than the same clock time tomorrow. Pass
+`panToDayStart: true` or `false` on a call to override the option for that
+step only (`null` / omitted keeps the option):
 
 ```razor
 <button title="Back one day (←)" @onclick="() => _timeline.PanByDaysAsync(-1)">&lsaquo; Day</button>
 <button title="Forward one day (→)" @onclick="() => _timeline.PanByDaysAsync(1)">Day &rsaquo;</button>
 <button title="Forward one week (Ctrl+→)" @onclick="() => _timeline.PanByDaysAsync(7)">Week &raquo;</button>
+<button title="Next midnight" @onclick="() => _timeline.PanByDaysAsync(1, panToDayStart: true)">Day start &rsaquo;</button>
 
 <BlazorResourceTimeline @ref="_timeline" Config="_config" Options="_options" />
 ```
@@ -653,7 +661,7 @@ Capture the component with `@ref` to drive it from code:
 | `GetSelectedBarsAsync()` | Returns the selected allocations, in selection order. |
 | `GoToTodayAsync()` | Centers "now" in view (if within range). `Options.AutoScrollToNow` does this on the first load without a call. |
 | `ScrollToTimeAsync(unixMs)` | Centers the given time in view. |
-| `PanByDaysAsync(days)` | Steps the view forward (or back) by whole days at the current zoom; pass `±7` for a week. `false` when already at that end of the range. |
+| `PanByDaysAsync(days, panToDayStart?)` | Steps the view forward (or back) by whole days at the current zoom; pass `±7` for a week. With `Options.PanToDayStart` (or a non-null `panToDayStart` argument, which wins), each step lands on local midnight. `false` when already at that end of the range. |
 | `ZoomInAsync()` / `ZoomOutAsync()` | Zoom around the viewport center. |
 | `ZoomToDaysAsync(days)` | Zooms so exactly that many days fill the current viewport, keeping the center time fixed. |
 | `SetPixelsPerHourAsync(value?)` | Sets an explicit scale, or `null` for auto. |
@@ -726,11 +734,11 @@ gestures; a moving touch pans natively instead of starting a drag.
 `src/Demo` is a Blazor WebAssembly playground for everything above: dataset size
 (7 to 365 days), renderer, bar height and margin, editing, on-demand loading, the
 custom resource column, time zone, zoom (including 1 / 3 / 7-day viewport
-presets), and a light/dark theme toggle - plus a live view of the selection, the
-last edit and the last context-menu action. Drag the divider at the right edge of
-the resource column to resize it. The demo wires `←`/`→` (and
-`Ctrl`/`Cmd`+arrows for a week) to `PanByDaysAsync` itself while the timeline
-is unfocused; those shortcuts are not part of the component. Click the
+presets), pan-to-day-start, and a light/dark theme toggle - plus a live view of
+the selection, the last edit and the last context-menu action. Drag the divider
+at the right edge of the resource column to resize it. The demo wires `←`/`→`
+(and `Ctrl`/`Cmd`+arrows for a week) to `PanByDaysAsync` itself while the
+timeline is unfocused; those shortcuts are not part of the component. Click the
 timeline and the same keys move between bars instead.
 
 ```bash
