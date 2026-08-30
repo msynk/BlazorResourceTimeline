@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `OnSelectionChanged` no longer fires when a click, marquee or programmatic
+  select leaves the selected set unchanged (clicking empty space with nothing
+  selected, or re-clicking a bar that is already the sole selection).
 - A parent re-render during the first data load (`OnViewChanged`, a post-mount
   Options swap, …) no longer replays `setData` for the same `Config`. The demo
   was painting the timeline two or three times on refresh because theme sync

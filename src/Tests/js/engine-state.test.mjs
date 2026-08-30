@@ -299,3 +299,69 @@ test('Shift-range select on a 3-bar row selects the middle span', () => {
     engine._selectRange('b', 'c');
     assert.deepEqual([...engine.selectedBars], ['b', 'c']);
 });
+
+test('selectBars notifies only when the selected ids change', () => {
+    const engine = makeIndexedEngine([
+        { id: 'a', resourceId: 'r0', startTime: 0, endTime: 100 },
+        { id: 'b', resourceId: 'r0', startTime: 200, endTime: 300 }
+    ]);
+    const notified = [];
+    engine.render = () => {};
+    engine._notifySelection = () => { notified.push([...engine.selectedBars]); };
+
+    engine.selectBars(['a'], false);
+    assert.deepEqual(notified, [['a']]);
+
+    engine.selectBars(['a'], false);
+    assert.deepEqual(notified, [['a']], 'same replacement is a no-op');
+
+    engine.selectBars(['a'], true);
+    assert.deepEqual(notified, [['a']], 'additive add of an already-selected id is a no-op');
+
+    engine.selectBars(['b'], false);
+    assert.deepEqual(notified, [['a'], ['b']]);
+});
+
+test('Enter on an already-sole-selected focused bar does not notify', () => {
+    const engine = makeIndexedEngine([
+        { id: 'a', resourceId: 'r0', startTime: 0, endTime: 100 }
+    ]);
+    engine._focusAlloc = engine.allocations[0];
+    engine._focusResource = 0;
+    engine.selectedBars.add('a');
+    const notified = [];
+    engine.render = () => {};
+    engine._notifySelection = () => { notified.push([...engine.selectedBars]); };
+    engine._announceFocus = () => {};
+
+    engine._toggleSelectFocused(false);
+    assert.deepEqual(notified, []);
+    assert.deepEqual([...engine.selectedBars], ['a']);
+
+    engine._toggleSelectFocused(true);
+    assert.deepEqual(notified, [[]]);
+});
+
+test('a marquee that matches the existing selection does not notify', () => {
+    const engine = makeIndexedEngine([
+        { id: 'high', resourceId: 'r0', startTime: 0, endTime: 400 }
+    ]);
+    engine.timeRange = { start: 0, end: 1000 };
+    engine._pixelsPerMs = 1;
+    engine._recomputeRowMetrics();
+    const high = engine.allocations[0];
+    const band = engine._barContentBand(high, 0);
+    engine.selectedBars.add('high');
+
+    const drag = {
+        startX: engine._timeToContentX(high.startTime) + 1,
+        startY: band.top + 0.1,
+        currentX: engine._timeToContentX(high.endTime) - 1,
+        currentY: band.bottom - 0.1,
+        additive: false,
+        baseSelection: new Set(engine.selectedBars)
+    };
+    engine._applyMarqueeSelection(drag);
+    assert.deepEqual([...engine.selectedBars], ['high']);
+    assert.equal(engine._selectionEquals(drag.baseSelection, engine.selectedBars), true);
+});

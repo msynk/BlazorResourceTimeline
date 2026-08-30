@@ -163,3 +163,86 @@ test('_recordClick ignores a second press that moved or waited too long', () => 
     engine._recordClick(100, 80, 0);
     assert.equal(engine._recordClick(100 + engine.config.dragThreshold + 1, 80, 100), false);
 });
+
+function trackSelectionNotify(engine) {
+    const notified = [];
+    engine.render = () => {};
+    engine._notifySelection = () => { notified.push([...engine.selectedBars]); };
+    return notified;
+}
+
+function contentPoint(engine, startHour) {
+    return {
+        x: engine.getTimeToX(START + startHour * HOUR),
+        y: engine.getResourceToY(0) + engine._rowHeight(0) / 2
+    };
+}
+
+test('clicking an unselected bar notifies with that bar', () => {
+    const engine = makeHitEngine([bar('a', 1, 4)]);
+    const notified = trackSelectionNotify(engine);
+    const { x, y } = contentPoint(engine, 2.5);
+    engine._handleClickSelect(x, y, false, false);
+    assert.deepEqual(notified, [['a']]);
+    assert.deepEqual([...engine.selectedBars], ['a']);
+});
+
+test('clicking empty content does not notify when nothing is selected', () => {
+    const engine = makeHitEngine([bar('a', 1, 4)]);
+    const notified = trackSelectionNotify(engine);
+    const { x, y } = contentPoint(engine, 20);
+    engine._handleClickSelect(x, y, false, false);
+    assert.deepEqual(notified, []);
+    assert.equal(engine.selectedBars.size, 0);
+});
+
+test('clicking empty content clears a selection and notifies once', () => {
+    const engine = makeHitEngine([bar('a', 1, 4)]);
+    engine.selectedBars.add('a');
+    const notified = trackSelectionNotify(engine);
+    const { x, y } = contentPoint(engine, 20);
+    engine._handleClickSelect(x, y, false, false);
+    assert.deepEqual(notified, [[]]);
+    assert.equal(engine.selectedBars.size, 0);
+});
+
+test('re-clicking the sole selected bar does not notify', () => {
+    const engine = makeHitEngine([bar('a', 1, 4)]);
+    engine.selectedBars.add('a');
+    const notified = trackSelectionNotify(engine);
+    const { x, y } = contentPoint(engine, 2.5);
+    engine._handleClickSelect(x, y, false, false);
+    assert.deepEqual(notified, []);
+    assert.deepEqual([...engine.selectedBars], ['a']);
+});
+
+test('clicking a different bar replaces the selection and notifies', () => {
+    const engine = makeHitEngine([bar('a', 1, 3), bar('b', 8, 10)]);
+    engine.selectedBars.add('a');
+    const notified = trackSelectionNotify(engine);
+    const { x, y } = contentPoint(engine, 9);
+    engine._handleClickSelect(x, y, false, false);
+    assert.deepEqual(notified, [['b']]);
+    assert.deepEqual([...engine.selectedBars], ['b']);
+});
+
+test('Ctrl-click on empty content leaves the selection and does not notify', () => {
+    const engine = makeHitEngine([bar('a', 1, 4)]);
+    engine.selectedBars.add('a');
+    const notified = trackSelectionNotify(engine);
+    const { x, y } = contentPoint(engine, 20);
+    engine._handleClickSelect(x, y, true, false);
+    assert.deepEqual(notified, []);
+    assert.deepEqual([...engine.selectedBars], ['a']);
+});
+
+test('re-clicking an overflow cluster that is already selected does not notify', () => {
+    const engine = makeHitEngine([bar('a', 1, 2)]);
+    engine._overflowHits = [{ x: 200, y: 80, width: 22, height: 14, ids: ['h1', 'h2'] }];
+    engine.selectedBars.add('h1');
+    engine.selectedBars.add('h2');
+    const notified = trackSelectionNotify(engine);
+    engine._handleClickSelect(210, 85, false, false);
+    assert.deepEqual(notified, []);
+    assert.deepEqual([...engine.selectedBars], ['h1', 'h2']);
+});

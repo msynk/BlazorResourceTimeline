@@ -87,8 +87,10 @@ public partial class BlazorResourceTimeline
     [Parameter] public string AriaLabel { get; set; } = "Resource timeline";
 
     /// <summary>
-    /// Raised whenever the set of selected bars changes. The array contains every
-    /// currently selected bar, in selection order, and is empty when nothing is selected.
+    /// Raised when the set of selected bars actually changes. Re-clicking the
+    /// same sole selection, or clicking empty space when nothing is selected,
+    /// does not raise it. The array contains every currently selected bar, in
+    /// selection order, and is empty when nothing is selected.
     /// For a single click the array will contain exactly one element. Elements are
     /// the same instances supplied in <see cref="Config"/>, so they can be compared
     /// by reference against the caller's own data.

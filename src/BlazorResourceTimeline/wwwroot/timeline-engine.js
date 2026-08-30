@@ -2292,10 +2292,15 @@ export class TimelineEngine {
             this._suppressClick = true;
             // Finalize synchronously against the drag's final rectangle: the
             // notification below must carry the selection for where the marquee
-            // ended, not for the last frame that happened to paint.
+            // ended, not for the last frame that happened to paint. Compare
+            // against the snapshot taken at pointer-down: paint frames already
+            // wrote selectedBars, so a before/after at this point would miss
+            // a real change.
             this._applyMarqueeSelection(drag);
             this.render();
-            this._notifySelection();
+            if (!this._selectionEquals(drag.baseSelection, this.selectedBars)) {
+                this._notifySelection();
+            }
         } else {
             // No meaningful movement: treat as a click / Ctrl-click.
             const { x: canvasX, y: canvasY } = this._eventToCanvas(e);
@@ -2580,6 +2585,7 @@ export class TimelineEngine {
     // otherwise it replaces the selection with just this bar.
     _toggleSelectFocused(additive) {
         if (!this._focusAlloc) return;
+        const previous = new Set(this.selectedBars);
         if (additive) {
             if (this.selectedBars.has(this._focusAlloc.id)) {
                 this.selectedBars.delete(this._focusAlloc.id);
@@ -2590,8 +2596,7 @@ export class TimelineEngine {
             this.selectedBars.clear();
             this.selectedBars.add(this._focusAlloc.id);
         }
-        this.render();
-        this._notifySelection();
+        this._commitSelectionIfChanged(previous);
         this._announceFocus();
     }
 
@@ -2648,6 +2653,8 @@ export class TimelineEngine {
     _handleClickSelect(canvasX, canvasY, additive, range) {
         if (!this._isInContentArea(canvasX, canvasY)) return;
 
+        const previous = new Set(this.selectedBars);
+
         const overflow = this._overflowAt(canvasX, canvasY);
         if (overflow) {
             if (additive) {
@@ -2657,8 +2664,7 @@ export class TimelineEngine {
                 for (const id of overflow.ids) this.selectedBars.add(id);
             }
             this._selectionAnchorId = overflow.ids[0] || this._selectionAnchorId;
-            this.render();
-            this._notifySelection();
+            this._commitSelectionIfChanged(previous);
             return;
         }
 
@@ -2687,8 +2693,7 @@ export class TimelineEngine {
             }
         }
 
-        this.render();
-        this._notifySelection();
+        this._commitSelectionIfChanged(previous);
     }
 
     _overflowAt(canvasX, canvasY) {
@@ -3396,6 +3401,28 @@ export class TimelineEngine {
         this.selectedBars.clear();
         this.render();
         this._notifySelection();
+    }
+
+    // True when `a` and `b` hold the same ids in the same order (Set insertion
+    // order is selection order). Used so a click that leaves the selection
+    // unchanged does not raise OnSelectionChanged.
+    _selectionEquals(a, b) {
+        if (a === b) return true;
+        if (!a || !b || a.size !== b.size) return false;
+        const ia = a.values();
+        const ib = b.values();
+        for (let i = 0; i < a.size; i++) {
+            if (ia.next().value !== ib.next().value) return false;
+        }
+        return true;
+    }
+
+    // Renders and notifies .NET only when selectedBars differs from `previous`.
+    _commitSelectionIfChanged(previous) {
+        if (this._selectionEquals(previous, this.selectedBars)) return false;
+        this.render();
+        this._notifySelection();
+        return true;
     }
 
     // Notifies .NET of the current selection state. Only the allocation ids
@@ -4713,6 +4740,7 @@ export class TimelineEngine {
     }
 
     selectBars(ids, additive) {
+        const previous = new Set(this.selectedBars);
         const list = ids || [];
         if (!additive) this.selectedBars.clear();
         const present = new Set(this.allocations.map(a => a.id));
@@ -4720,8 +4748,7 @@ export class TimelineEngine {
             if (present.has(list[i])) this.selectedBars.add(list[i]);
         }
         if (list.length) this._selectionAnchorId = list[list.length - 1];
-        this.render();
-        this._notifySelection();
+        this._commitSelectionIfChanged(previous);
     }
 
     scrollToAllocation(id) {

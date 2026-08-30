@@ -886,7 +886,8 @@ gestures; a moving touch pans natively instead of starting a drag.
 
 - `Config` - resources, time window, and allocation bars.
 - `Options` - visual/behavioral configuration.
-- `OnSelectionChanged` - raised with the selected allocations (your own instances).
+- `OnSelectionChanged` - raised with the selected allocations (your own instances)
+  only when the selected set actually changes.
 - `OnViewChanged` - visible `[Start, End]` and `PixelsPerHour` after scroll/zoom/layout (once per frame max).
 - `OnAllocationChanged` - raised after a move/resize (editing) with the updated instance.
 - `OnAllocationChanging` - return `false` to refuse a previewed single-bar edit without a reload.
