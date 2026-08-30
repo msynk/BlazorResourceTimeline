@@ -198,6 +198,92 @@ public class ComponentTests : BunitContext
     }
 
     [Fact]
+    public async Task Click_Callback_Resolves_Bar_Resource_Time_And_Position()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var config = SampleConfig();
+        BlazorResourceTimelinePointerArgs? args = null;
+        var cut = Render<TimelineComponent>(p => p
+            .Add(c => c.Config, config)
+            .Add(c => c.OnClick, EventCallback.Factory.Create<BlazorResourceTimelinePointerArgs>(this, a => args = a)));
+        await WaitUntil(() => JSInterop.Invocations["whenRendered"].Count > 0);
+
+        await cut.InvokeAsync(() => cut.Instance.OnTimelineClick(
+            "a1", null, "r1", 30_000, "content", 220, 90, 480, 310,
+            true, false, false, true));
+
+        Assert.NotNull(args);
+        Assert.Same(config.Allocations[0], args!.Allocation);
+        Assert.Same(config.Resources[0], args.Resource);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(30_000), args.Time);
+        Assert.Equal(BlazorResourceTimelineHitArea.Content, args.Area);
+        Assert.Equal(220, args.X);
+        Assert.Equal(90, args.Y);
+        Assert.Equal(480, args.ClientX);
+        Assert.Equal(310, args.ClientY);
+        Assert.True(args.CtrlKey);
+        Assert.False(args.ShiftKey);
+        Assert.False(args.MetaKey);
+        Assert.True(args.AltKey);
+        Assert.Empty(args.OverflowAllocations);
+    }
+
+    [Fact]
+    public async Task DoubleClick_Callback_Resolves_Overflow_And_Hit_Area()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var config = SampleConfig();
+        config.Allocations.Add(new()
+        {
+            Id = "a2",
+            ResourceId = "r1",
+            StartTime = DateTimeOffset.FromUnixTimeMilliseconds(120_000),
+            EndTime = DateTimeOffset.FromUnixTimeMilliseconds(180_000),
+        });
+        BlazorResourceTimelinePointerArgs? args = null;
+        var cut = Render<TimelineComponent>(p => p
+            .Add(c => c.Config, config)
+            .Add(c => c.OnDoubleClick, EventCallback.Factory.Create<BlazorResourceTimelinePointerArgs>(this, a => args = a)));
+        await WaitUntil(() => JSInterop.Invocations["whenRendered"].Count > 0);
+
+        await cut.InvokeAsync(() => cut.Instance.OnTimelineDoubleClick(
+            null, ["a1", "a2"], "r1", 90_000, "timeAxis", 400, 12, 500, 40,
+            false, true, false, false));
+
+        Assert.NotNull(args);
+        Assert.Null(args!.Allocation);
+        Assert.Equal(2, args.OverflowAllocations.Count);
+        Assert.Same(config.Allocations[0], args.OverflowAllocations[0]);
+        Assert.Same(config.Allocations[1], args.OverflowAllocations[1]);
+        Assert.Equal(BlazorResourceTimelineHitArea.TimeAxis, args.Area);
+        Assert.True(args.ShiftKey);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(90_000), args.Time);
+    }
+
+    [Fact]
+    public async Task ContextMenu_Callback_Uses_The_Shared_Pointer_Payload()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var config = SampleConfig();
+        BlazorResourceTimelineContextMenuArgs? args = null;
+        var cut = Render<TimelineComponent>(p => p
+            .Add(c => c.Config, config)
+            .Add(c => c.OnContextMenu, EventCallback.Factory.Create<BlazorResourceTimelineContextMenuArgs>(this, a => args = a)));
+        await WaitUntil(() => JSInterop.Invocations["whenRendered"].Count > 0);
+
+        await cut.InvokeAsync(() => cut.Instance.OnTimelineContextMenu(
+            "a1", null, "r1", 15_000, "content", 180, 70, 300, 200,
+            false, false, false, false));
+
+        Assert.NotNull(args);
+        Assert.Same(config.Allocations[0], args!.Allocation);
+        Assert.Same(config.Resources[0], args.Resource);
+        Assert.Equal(180, args.X);
+        Assert.Equal(300, args.ClientX);
+        Assert.Equal(BlazorResourceTimelineHitArea.Content, args.Area);
+    }
+
+    [Fact]
     public async Task Creating_Func_Receives_Resource_And_Range()
     {
         JSInterop.Mode = JSRuntimeMode.Loose;
@@ -386,6 +472,26 @@ public class ComponentTests : BunitContext
         // the load gate afterwards must not throw either).
         await Task.Delay(100);
         Assert.Empty(JSInterop.Invocations["whenRendered"]);
+    }
+
+    [Fact]
+    public async Task Parent_Rerender_During_Load_Does_Not_Reload_The_Same_Config()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var setData = JSInterop.SetupVoid("setData", _ => true);
+        var config = SampleConfig();
+
+        var cut = Render<TimelineComponent>(p => p.Add(c => c.Config, config));
+        await WaitUntil(() => setData.Invocations.Count > 0);
+
+        // The demo (and any host that wires OnViewChanged) re-renders while the
+        // first setData is still in flight. That used to queue another full load.
+        cut.Render(p => p.Add(c => c.Config, config));
+
+        setData.SetVoidResult();
+        await WaitUntil(() => JSInterop.Invocations["whenRendered"].Count > 0);
+
+        Assert.Single(JSInterop.Invocations["setData"]);
     }
 
     [Fact]

@@ -27,6 +27,10 @@ const MAX_RENDER_ERROR_LOGS = 3;
 // where an unbounded cache would grow without limit.
 const MAX_IMAGE_CACHE = 256;
 
+// Window in which a second still click is treated as a double-click. Matches
+// the typical OS default; distance uses config.dragThreshold.
+const DBLCLICK_MS = 500;
+
 // Shared empty row index, returned for resources with no allocations so hot
 // scan paths never have to null-check. Never mutated.
 const EMPTY_ROW_INDEX = Object.freeze({
@@ -322,6 +326,14 @@ export class TimelineEngine {
         // wrapper can still be panned); a quick, stationary touch is treated as
         // a tap-to-select on release instead.
         this._touch = null;
+
+        // Click / double-click reporting. _press is the surface point of the
+        // current pointerdown (cleared on up/cancel). _suppressClick skips the
+        // click event after a marquee, edit or pan. _lastClick times successive
+        // still presses so the second raises OnDoubleClick as well as OnClick.
+        this._press = null;
+        this._suppressClick = false;
+        this._lastClick = null;
 
         // Keyboard focus (accessibility). _focusResource is the index of the
         // resource row the keyboard cursor is on; _focusAlloc is the allocation
@@ -1937,6 +1949,8 @@ export class TimelineEngine {
         if (e.pointerType === 'touch') {
             const { x, y } = this._eventToCanvas(e);
             this._touch = { x, y, additive: this._isAdditiveEvent(e), range: e.shiftKey };
+            this._press = { pointerId: e.pointerId, x, y };
+            this._suppressClick = false;
             return;
         }
 
@@ -1948,6 +1962,8 @@ export class TimelineEngine {
         this._hideTooltip();
 
         const { x: canvasX, y: canvasY } = this._eventToCanvas(e);
+        this._press = { pointerId: e.pointerId, x: canvasX, y: canvasY };
+        this._suppressClick = false;
 
         // Presses on the sticky axes clear the selection (unless modified). A
         // press on a group row in the resource axis toggles its collapsed state.
@@ -2054,31 +2070,112 @@ export class TimelineEngine {
     // Clicks on the time axis or the corner report nothing.
     handleContextMenu(e) {
         e.preventDefault();
-        if (!this.dotNetRef) return;
         this._hideTooltip();
 
         const { x, y } = this._eventToCanvas(e);
+        const hit = this._pointerHit(x, y);
+        if (hit.area === 'timeAxis' || hit.area === 'corner') return;
+        if (hit.area === 'resourceAxis' && !hit.resourceId) return;
+
+        this._notifyPointer('OnTimelineContextMenu', e, hit);
+    }
+
+    // Classifies a surface point as content, resource axis, time axis or corner.
+    _hitArea(canvasX, canvasY) {
+        const c = this.config;
+        if (canvasX < c.resourceAxisWidth && canvasY < c.timeAxisHeight) return 'corner';
+        if (canvasY < c.timeAxisHeight) return 'timeAxis';
+        if (canvasX < c.resourceAxisWidth) return 'resourceAxis';
+        return 'content';
+    }
+
+    // Resolves what a surface point sits on: hit area, bar (or overflow
+    // cluster), resource row and time. Shared by click, double-click and
+    // context-menu so those events agree with selection hit-testing.
+    _pointerHit(canvasX, canvasY) {
+        const area = this._hitArea(canvasX, canvasY);
         let allocId = null;
+        let overflowIds = null;
         let resourceId = null;
         let time = null;
 
-        if (this._isInContentArea(x, y)) {
-            const rowIndex = this.getYToResource(y);
+        if (area === 'content') {
+            const rowIndex = this.getYToResource(canvasY);
             if (rowIndex !== -1) resourceId = this._rows[rowIndex].resource.id;
-            const hit = this._barAt(x, y);
-            if (hit) allocId = hit.alloc.id;
-            time = Math.round(this.getXToTime(x));
-        } else if (x < this.config.resourceAxisWidth && y >= this.config.timeAxisHeight) {
-            const rowIndex = this.getYToResource(y);
-            if (rowIndex === -1) return;
-            resourceId = this._rows[rowIndex].resource.id;
-        } else {
-            return;
+            if (this._hasTimeRange()) time = Math.round(this.getXToTime(canvasX));
+            const overflow = this._overflowAt(canvasX, canvasY);
+            if (overflow) {
+                overflowIds = overflow.ids;
+            } else {
+                const hit = this._barAt(canvasX, canvasY);
+                if (hit) allocId = hit.alloc.id;
+            }
+        } else if (area === 'resourceAxis') {
+            const rowIndex = this._rowAtY(canvasY);
+            if (rowIndex >= 0) resourceId = this._rows[rowIndex].resource.id;
+        } else if (area === 'timeAxis') {
+            if (this._hasTimeRange()) time = Math.round(this.getXToTime(canvasX));
         }
 
+        return { area, allocId, overflowIds, resourceId, time, x: canvasX, y: canvasY };
+    }
+
+    // Raises OnClick (and OnDoubleClick on the second still press) after a
+    // press that never became a drag, edit or pan. Native click/dblclick are
+    // not used: pointerdown preventDefault on content gestures suppresses them.
+    _maybeEmitClick(e) {
+        const press = this._press;
+        this._press = null;
+        if (!press || this._suppressClick) {
+            this._suppressClick = false;
+            return;
+        }
+        const { x, y } = this._eventToCanvas(e);
+        if (Math.abs(x - press.x) > this.config.dragThreshold ||
+            Math.abs(y - press.y) > this.config.dragThreshold) {
+            return;
+        }
+        const hit = this._pointerHit(x, y);
+        this._notifyPointer('OnTimelineClick', e, hit);
+        if (this._recordClick(x, y)) {
+            this._notifyPointer('OnTimelineDoubleClick', e, hit);
+        }
+    }
+
+    // True when this still press is the even click of a double-click pair
+    // (2nd, 4th, ...) within DBLCLICK_MS and dragThreshold of the previous.
+    _recordClick(x, y, now) {
+        const t = now != null ? now : (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        const last = this._lastClick;
+        const threshold = this.config.dragThreshold ?? 4;
+        const within = last
+            && (t - last.t) <= DBLCLICK_MS
+            && Math.abs(x - last.x) <= threshold
+            && Math.abs(y - last.y) <= threshold;
+        const count = within ? last.count + 1 : 1;
+        this._lastClick = { t, x, y, count };
+        return count > 1 && count % 2 === 0;
+    }
+
+    _notifyPointer(method, e, hit) {
+        if (!this.dotNetRef) return;
         this.dotNetRef.invokeMethodAsync(
-            'OnTimelineContextMenu', allocId, resourceId, time, e.clientX, e.clientY)
-            .catch((error) => console.error('BlazorResourceTimeline context menu callback failed:', error));
+            method,
+            hit.allocId,
+            hit.overflowIds,
+            hit.resourceId,
+            hit.time,
+            hit.area,
+            hit.x,
+            hit.y,
+            e.clientX,
+            e.clientY,
+            !!e.ctrlKey,
+            !!e.shiftKey,
+            !!e.metaKey,
+            !!e.altKey)
+            .catch((error) => console.error(
+                `BlazorResourceTimeline ${method} callback failed:`, error));
     }
 
     handlePointerMove(e) {
@@ -2090,6 +2187,7 @@ export class TimelineEngine {
                 if (Math.abs(x - this._touch.x) > this.config.dragThreshold ||
                     Math.abs(y - this._touch.y) > this.config.dragThreshold) {
                     this._touch = null;
+                    this._suppressClick = true;
                 }
             }
             return;
@@ -2153,9 +2251,12 @@ export class TimelineEngine {
                     } else if (!this._touch.additive) {
                         this._clearSelectionInternal();
                     }
+                } else {
+                    this._suppressClick = true;
                 }
                 this._touch = null;
             }
+            this._maybeEmitClick(e);
             return;
         }
 
@@ -2166,16 +2267,21 @@ export class TimelineEngine {
             const ed = this.edit;
             this.edit = null;
             if (ed.moved) {
+                this._suppressClick = true;
                 this._commitEdit(ed).catch((error) =>
                     console.error('BlazorResourceTimeline edit commit failed:', error));
             } else {
                 const { x, y } = this._eventToCanvas(e);
                 this._handleClickSelect(x, y, ed.additive, ed.range);
             }
+            this._maybeEmitClick(e);
             return;
         }
 
-        if (!this.drag || e.pointerId !== this.drag.pointerId) return;
+        if (!this.drag || e.pointerId !== this.drag.pointerId) {
+            this._maybeEmitClick(e);
+            return;
+        }
 
         try { this.renderer.surface.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
         const drag = this.drag;
@@ -2183,6 +2289,7 @@ export class TimelineEngine {
         this._marqueeDirty = false;
 
         if (drag.moved) {
+            this._suppressClick = true;
             // Finalize synchronously against the drag's final rectangle: the
             // notification below must carry the selection for where the marquee
             // ended, not for the last frame that happened to paint.
@@ -2194,12 +2301,15 @@ export class TimelineEngine {
             const { x: canvasX, y: canvasY } = this._eventToCanvas(e);
             this._handleClickSelect(canvasX, canvasY, drag.additive, drag.range);
         }
+        this._maybeEmitClick(e);
     }
 
     // Aborts an in-progress interaction (e.g. the browser takes the pointer over
     // for scrolling, or the gesture is otherwise interrupted).
     handlePointerCancel(e) {
         this._touch = null;
+        this._press = null;
+        this._suppressClick = false;
         if (this.edit && e.pointerId === this.edit.pointerId) {
             try { this.renderer.surface.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
             // Discard the preview; the allocation keeps its original position.

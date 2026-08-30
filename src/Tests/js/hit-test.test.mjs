@@ -82,3 +82,84 @@ test('_barAt ignores overflow bars', () => {
     assert.ok(hit);
     assert.equal(engine._isOverflow(hit.alloc), false);
 });
+
+test('_hitArea classifies content, axes and the corner', () => {
+    const engine = makeHitEngine([bar('a', 1, 2)]);
+    const ax = engine.config.resourceAxisWidth;
+    const ay = engine.config.timeAxisHeight;
+    assert.equal(engine._hitArea(ax - 1, ay - 1), 'corner');
+    assert.equal(engine._hitArea(ax + 10, ay - 1), 'timeAxis');
+    assert.equal(engine._hitArea(ax - 1, ay + 10), 'resourceAxis');
+    assert.equal(engine._hitArea(ax + 10, ay + 10), 'content');
+});
+
+test('_pointerHit reports the bar, resource and time in the content area', () => {
+    const engine = makeHitEngine([bar('a', 1, 4)]);
+    const alloc = engine.allocations[0];
+    const x = engine.getTimeToX((alloc.startTime + alloc.endTime) / 2);
+    const y = engine.getResourceToY(0) + engine._rowHeight(0) / 2;
+    const hit = engine._pointerHit(x, y);
+    assert.equal(hit.area, 'content');
+    assert.equal(hit.allocId, 'a');
+    assert.equal(hit.resourceId, 'r0');
+    assert.equal(hit.overflowIds, null);
+    assert.equal(hit.x, x);
+    assert.equal(hit.y, y);
+    assert.ok(Math.abs(hit.time - (alloc.startTime + alloc.endTime) / 2) < 60_000);
+});
+
+test('_pointerHit on empty content still has resource and time', () => {
+    const engine = makeHitEngine([bar('a', 1, 2)]);
+    const x = engine.getTimeToX(START + 20 * HOUR);
+    const y = engine.getResourceToY(0) + engine._rowHeight(0) / 2;
+    const hit = engine._pointerHit(x, y);
+    assert.equal(hit.area, 'content');
+    assert.equal(hit.allocId, null);
+    assert.equal(hit.resourceId, 'r0');
+    assert.ok(hit.time != null);
+});
+
+test('_pointerHit on the resource axis has a resource but no time', () => {
+    const engine = makeHitEngine([bar('a', 1, 2)]);
+    const y = engine.getResourceToY(0) + engine._rowHeight(0) / 2;
+    const hit = engine._pointerHit(10, y);
+    assert.equal(hit.area, 'resourceAxis');
+    assert.equal(hit.resourceId, 'r0');
+    assert.equal(hit.time, null);
+    assert.equal(hit.allocId, null);
+});
+
+test('_pointerHit on the time axis has a time but no resource', () => {
+    const engine = makeHitEngine([bar('a', 1, 2)]);
+    const x = engine.getTimeToX(START + 3 * HOUR);
+    const hit = engine._pointerHit(x, 10);
+    assert.equal(hit.area, 'timeAxis');
+    assert.equal(hit.resourceId, null);
+    assert.ok(hit.time != null);
+    assert.equal(hit.allocId, null);
+});
+
+test('_pointerHit on an overflow label reports the hidden ids, not a bar', () => {
+    const engine = makeHitEngine([bar('a', 1, 2)]);
+    engine._overflowHits = [{ x: 200, y: 80, width: 22, height: 14, ids: ['h1', 'h2'] }];
+    const hit = engine._pointerHit(210, 85);
+    assert.equal(hit.allocId, null);
+    assert.deepEqual(hit.overflowIds, ['h1', 'h2']);
+    assert.equal(hit.area, 'content');
+});
+
+test('_recordClick treats a second still press within the window as a double-click', () => {
+    const engine = makeHitEngine([bar('a', 1, 2)]);
+    assert.equal(engine._recordClick(100, 80, 0), false);
+    assert.equal(engine._recordClick(101, 81, 400), true);
+    assert.equal(engine._recordClick(102, 80, 800), false);
+    assert.equal(engine._recordClick(102, 80, 900), true);
+});
+
+test('_recordClick ignores a second press that moved or waited too long', () => {
+    const engine = makeHitEngine([bar('a', 1, 2)]);
+    engine._recordClick(100, 80, 0);
+    assert.equal(engine._recordClick(100, 80, 501), false);
+    engine._recordClick(100, 80, 0);
+    assert.equal(engine._recordClick(100 + engine.config.dragThreshold + 1, 80, 100), false);
+});

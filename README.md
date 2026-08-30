@@ -595,8 +595,10 @@ was under the pointer and where the click happened on screen:
 | `ClientX` / `ClientY` | Viewport coordinates of the click, suited to a `position: fixed` menu. |
 
 It fires for bars, for empty space in the content area, and for resource-axis
-rows - but not for the time axis. Right-clicking never changes the selection, so
-an existing multi-selection survives opening a menu.
+rows - but not for the time axis or the corner. Right-clicking never changes
+the selection, so an existing multi-selection survives opening a menu. The
+args type derives from `BlazorResourceTimelinePointerArgs`, so `Area`, `X`/`Y`,
+overflow bars and modifier keys are also available (see [Click and double-click](#click-and-double-click)).
 
 ```razor
 <BlazorResourceTimeline Config="_config" OnContextMenu="ShowMenu" />
@@ -624,6 +626,53 @@ an existing multi-selection survives opening a menu.
 
 Remember to close the menu yourself (for example from a backdrop click or
 `Escape`) - the component only reports the event.
+
+## Click and double-click
+
+A still click (or tap) raises `OnClick` after selection has been updated. A
+second still click within 500 ms of the first also raises `OnDoubleClick`.
+Both use `BlazorResourceTimelinePointerArgs`:
+
+| Property | Description |
+| --- | --- |
+| `Allocation` | The bar under the pointer, or `null` when the click missed every bar (including a `+N` overflow label). Your own instance from `Config`. |
+| `OverflowAllocations` | Hidden bars when the pointer hit a cluster's `+N` label; empty otherwise. |
+| `Resource` | The row under the pointer; `null` on the time axis, the corner, or below the last row. |
+| `Time` | The time at the pointer's horizontal position; `null` on the resource axis and the corner. |
+| `Area` | `Content`, `ResourceAxis`, `TimeAxis` or `Corner`. |
+| `X` / `Y` | Coordinates within the timeline surface (origin at the top-left, including the sticky axes). |
+| `ClientX` / `ClientY` | Viewport coordinates, suited to a `position: fixed` overlay. |
+| `CtrlKey` / `ShiftKey` / `MetaKey` / `AltKey` | Modifier keys held during the click. |
+
+Unlike `OnContextMenu`, click and double-click also fire on the time axis and
+the corner. They do **not** fire after a marquee, a committed edit, or a pan.
+
+```razor
+<BlazorResourceTimeline Config="_config"
+                        OnClick="OnTimelineClick"
+                        OnDoubleClick="OnTimelineDoubleClick" />
+
+@code {
+    private void OnTimelineClick(BlazorResourceTimelinePointerArgs args)
+    {
+        // Selection has already been updated. Use Area / Time / Resource /
+        // Allocation to drive host chrome (status bar, inspector).
+        Console.WriteLine($"{args.Area} at {args.X:0},{args.Y:0} → {args.Allocation?.Id ?? args.Resource?.Id}");
+    }
+
+    private void OnTimelineDoubleClick(BlazorResourceTimelinePointerArgs args)
+    {
+        if (args.Allocation is { } bar)
+        {
+            // Open an editor for the bar.
+        }
+        else if (args.Time is { } time && args.Resource is { } resource)
+        {
+            // Create an allocation at this time on this resource.
+        }
+    }
+}
+```
 
 ## Overlapping allocations
 
@@ -818,11 +867,12 @@ gestures; a moving touch pans natively instead of starting a drag.
 
 | Gesture | Action |
 | --- | --- |
-| Click a bar | Select it (replaces the current selection) |
-| `Ctrl`/`Cmd`-click a bar | Toggle it in the selection |
-| `Shift`-click a bar | Select the inclusive range from the last selected (or focused) bar to the clicked bar, in row-major display order |
-| Click empty content or an axis | Clear the selection; `Ctrl`/`Cmd`-click on empty space leaves it |
-| Click a group row | Expand or collapse the group |
+| Click a bar | Select it (replaces the current selection); raise `OnClick` |
+| `Ctrl`/`Cmd`-click a bar | Toggle it in the selection; raise `OnClick` |
+| `Shift`-click a bar | Select the inclusive range from the last selected (or focused) bar to the clicked bar, in row-major display order; raise `OnClick` |
+| Click empty content or an axis | Clear the selection; `Ctrl`/`Cmd`-click on empty space leaves it; raise `OnClick` |
+| Double-click | Raise `OnDoubleClick` (in addition to `OnClick` on each click) |
+| Click a group row | Expand or collapse the group; raise `OnClick` |
 | Click-and-drag | Marquee-select every bar whose body intersects the rectangle (hidden overflow lanes are skipped) |
 | `Ctrl`/`Cmd` + drag | Additive marquee (unions with the existing selection) |
 | Right-click | Raise `OnContextMenu` (not on the time axis); does not change the selection |
@@ -845,7 +895,12 @@ gestures; a moving touch pans natively instead of starting a drag.
 - `OnAllocationsCopying` - return new allocations (new ids) on paste, or `null` to cancel.
 - `OnAllocationCreating` - return a new allocation (with `Id`) or `null` to cancel create-on-empty-drag.
 - `OnContextMenu` - raised on right-click with the bar/resource/time under the
-  pointer and the click's viewport coordinates.
+  pointer, surface and viewport coordinates, and modifier keys (same payload
+  as click).
+- `OnClick` / `OnDoubleClick` - raised on a still click or tap (and the second
+  click of a double-click) with `BlazorResourceTimelinePointerArgs`: bar,
+  overflow cluster, resource, time, hit area, surface/viewport position and
+  modifiers.
 - `OnResourceAxisWidthChanged` - raised after the resource column is resized,
   with the new width in pixels.
 - `AriaLabel` - accessible name (default `"Resource timeline"`).
@@ -864,7 +919,7 @@ gestures; a moving touch pans natively instead of starting a drag.
 custom resource column, time zone, 12-hour ticks, weekend/off-hour shading,
 zoom (including 1 / 3 / 7-day viewport presets), pan-to-day-start, and a
 light/dark theme toggle - plus a live view of the visible day range, the
-selection, the last edit and the last context-menu action. Drag the divider
+selection, the last edit, the last click / double-click and the last context-menu action. Drag the divider
 at the right edge of the resource column to resize it. **Go to** calls
 `ScrollToAllocationAsync` on the first selected bar. The demo wires `←`/`→`
 (and `Ctrl`/`Cmd`+arrows for a week) to `PanByDaysAsync` itself while the

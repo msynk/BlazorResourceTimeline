@@ -29,6 +29,7 @@ export function makeBareEngine(overrides = {}) {
         barLabelGap: 3,
         barIconSize: 16,
         hitTolerance: 3,
+        dragThreshold: 4,
         timeZone: null,
         locale: null,
         showUtcTime: false,

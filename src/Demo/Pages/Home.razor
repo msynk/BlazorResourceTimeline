@@ -208,6 +208,10 @@
         {
             <span class="last-edit">Last edit: @_lastEdit</span>
         }
+        @if (_lastPointer is not null)
+        {
+            <span class="last-edit">@_lastPointer</span>
+        }
         @if (_lastMenuAction is not null)
         {
             <span class="last-edit">Menu action: @_lastMenuAction</span>
@@ -264,6 +268,8 @@
                               OnAllocationsCopying="HandleAllocationsCopying"
                               OnAllocationCreating="HandleAllocationCreating"
                               OnContextMenu="ShowContextMenu"
+                              OnClick="HandleClick"
+                              OnDoubleClick="HandleDoubleClick"
                               OnResourceAxisWidthChanged="HandleResourceAxisWidthChanged">
                 <TooltipTemplate>
                     <div class="demo-tip">
@@ -390,6 +396,7 @@
     // and the last dummy action chosen, surfaced in the stats bar.
     private BlazorResourceTimelineContextMenuArgs? _contextMenu;
     private string? _lastMenuAction;
+    private string? _lastPointer;
     private ElementReference _ctxMenuElement;
     private bool _ctxMenuFocusPending;
 
@@ -424,6 +431,8 @@
 
         <BlazorResourceTimeline Config="_config"
                                 OnSelectionChanged="HandleSelectionChanged"
+                                OnClick="HandleClick"
+                                OnDoubleClick="HandleDoubleClick"
                                 OnContextMenu="HandleContextMenu" />
 
         @code {
@@ -513,11 +522,26 @@
                 // Resource and Time - plus ClientX/ClientY to position your menu.
                 Console.WriteLine($"Context menu on {args.Allocation?.Id ?? args.Resource?.Id}");
             }
+
+            private void HandleClick(BlazorResourceTimelinePointerArgs args)
+            {
+                Console.WriteLine($"Click {args.Area} at {args.Time} on {args.Resource?.Name}");
+            }
+
+            private void HandleDoubleClick(BlazorResourceTimelinePointerArgs args)
+            {
+                Console.WriteLine($"Double-click {args.Allocation?.Id ?? "(empty)"}");
+            }
         }
         """;
 
     protected override async Task OnInitializedAsync()
     {
+        // Theme first, so the first Options (and the first timeline paint) already
+        // match the system scheme. Reading it in OnAfterRenderAsync used to assign
+        // a second Options after mount and, together with OnViewChanged, replay
+        // the data load two or three times.
+        await InitializeThemeFromSystemAsync();
         _options = BuildOptions();
         await RegenerateAsync();
     }
@@ -526,9 +550,6 @@
     {
         if (firstRender)
         {
-            // Resolve the system scheme here (JS is guaranteed ready) and sync
-            // both the page class and the document data-theme together.
-            await InitializeThemeFromSystemAsync();
             _selfRef = DotNetObjectReference.Create(this);
             try
             {
@@ -554,13 +575,7 @@
         try
         {
             var preferred = await JS.InvokeAsync<string>("getPreferredDemoTheme");
-            var dark = preferred == "dark";
-            if (dark != _darkTheme)
-            {
-                _darkTheme = dark;
-                ApplyOptions();
-                StateHasChanged();
-            }
+            _darkTheme = preferred == "dark";
             await ApplyDocumentThemeAsync();
         }
         catch
@@ -959,6 +974,23 @@
     }
 
     private void HandleSelectionChanged(BlazorResourceTimelineAllocation[] bars) => _selectedBars = bars;
+
+    private void HandleClick(BlazorResourceTimelinePointerArgs args) =>
+        _lastPointer = DescribePointer("Click", args);
+
+    private void HandleDoubleClick(BlazorResourceTimelinePointerArgs args) =>
+        _lastPointer = DescribePointer("Double-click", args);
+
+    private static string DescribePointer(string kind, BlazorResourceTimelinePointerArgs args)
+    {
+        var target = args.Allocation is { } bar
+            ? $"bar {bar.Id}"
+            : args.OverflowAllocations.Count > 0
+                ? $"+{args.OverflowAllocations.Count} overflow"
+                : args.Resource?.Name ?? args.Area.ToString();
+        var time = args.Time is { } t ? $" at {FormatTime(t)}" : "";
+        return $"{kind}: {args.Area} {target}{time} ({(int)args.X},{(int)args.Y})";
+    }
 
     private void HandleResourceAxisWidthChanged(int width)
     {

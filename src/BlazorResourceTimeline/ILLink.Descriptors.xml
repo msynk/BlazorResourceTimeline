@@ -27,9 +27,10 @@
 
   Types that never cross the boundary are deliberately absent:
   BlazorResourceTimelineConfig is decomposed into its parts before marshalling,
-  and BlazorResourceTimelineContextMenuArgs / BlazorResourceTimelineRowContext /
-  BlazorResourceTimelineWindow only travel in process to consumer callbacks, so
-  ordinary static analysis keeps whatever the app uses.
+  and BlazorResourceTimelinePointerArgs / BlazorResourceTimelineContextMenuArgs /
+  BlazorResourceTimelineRowContext / BlazorResourceTimelineWindow only travel
+  in process to consumer callbacks, so ordinary static analysis keeps whatever
+  the app uses.
 
   The component type itself needs no entry - Blazor's own
   DynamicallyAccessedMembers annotation on component instantiation preserves it,

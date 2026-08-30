@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `OnClick` and `OnDoubleClick` (`BlazorResourceTimelinePointerArgs`): surface
+  and viewport position, time, resource, the bar (if any), overflow bars when a
+  `+N` label is hit, hit area (content / resource axis / time axis / corner),
+  and modifier keys. A double-click also raises `OnClick` once per click.
+  Marquee, edit and pan gestures do not fire them. Right-click (`OnContextMenu`)
+  now uses the same payload (`BlazorResourceTimelineContextMenuArgs` derives
+  from `PointerArgs`).
+
+### Fixed
+
+- A parent re-render during the first data load (`OnViewChanged`, a post-mount
+  Options swap, …) no longer replays `setData` for the same `Config`. The demo
+  was painting the timeline two or three times on refresh because theme sync
+  and the view callback both re-rendered the page while the first load was
+  still in flight.
+
 ## [0.6.0] - 2026-08-29
 
 ### Added

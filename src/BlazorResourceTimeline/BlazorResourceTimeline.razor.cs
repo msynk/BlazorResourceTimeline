@@ -44,6 +44,11 @@ public partial class BlazorResourceTimeline
     // expensive) re-marshalling when the parent re-renders without data changes.
     private BlazorResourceTimelineConfig? _loadedConfig;
 
+    // Config currently inside LoadDataCoreAsync. Parent re-renders during that
+    // window (OnViewChanged, theme, overlay layout) would otherwise queue a
+    // second setData of the same instance and flash the loading overlay again.
+    private BlazorResourceTimelineConfig? _loadingConfig;
+
     // Reference of the options last pushed to JS, compared the same way so
     // re-renders without an options change don't re-marshal them.
     private BlazorResourceTimelineOptions? _loadedOptions;
@@ -159,12 +164,33 @@ public partial class BlazorResourceTimeline
     public Func<BlazorResourceTimelineCreateRequest, Task<BlazorResourceTimelineAllocation?>>? OnAllocationCreating { get; set; }
 
     /// <summary>
+    /// Raised on a click or stationary tap that is not a drag, marquee or
+    /// committed edit. The args identify what was under the pointer - the bar
+    /// (if any), overflow bars when a <c>+N</c> label was hit, the resource row
+    /// and the time - plus surface and viewport coordinates and modifier keys.
+    /// Fires for bars, empty content, both sticky axes and the corner. Selection
+    /// still updates first (click a bar to select it, click empty content to
+    /// clear). A double-click also raises this once per click, then
+    /// <see cref="OnDoubleClick"/>.
+    /// </summary>
+    [Parameter] public EventCallback<BlazorResourceTimelinePointerArgs> OnClick { get; set; }
+
+    /// <summary>
+    /// Raised on the second click of a double-click (or double-tap), using the
+    /// same args as <see cref="OnClick"/>. Fires in addition to <see cref="OnClick"/>,
+    /// not instead of it. Typical use is opening an editor for the bar under
+    /// the pointer, or creating an allocation at the clicked time and resource.
+    /// </summary>
+    [Parameter] public EventCallback<BlazorResourceTimelinePointerArgs> OnDoubleClick { get; set; }
+
+    /// <summary>
     /// Raised when the user right-clicks the timeline (the native browser menu
     /// is suppressed either way). The args identify what was under the pointer -
-    /// the bar (if any), the resource row and the time - plus the viewport
-    /// coordinates of the click, so the handler can render its own context menu
+    /// the bar (if any), the resource row and the time - plus surface and
+    /// viewport coordinates, so the handler can render its own context menu
     /// at that position. Fires for bars, empty content slots and resource-axis
-    /// rows; not for the time axis. Right-clicking does not change the selection.
+    /// rows; not for the time axis or the corner. Right-clicking does not
+    /// change the selection.
     /// </summary>
     [Parameter] public EventCallback<BlazorResourceTimelineContextMenuArgs> OnContextMenu { get; set; }
 
@@ -382,8 +408,11 @@ public partial class BlazorResourceTimeline
 
     // Only the reference is compared. Mutating the config (or its lists) in place
     // without creating a new instance will not trigger a reload; assign a new
-    // Config (or call ReloadAsync) when the contents change.
-    private bool DataChanged() => !ReferenceEquals(_loadedConfig, Config);
+    // Config (or call ReloadAsync) when the contents change. An in-flight load
+    // of this same instance is treated as already handled so a parent re-render
+    // cannot replay it.
+    private bool DataChanged() =>
+        !ReferenceEquals(_loadedConfig, Config) && !ReferenceEquals(_loadingConfig, Config);
 
     // As with Config, only the reference is compared: assign a new Options
     // instance to re-apply. Mutating the existing instance in place will not
@@ -412,7 +441,26 @@ public partial class BlazorResourceTimeline
                 return;
             }
 
-            await LoadDataCoreAsync(timeline, config);
+            // Same Config is already on the renderer, or a call ahead of us on
+            // this gate is writing it. Replaying setData would flash the loading
+            // overlay and paint the bars two or three times on first load.
+            if (ReferenceEquals(_loadedConfig, config) || ReferenceEquals(_loadingConfig, config))
+            {
+                return;
+            }
+
+            _loadingConfig = config;
+            try
+            {
+                await LoadDataCoreAsync(timeline, config);
+            }
+            finally
+            {
+                if (ReferenceEquals(_loadingConfig, config))
+                {
+                    _loadingConfig = null;
+                }
+            }
         }
         finally
         {
@@ -1321,44 +1369,118 @@ public partial class BlazorResourceTimeline
     }
 
     /// <summary>
+    /// Invoked by the renderer on click (or a stationary tap). Ids are resolved
+    /// back to the caller's own instances before <see cref="OnClick"/> fires.
+    /// Public only because JS interop requires it; not part of the consumer API.
+    /// </summary>
+    [JSInvokable]
+    public Task OnTimelineClick(
+        string? allocationId, string[]? overflowIds, string? resourceId, long? time,
+        string area, double x, double y, double clientX, double clientY,
+        bool ctrlKey, bool shiftKey, bool metaKey, bool altKey)
+        => RaisePointerAsync(
+            OnClick, allocationId, overflowIds, resourceId, time,
+            area, x, y, clientX, clientY, ctrlKey, shiftKey, metaKey, altKey);
+
+    /// <summary>
+    /// Invoked by the renderer on double-click (or double-tap). Ids are resolved
+    /// back to the caller's own instances before <see cref="OnDoubleClick"/> fires.
+    /// Public only because JS interop requires it; not part of the consumer API.
+    /// </summary>
+    [JSInvokable]
+    public Task OnTimelineDoubleClick(
+        string? allocationId, string[]? overflowIds, string? resourceId, long? time,
+        string area, double x, double y, double clientX, double clientY,
+        bool ctrlKey, bool shiftKey, bool metaKey, bool altKey)
+        => RaisePointerAsync(
+            OnDoubleClick, allocationId, overflowIds, resourceId, time,
+            area, x, y, clientX, clientY, ctrlKey, shiftKey, metaKey, altKey);
+
+    /// <summary>
     /// Invoked by the renderer on right-click. Ids are resolved back to the
     /// caller's own instances (as with selection) before
     /// <see cref="OnContextMenu"/> fires. Public only because JS interop
     /// requires it; not part of the consumer API.
     /// </summary>
-    /// <param name="allocationId">Id of the bar under the pointer, or <c>null</c> if the click missed every bar.</param>
-    /// <param name="resourceId">Id of the row under the pointer, or <c>null</c> below the last row.</param>
-    /// <param name="time">Time at the pointer, as Unix time in milliseconds; <c>null</c> on the resource axis.</param>
-    /// <param name="clientX">Viewport x coordinate of the click.</param>
-    /// <param name="clientY">Viewport y coordinate of the click.</param>
     [JSInvokable]
     public async Task OnTimelineContextMenu(
-        string? allocationId, string? resourceId, long? time, double clientX, double clientY)
+        string? allocationId, string[]? overflowIds, string? resourceId, long? time,
+        string area, double x, double y, double clientX, double clientY,
+        bool ctrlKey, bool shiftKey, bool metaKey, bool altKey)
     {
         if (_disposed || !OnContextMenu.HasDelegate)
         {
             return;
         }
 
+        await OnContextMenu.InvokeAsync(BuildPointerArgs<BlazorResourceTimelineContextMenuArgs>(
+            allocationId, overflowIds, resourceId, time,
+            area, x, y, clientX, clientY, ctrlKey, shiftKey, metaKey, altKey));
+    }
+
+    private async Task RaisePointerAsync(
+        EventCallback<BlazorResourceTimelinePointerArgs> callback,
+        string? allocationId, string[]? overflowIds, string? resourceId, long? time,
+        string area, double x, double y, double clientX, double clientY,
+        bool ctrlKey, bool shiftKey, bool metaKey, bool altKey)
+    {
+        if (_disposed || !callback.HasDelegate)
+        {
+            return;
+        }
+
+        await callback.InvokeAsync(BuildPointerArgs<BlazorResourceTimelinePointerArgs>(
+            allocationId, overflowIds, resourceId, time,
+            area, x, y, clientX, clientY, ctrlKey, shiftKey, metaKey, altKey));
+    }
+
+    private T BuildPointerArgs<T>(
+        string? allocationId, string[]? overflowIds, string? resourceId, long? time,
+        string area, double x, double y, double clientX, double clientY,
+        bool ctrlKey, bool shiftKey, bool metaKey, bool altKey)
+        where T : BlazorResourceTimelinePointerArgs, new()
+    {
         BlazorResourceTimelineAllocation? allocation = null;
         if (allocationId is not null)
         {
             _allocationsById.TryGetValue(allocationId, out allocation);
         }
 
-        var resource = resourceId is null
-            ? null
-            : Config?.Resources.FirstOrDefault(r => r.Id == resourceId);
+        BlazorResourceTimelineResource? resource = null;
+        if (resourceId is not null
+            && !_resourcesById.TryGetValue(resourceId, out resource))
+        {
+            resource = Config?.Resources.FirstOrDefault(r => r.Id == resourceId);
+        }
 
-        await OnContextMenu.InvokeAsync(new BlazorResourceTimelineContextMenuArgs
+        return new T
         {
             Allocation = allocation,
+            OverflowAllocations = overflowIds is { Length: > 0 }
+                ? ResolveAllocations(overflowIds)
+                : [],
             Resource = resource,
             Time = time is { } t ? DateTimeOffset.FromUnixTimeMilliseconds(t) : null,
+            Area = ParseHitArea(area),
+            X = x,
+            Y = y,
             ClientX = clientX,
             ClientY = clientY,
-        });
+            CtrlKey = ctrlKey,
+            ShiftKey = shiftKey,
+            MetaKey = metaKey,
+            AltKey = altKey,
+        };
     }
+
+    private static BlazorResourceTimelineHitArea ParseHitArea(string? area) =>
+        area switch
+        {
+            "resourceAxis" => BlazorResourceTimelineHitArea.ResourceAxis,
+            "timeAxis" => BlazorResourceTimelineHitArea.TimeAxis,
+            "corner" => BlazorResourceTimelineHitArea.Corner,
+            _ => BlazorResourceTimelineHitArea.Content,
+        };
 
     /// <summary>
     /// Invoked by the renderer after a resource-column resize commits. Updates
