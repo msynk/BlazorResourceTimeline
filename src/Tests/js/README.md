@@ -15,11 +15,11 @@ and CI only has to add a `setup-node` step.
 | File | Area |
 | --- | --- |
 | `time-axis.test.mjs` | Zoned hour boundaries, DST transitions, tick density, `addDays` calendar steps, wall-clock snap, `Hour12`, `FirstDayOfWeek` |
-| `allocation-index.test.mjs` | Per-resource index, stacking lanes, incremental re-index on edit, invalid-row sanitize, `MaxStackLanes` overflow, windowed merge by id |
+| `allocation-index.test.mjs` | Per-resource index, stacking lanes (time overlap, label clearance, and label/delay-bar collisions across zoom levels), incremental re-index on edit, invalid-row sanitize, `MaxStackLanes` overflow, windowed merge by id |
 | `engine-state.test.mjs` | Resource hierarchy, coordinate mapping, row heights, options, selection, resource-axis resize clamp, upper-lane marquee, Shift-range select, selection-changed notify |
 | `scene.test.mjs` | Scene building, and the stale state pooled/refilled bar nodes can leak between frames |
 | `view-scroll.test.mjs` | Where the viewport lands on the first load and across reloads, the `panByDays` day/week steps (24-hour, `panToDayStart`, and per-call override), `zoomToDays` fitting N days into the viewport, the "now" indicator's refresh timer, `OnViewChanged`, and `scrollToAllocation` |
-| `tooltip.test.mjs` | Show delay, subject switching and viewport-edge flipping, against a minimal DOM stub |
+| `tooltip.test.mjs` | Show delay, subject switching and viewport-edge flipping, against a minimal DOM stub; what a hover resolves to and the text it asks for, including `+N` overflow markers |
 | `hit-test.test.mjs` | `_barAt` click tolerance, resize handle vs move, locked bars, stacked-lane Y, overflow hits, `_pointerHit` regions, double-click pairing, click-select notify |
 | `renderer-contract.test.mjs` | `buildScene()` bar ids, non-overlap within a row, weekend/off-hour bands, `Hour12` tick labels |
 | `edit-commit.test.mjs` | Move/resize commit, overlap refuse, delete, multi-move accept/reject |

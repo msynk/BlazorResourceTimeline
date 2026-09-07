@@ -59,8 +59,12 @@ lot of data must stay readable and interactive.
 - **Overlap stacking**: allocations that overlap in time on the same row are
   automatically stacked into lanes instead of drawn on top of each other, and
   the row grows to keep the whole stack inside it. `Options.ResourceHeight` is
-  the *minimum* row height; `Options.BarMargin` sets the gap between lanes.
-  `Options.MaxStackLanes` caps the stack and draws a `+N` overflow label.
+  the *minimum* row height; `Options.BarMargin` sets the gap between lanes, and
+  by default that gap also covers each bar's labels and icons so stacked text
+  stays readable (`Options.StackLabelClearance`). Bars close enough that their
+  labels, icons or delay bars would collide are stacked as well
+  (`Options.StackOnLabelCollision`). `Options.MaxStackLanes` caps the stack and
+  draws a `+N` overflow label.
 - **Hover tooltips**: per-bar tooltips (custom text, an auto-generated default,
   or a `TooltipTemplate` overlay on every renderer), on by default and configurable.
 - **Working-time shading**: `NonWorkingDays` and `WorkingHoursStart` /
@@ -486,7 +490,9 @@ new BlazorResourceTimelineAllocation
 
 Labels and icons are skipped on bars narrower than `Options.MinBarWidthForLabels`,
 so zoomed-out boards stay readable. Edge bars and icons are decoration only -
-they are not selectable and never become hit targets.
+they are not selectable and never become hit targets. When a decorated bar
+overlaps another on the same row, the two are stacked far enough apart to keep
+both readable (see [Overlapping allocations](#overlapping-allocations)).
 
 ## Editing
 
@@ -688,6 +694,43 @@ bars in each lane - `Options.BarHeight` or an allocation's own `Height` - so a
 cluster mixing bar heights still lays out without overlap. Bars that merely touch
 (one ends the instant the next starts) are not treated as overlapping.
 
+### What counts as an overlap
+
+Keeping bars off each other is not the same as keeping them readable, so
+`Options.StackOnLabelCollision` (default `true`) stacks bars whose **painted**
+spans collide, not only those whose times overlap. Two bars eight minutes apart
+still draw a start time, an end time and any icons into the eight pixels between
+them; separate lanes are the only way both stay legible. Delay (edge) bars count
+towards the painted span too, since they eat the gap a label would otherwise use.
+
+A collision is a matter of pixels, so lane membership - and with it row height -
+is recomputed whenever the zoom or the viewport width changes the horizontal
+scale. Zooming in until the labels fit drops the bars back onto one lane. Zooming
+out shrinks bars below `Options.MinBarWidthForLabels`, where decorations are not
+drawn at all, so they stop claiming room instead of stacking the whole row. The
+row under the top of the viewport is held in place across a zoom, so a change of
+row height does not make the view drift. Set the option to `false` to stack on a
+time overlap alone.
+
+### Room for the labels
+
+Keeping the *bars* apart is not enough to read them: with the default 4px bar,
+two lanes 2px apart still draw each bar's text over its neighbour. So
+`Options.StackLabelClearance` (default `true`) widens the gap between two lanes
+by the vertical room the decorations facing that gap need - `TextAbove` /
+`TextBelow`, above/below icons, and anything centered on a bar's center line that
+is taller than the bar, such as `TextStart` / `TextEnd` and start/end icons.
+Clearance is reserved per side, so a lane whose labels all point away from its
+neighbour does not push it away. The outermost labels of a stack sit in the row's
+own padding, exactly where a single bar's labels do.
+
+Icons count for the size of their box (`Options.BarIconSize` or the icon's own
+`Size`) rather than their loaded, aspect-fitted size, and the reserved room does
+not depend on the zoom level even though decorations themselves are dropped below
+`Options.MinBarWidthForLabels` - so rows never reflow as images arrive or as the
+user zooms. Set the option to `false` for the tighter stack of bars that carry no
+decorations.
+
 ```razor
 <BlazorResourceTimeline Config="_config" Options="_options" />
 
@@ -696,6 +739,8 @@ cluster mixing bar heights still lays out without overlap. Bars that merely touc
     {
         BarHeight = 10,
         BarMargin = 4, // 4 px between bars that overlap in time
+        // StackOnLabelCollision = false, // stack on a time overlap alone
+        // StackLabelClearance = false,   // stack tightly, ignoring labels/icons
     };
 }
 ```
@@ -703,16 +748,17 @@ cluster mixing bar heights still lays out without overlap. Bars that merely touc
 **Rows grow to fit their stack**, so a dense cluster never spills into the
 neighbouring row. `Options.ResourceHeight` is the *minimum* row height: a row
 whose tallest cluster needs `sum(lane heights) + BarMargin × (lanes − 1)` pixels
-grows to that height plus the same top/bottom padding a single default-height bar
-has in a minimum-height row. A row whose bars never overlap stays exactly at
-`ResourceHeight`, so simple boards look unchanged, and the resource column,
-hit-testing, keyboard navigation and the `ResourceTemplate` overlay all follow
-the per-row heights.
+(plus the label clearance between its lanes) grows to that height plus the same
+top/bottom padding a single default-height bar has in a minimum-height row. A row
+whose bars never overlap stays exactly at `ResourceHeight`, so simple boards look
+unchanged, and the resource column, hit-testing, keyboard navigation and the
+`ResourceTemplate` overlay all follow the per-row heights.
 
 `Options.MaxStackLanes` (`null` or `0` = unlimited) caps how many lanes a cluster
 may use. Extra bars are hidden and a `+N` label is drawn at the cluster's
-trailing edge; clicking it selects the overflow ids. Row height stays at the
-max-lane stack, so a 40-overlap row cannot blow the layout.
+trailing edge; clicking it selects the overflow ids and hovering it lists them
+(see [Tooltips](#tooltips)). Row height stays at the max-lane stack, so a
+40-overlap row cannot blow the layout.
 
 ## Resource-column template
 
@@ -795,9 +841,17 @@ Hovering a bar (mouse/pen) shows a tooltip after `Options.TooltipDelayMs`
 Disable tooltips entirely with `Options.ShowTooltips = false`, and theme them via
 `Colors.TooltipBg` / `Colors.TooltipText`.
 
+Hovering a `+N` overflow marker (see [Overlapping
+allocations](#overlapping-allocations)) describes what the lane cap hid there: how
+many bars, then one line each with its label and time range. Long clusters are cut
+off with a count of the rest - clicking the marker selects them all, which is the
+way to see the whole set.
+
 For a rich tooltip on every renderer (including canvas), set `TooltipTemplate`.
 The engine reports the hovered bar and pointer coordinates; Blazor renders the
-fragment in a positioned overlay and the built-in text tooltip is not shown.
+fragment in a positioned overlay and the built-in text tooltip is not shown. A
+`+N` marker is not a bar and has no allocation to pass to the template, so it
+keeps the built-in text tooltip.
 
 ```razor
 <BlazorResourceTimeline Config="_config">

@@ -22,6 +22,10 @@ import { Tooltip } from './tooltip.js';
 // Consecutive render failures logged before the engine goes quiet about them.
 const MAX_RENDER_ERROR_LOGS = 3;
 
+// Hidden bars listed individually in a +N marker's tooltip before the rest are
+// summarized as a count.
+const MAX_OVERFLOW_TOOLTIP_BARS = 8;
+
 // Upper bound on cached bar-icon images. Icons are drawn from a small, stable
 // set in practice; the cap only matters for hosts that mint per-bar image URLs,
 // where an unbounded cache would grow without limit.
@@ -36,6 +40,19 @@ const DBLCLICK_MS = 500;
 const EMPTY_ROW_INDEX = Object.freeze({
     items: Object.freeze([]), maxStartEdgeMs: 0, maxSpanMs: 0
 });
+
+// Lane clearance used when stackLabelClearance is off: stacked bars then sit
+// barMargin apart, as they always did.
+const NO_CLEARANCE = Object.freeze({ above: 0, below: 0 });
+
+// Painted span used when stackOnLabelCollision is off: bars then claim their own
+// time span only, so nothing but a real time overlap stacks them.
+const NO_SPAN = Object.freeze({ lead: 0, trail: 0 });
+
+// Line box a bar label occupies, as a multiple of its font's pixel size, and
+// the size assumed when barLabelFont carries no px size to read.
+const LABEL_LINE_HEIGHT_RATIO = 1.2;
+const DEFAULT_LABEL_FONT_SIZE = 11;
 
 export class TimelineEngine {
     constructor(wrapper, dotNetRef, options, rendererRegistry) {
@@ -67,6 +84,23 @@ export class TimelineEngine {
             // between them (0 stacks them touching). Rows grow as needed so
             // the stack keeps the same top/bottom padding as a single bar.
             barMargin: 2,
+            // Widens the gap between stacked bars by the vertical room each
+            // one's labels and icons need, so a stacked bar's text is not drawn
+            // over its neighbour (barMargin alone only keeps the bars apart,
+            // which for the default 4px bar leaves labels overlapping). Rows
+            // grow to fit. The reserved room is deliberately independent of
+            // zoom - decorations themselves are dropped below
+            // minBarWidthForLabels - so rows do not reflow while zooming.
+            stackLabelClearance: true,
+            // Stacks bars whose *painted* spans collide, not only those whose
+            // times overlap: two bars minutes apart still draw their labels,
+            // icons and delay bars into the gap between them, and one lane
+            // cannot hold both legibly. What collides depends on the zoom, so
+            // lane membership - and with it row height - is recomputed when the
+            // scale changes. Bars too narrow for decorations (see
+            // minBarWidthForLabels) claim nothing extra, which is what stops a
+            // zoomed-out row from stacking every bar in it.
+            stackOnLabelCollision: true,
             minBarWidth: 2,
             // Decorations are skipped when the main bar's drawn width falls
             // below this threshold, keeping dense timelines readable.
@@ -352,6 +386,22 @@ export class TimelineEngine {
         // Bumped whenever barHeight/barMargin change, invalidating the cached
         // per-cluster stacking offsets (see _stackOffset).
         this._barLayoutGen = 1;
+
+        // Bumped whenever an option the decoration measurements are taken from
+        // changes, invalidating the caches below. Per-allocation boxes are held
+        // weakly (host objects, not ours to decorate) and are dropped wholesale
+        // on re-index, since a host may reuse the same objects with new labels.
+        this._decorGen = 1;
+        this._decorBoxes = new WeakMap();
+        this._labelMetricsCache = null;
+        this._labelWidths = null;
+        this._labelWidthsGen = 0;
+        // Reused by the lane pass so measuring a painted span allocates nothing.
+        this._spanScratch = { lead: 0, trail: 0 };
+        // Horizontal scale the current lane assignment was built for. Lanes
+        // depend on it once decorations count towards overlap; null means they
+        // have not been assigned yet. See _syncLanesToScale.
+        this._laneScale = null;
 
         // Per-visible-row layout for variable-height virtualization.
         // _rowTops[i] is the content-space Y of row i's top; _rowTops[n] is the
@@ -807,6 +857,9 @@ export class TimelineEngine {
         const rawScrollLeft = this.wrapper.scrollLeft;
 
         this._updateScale();
+        // Which bars count as overlapping can depend on the scale just computed,
+        // and the row heights read below depend on that.
+        this._syncLanesToScale();
 
         // The surface is sticky-positioned over the viewport; the renderer
         // sizes it (and any backing store) to the viewport dimensions.
@@ -987,27 +1040,32 @@ export class TimelineEngine {
         return { start, end };
     }
 
-    // Pixel height of a lane-height list (one cluster), using current bar
-    // layout options for lanes that inherit the default height.
-    _stackHeightFromLanes(laneHeights) {
+    // Pixel height of one cluster's stack, measured from the top of the first
+    // lane's bar to the bottom of the last lane's. Lanes that inherit the
+    // default height are resolved against the current bar layout options.
+    //
+    // The label clearance *between* lanes counts towards the height; what the
+    // outermost lanes need above and below the stack does not, because a row
+    // already pads a single bar by (resourceHeight - barHeight) / 2 on each
+    // side, which is what its own labels sit in (see _recomputeRowMetrics).
+    _clusterStackHeight(cluster) {
+        if (!cluster) return 0;
         const c = this.config;
-        if (!laneHeights || laneHeights.length === 0) return 0;
-        if (laneHeights.length === 1) return laneHeights[0] || c.barHeight;
-        let total = c.barMargin * (laneHeights.length - 1);
-        for (let i = 0; i < laneHeights.length; i++) {
-            total += laneHeights[i] || c.barHeight;
+        const heights = cluster.laneHeights;
+        const count = heights.length;
+        if (count === 0) return 0;
+        if (count === 1) return heights[0] || c.barHeight;
+        let total = 0;
+        for (let i = 0; i < count; i++) {
+            if (i > 0) total += c.barMargin + cluster.laneBelow[i - 1] + cluster.laneAbove[i];
+            total += heights[i] || c.barHeight;
         }
         return total;
     }
 
-    _clusterStackHeight(cluster) {
-        return cluster ? this._stackHeightFromLanes(cluster.laneHeights) : 0;
-    }
-
     // Tallest overlapping stack on a resource row (0 when empty).
     _maxStackHeightForRow(row) {
-        if (!row) return 0;
-        return this._stackHeightFromLanes(row.maxClusterLaneHeights);
+        return row ? this._clusterStackHeight(row.maxCluster) : 0;
     }
 
     // Rebuilds per-visible-row heights from stack depth so overlapping bars
@@ -1045,11 +1103,39 @@ export class TimelineEngine {
                 const h = this._clusterStackHeight(info.cluster);
                 if (h > bestH) {
                     bestH = h;
-                    best = info.cluster.laneHeights;
+                    best = info.cluster;
                 }
             }
-            row.maxClusterLaneHeights = best;
+            row.maxCluster = best;
         }
+    }
+
+    // Rebuilds every row's lane records. Needed when what a lane records - its
+    // membership or the room it reserves - depends on an option that changed,
+    // as opposed to only the pixels those records are laid out into.
+    _reassignAllLanes() {
+        this._laneScale = this._pixelsPerMs;
+        for (const row of this.allocationsByResource.values()) {
+            this._assignStackLanes(row.items, row);
+        }
+    }
+
+    // Keeps lane assignment in step with the horizontal scale. Which bars
+    // collide depends on it once decorations count towards an overlap, so a
+    // zoom - or a resize, which moves the auto-fit scale - can change lane
+    // membership and therefore row heights. Called from _relayout before the
+    // row heights are read, and a no-op in the common case.
+    _syncLanesToScale() {
+        if (this._laneScale === this._pixelsPerMs) return;
+        if (!this.config.stackOnLabelCollision) {
+            // Nothing to redo, but record the scale so switching the option on
+            // later is what triggers the reassignment.
+            this._laneScale = this._pixelsPerMs;
+            return;
+        }
+        this._reassignAllLanes();
+        this._recomputeRowMetrics();
+        this._reportResourceRows();
     }
 
     calculateVisibleTimeRange() {
@@ -1508,7 +1594,10 @@ export class TimelineEngine {
             scene.overflow.push({ x, y, width: w, height: h, text: '+' + extra.length });
             this._overflowHits.push({
                 x, y, width: w, height: h,
-                ids: extra.map(a => a.id)
+                ids: extra.map(a => a.id),
+                // The cluster's own array, so hovering the same marker across
+                // frames keeps one tooltip subject rather than re-arming it.
+                bars: extra
             });
         }
     }
@@ -3308,27 +3397,47 @@ export class TimelineEngine {
     }
 
     // Handles a plain hover (no button held): updates the edit cursor (when
-    // editable) and the hover tooltip (when enabled) for the bar under the
+    // editable) and the hover tooltip (when enabled) for whatever is under the
     // pointer. A single hit-test drives both to keep hover cheap.
     _onHoverMove(e) {
         if (this._tooltip) this._tooltip.trackPointer(e.clientX, e.clientY);
-
         const { x, y } = this._eventToCanvas(e);
-        const hit = this._isInContentArea(x, y) ? this._barAt(x, y) : null;
+        this._hoverAt(x, y, e.clientX, e.clientY);
+    }
+
+    // The hover itself, in surface coordinates. A +N marker wins over the bars
+    // beneath it, exactly as it does for a click.
+    _hoverAt(canvasX, canvasY, clientX, clientY) {
+        const inContent = this._isInContentArea(canvasX, canvasY);
+        const overflow = inContent ? this._overflowAt(canvasX, canvasY) : null;
+        const hit = inContent && !overflow ? this._barAt(canvasX, canvasY) : null;
 
         if (this.config.editable) {
-            const zone = hit && this._editZone(hit.alloc, x);
+            const zone = hit && this._editZone(hit.alloc, canvasX);
             const cursor = zone === 'move' ? 'move' : zone ? 'ew-resize' : '';
             this._setCursor(cursor);
         }
 
         if (!this.config.showTooltips) {
-            this._notifyHover(null, e.clientX, e.clientY);
+            this._notifyHover(null, clientX, clientY);
+            return;
+        }
+
+        if (overflow) {
+            // A marker is not a bar, so there is no allocation to hand a
+            // TooltipTemplate: the built-in tooltip lists what is behind it
+            // whether or not a template is set. Any template showing for a bar
+            // is dismissed, since no bar is hovered now.
+            this._notifyHover(null, clientX, clientY);
+            this._ensureTooltip().show(
+                overflow.bars,
+                this._buildOverflowTooltip(overflow.bars),
+                this.config.tooltipDelayMs);
             return;
         }
         if (!hit) { this._hideTooltip(); return; }
 
-        this._notifyHover(hit.alloc.id, e.clientX, e.clientY);
+        this._notifyHover(hit.alloc.id, clientX, clientY);
         if (this.config.tooltipTemplate) return;
 
         const resource = this._rows[hit.resourceIndex].resource;
@@ -3343,11 +3452,40 @@ export class TimelineEngine {
     _buildTooltip(alloc, resource) {
         if (alloc.tooltip) return String(alloc.tooltip);
         const parts = [];
-        const label = alloc.textAbove || alloc.textStart || alloc.textEnd || alloc.textBelow;
+        const label = this._barLabel(alloc);
         if (label) parts.push(label);
         if (resource) parts.push(resource.name);
-        parts.push(`${this._time.formatDateTime(alloc.startTime)} – ${this._time.formatDateTime(alloc.endTime)}`);
+        parts.push(this._barTimeRange(alloc));
         return parts.join('\n');
+    }
+
+    // Builds the tooltip text for a +N marker: how many bars the lane cap hid
+    // there, then one line each. Long clusters are cut off rather than allowed
+    // to grow a tooltip taller than the viewport - the marker selects them all
+    // on click, which is the way to see the rest.
+    _buildOverflowTooltip(bars) {
+        const count = bars.length;
+        const lines = [count === 1 ? '1 hidden allocation' : `${count} hidden allocations`];
+        const listed = Math.min(count, MAX_OVERFLOW_TOOLTIP_BARS);
+        for (let i = 0; i < listed; i++) {
+            const label = this._barLabel(bars[i]);
+            const range = this._barTimeRange(bars[i]);
+            lines.push(label ? `${label} · ${range}` : range);
+        }
+        if (count > listed) lines.push(`… and ${count - listed} more`);
+        return lines.join('\n');
+    }
+
+    // Shortest text that identifies a bar: whichever label it carries, falling
+    // back to the first line of a host-supplied tooltip.
+    _barLabel(alloc) {
+        const label = alloc.textAbove || alloc.textStart || alloc.textEnd || alloc.textBelow;
+        if (label) return String(label);
+        return alloc.tooltip ? String(alloc.tooltip).split('\n')[0] : '';
+    }
+
+    _barTimeRange(alloc) {
+        return `${this._time.formatDateTime(alloc.startTime)} – ${this._time.formatDateTime(alloc.endTime)}`;
     }
 
     // Created on first hover: a timeline that is never hovered never puts an
@@ -3771,19 +3909,34 @@ export class TimelineEngine {
     _captureViewAnchor() {
         if (!this._hasTimeRange() || this._pixelsPerMs === 0) return null;
 
-        const anchor = {
-            leadTime: this.getXToTime(this.config.resourceAxisWidth),
-            scrollY: this.scrollY,
-            rowId: null,
-            rowOffset: 0
-        };
+        const anchor = this._captureRowAnchor();
+        anchor.leadTime = this.getXToTime(this.config.resourceAxisWidth);
+        return anchor;
+    }
 
+    // The vertical half of a view anchor: the row at the top of the content area
+    // and how far into it the edge falls. Survives a change of row heights, which
+    // raw pixel offsets do not.
+    _captureRowAnchor() {
+        const anchor = { scrollY: this.scrollY, rowId: null, rowOffset: 0 };
         const topRow = this._rowIndexAtContentY(this.scrollY);
         if (topRow >= 0) {
             anchor.rowId = this._rows[topRow].resource.id;
             anchor.rowOffset = this.scrollY - this._rowContentTop(topRow);
         }
         return anchor;
+    }
+
+    // Puts the anchored row back at the top of the content area. A row that is
+    // gone falls back to the raw vertical offset, which is as close as anything
+    // gets once the row is no longer there.
+    _restoreRowAnchor(anchor) {
+        let y = anchor.scrollY;
+        if (anchor.rowId !== null) {
+            const index = this._rowIndexById.get(anchor.rowId);
+            if (index !== undefined) y = this._rowContentTop(index) + anchor.rowOffset;
+        }
+        this._setScrollY(y);
     }
 
     // Applies the view queued by _prepareLoadScroll against the layout that has
@@ -3811,13 +3964,7 @@ export class TimelineEngine {
     // is as close as anything gets once the row is gone.
     _restoreViewAnchor(anchor) {
         this._setVirtualScrollX((anchor.leadTime - this.timeRange.start) * this._pixelsPerMs);
-
-        let y = anchor.scrollY;
-        if (anchor.rowId !== null) {
-            const index = this._rowIndexById.get(anchor.rowId);
-            if (index !== undefined) y = this._rowContentTop(index) + anchor.rowOffset;
-        }
-        this._setScrollY(y);
+        this._restoreRowAnchor(anchor);
     }
 
     // Rebuilds the resource hierarchy (children map + roots), seeds the initial
@@ -3968,6 +4115,9 @@ export class TimelineEngine {
     // effective start times (startTime minus the start edge) are not monotonic,
     // so scans that early-exit on startTime widen their window by these maxima.
     _indexAllocations() {
+        // A host may hand back the same allocation objects with different labels,
+        // so the measurements taken from them do not survive a re-index.
+        this._decorBoxes = new WeakMap();
         const index = new Map();
         for (const alloc of this.allocations) {
             let row = index.get(alloc.resourceId);
@@ -3978,18 +4128,16 @@ export class TimelineEngine {
             row.items.push(alloc);
             this._widenRowBounds(row, alloc);
         }
+        this.allocationsByResource = index;
         // Each resource's list inherits global sort order, so it is already
         // sorted by startTime (which the lane assignment relies on).
-        for (const row of index.values()) {
-            this._assignStackLanes(row.items, row);
-        }
-        this.allocationsByResource = index;
+        this._reassignAllLanes();
         this._recomputeRowMetrics();
         this._reportResourceRows();
     }
 
     _newRowIndex() {
-        return { items: [], maxStartEdgeMs: 0, maxSpanMs: 0, maxClusterLaneHeights: null };
+        return { items: [], maxStartEdgeMs: 0, maxSpanMs: 0, maxCluster: null };
     }
 
     // Widens a row's cached scan bounds to cover one allocation. These bound
@@ -4022,20 +4170,31 @@ export class TimelineEngine {
     // single-lane clusters and stay centered exactly as before. Touching bars
     // (one ends the instant the next starts) do not count as overlapping.
     //
+    // What counts as an overlap is the span each bar *paints* over, not just the
+    // time it occupies: with stackOnLabelCollision two bars whose labels, icons
+    // or delay bars would collide are stacked as well, which is the only way
+    // their text is readable. That span is measured in pixels, so it depends on
+    // the current scale (see _paintedSpan and _syncLanesToScale).
+    //
     // Each lane also records the tallest explicit per-bar height it holds (0
     // when every bar in it uses the configured default), so _stackOffset can
-    // lay lanes out by their real heights. Only lane membership is decided
-    // here - the pixel offsets depend on barHeight/barMargin, which can change
-    // via setOptions without reloading data, so they are derived lazily.
+    // lay lanes out by their real heights, plus the vertical room its bars'
+    // labels and icons need above and below them (stackLabelClearance), so
+    // neighbouring lanes are spread far enough apart to keep those readable.
+    // Only lane membership is decided here - the pixel offsets depend on
+    // barHeight/barMargin, which can change via setOptions without reloading
+    // data, so they are derived lazily.
     //
-    // When `row` is provided, its maxClusterLaneHeights is updated so variable
-    // row heights can grow to keep deep stacks inside the row with consistent
-    // top/bottom padding.
+    // When `row` is provided, its maxCluster is updated so variable row heights
+    // can grow to keep deep stacks inside the row with consistent top/bottom
+    // padding.
     _assignStackLanes(list, row) {
         let clusterStart = 0;
         let clusterMaxEnd = -Infinity;
         let laneEnds = [];
         let laneHeights = [];
+        let laneAbove = [];
+        let laneBelow = [];
         // A lower bound on every lane's end time. Kept as a bound rather than
         // the exact minimum so it can be maintained in O(1): it is only ever
         // lowered, and a too-low value merely falls back to the scan below
@@ -4045,47 +4204,67 @@ export class TimelineEngine {
         // make lane assignment quadratic.
         let laneEndLowerBound = Infinity;
 
-        if (row) row.maxClusterLaneHeights = null;
+        if (row) row.maxCluster = null;
 
-        const maxLanes = this.config.maxStackLanes > 0 ? this.config.maxStackLanes : 0;
+        const c = this.config;
+        const maxLanes = c.maxStackLanes > 0 ? c.maxStackLanes : 0;
+        const clearance = c.stackLabelClearance;
+        // Scale at which the painted footprint is measured, or 0 to cluster by
+        // time alone. There is no scale before the first layout; _syncLanesToScale
+        // reassigns once there is one.
+        const scale = c.stackOnLabelCollision && this._pixelsPerMs > 0 ? this._pixelsPerMs : 0;
+        // Bound on how far back into the row any bar paints. Padded starts are
+        // not in the list's (raw) start order, so a cluster may only be closed
+        // where no bar still to come could reach back into it.
+        let maxLead = 0;
+        if (scale) {
+            for (let i = 0; i < list.length; i++) {
+                const lead = this._paintedSpan(list[i], scale, this._spanScratch).lead;
+                if (lead > maxLead) maxLead = lead;
+            }
+        }
         let overflow = [];
 
         const laneInfo = this._laneInfo;
         const closeCluster = (endIndex) => {
             const cluster = {
-                laneHeights, offsets: null, key: null,
+                laneHeights, laneAbove, laneBelow, offsets: null, key: null,
                 overflow, trailEnd: clusterMaxEnd
             };
             for (let j = clusterStart; j < endIndex; j++) {
                 const info = laneInfo.get(list[j]);
                 if (info) info.cluster = cluster;
             }
-            if (row && laneHeights.length) {
-                const h = this._stackHeightFromLanes(laneHeights);
-                if (!row.maxClusterLaneHeights
-                    || h > this._stackHeightFromLanes(row.maxClusterLaneHeights)) {
-                    row.maxClusterLaneHeights = laneHeights;
-                }
+            if (row && laneHeights.length
+                && this._clusterStackHeight(cluster) > this._clusterStackHeight(row.maxCluster)) {
+                row.maxCluster = cluster;
             }
             overflow = [];
         };
 
         for (let i = 0; i < list.length; i++) {
             const alloc = list[i];
-            if (i > clusterStart && alloc.startTime >= clusterMaxEnd) {
+            const span = scale ? this._paintedSpan(alloc, scale, this._spanScratch) : NO_SPAN;
+            // Both ends of the interval this bar claims: its time span widened by
+            // everything painted around it. With no padding these are its own
+            // start and end times, and the layout is purely time-based.
+            const start = alloc.startTime - span.lead;
+            const end = Math.max(alloc.endTime + span.trail, start);
+            if (i > clusterStart && alloc.startTime - maxLead >= clusterMaxEnd) {
                 closeCluster(i);
                 clusterStart = i;
                 laneEnds = [];
                 laneHeights = [];
+                laneAbove = [];
+                laneBelow = [];
                 laneEndLowerBound = Infinity;
             }
-            const end = Math.max(alloc.endTime, alloc.startTime);
             let lane;
-            if (laneEndLowerBound > alloc.startTime) {
+            if (laneEndLowerBound > start) {
                 lane = laneEnds.length;
             } else {
                 lane = 0;
-                while (lane < laneEnds.length && laneEnds[lane] > alloc.startTime) lane++;
+                while (lane < laneEnds.length && laneEnds[lane] > start) lane++;
             }
             if (maxLanes > 0 && lane === laneEnds.length && laneEnds.length >= maxLanes) {
                 overflow.push(alloc);
@@ -4094,12 +4273,17 @@ export class TimelineEngine {
                 continue;
             }
             const height = alloc.height && alloc.height > 0 ? alloc.height : 0;
+            const clear = clearance ? this._decorationBox(alloc) : NO_CLEARANCE;
             if (lane === laneEnds.length) {
                 laneEnds.push(end);
                 laneHeights.push(height);
+                laneAbove.push(clear.above);
+                laneBelow.push(clear.below);
             } else {
                 laneEnds[lane] = end;
                 if (height > laneHeights[lane]) laneHeights[lane] = height;
+                if (clear.above > laneAbove[lane]) laneAbove[lane] = clear.above;
+                if (clear.below > laneBelow[lane]) laneBelow[lane] = clear.below;
             }
             if (end < laneEndLowerBound) laneEndLowerBound = end;
             laneInfo.set(alloc, { cluster: null, lane });
@@ -4108,12 +4292,177 @@ export class TimelineEngine {
         closeCluster(list.length);
     }
 
+    // Label gap, line height and default icon box, as the decoration layout
+    // uses them. The line height is derived from the pixel size in the
+    // configured font shorthand: measuring each label's real ascent/descent
+    // would tie a whole row's height to the text of individual bars.
+    _labelMetrics() {
+        let metrics = this._labelMetricsCache;
+        if (metrics === null || metrics.gen !== this._decorGen) {
+            const c = this.config;
+            const match = /(\d*\.?\d+)px/.exec(c.barLabelFont || '');
+            const fontSize = match ? parseFloat(match[1]) : DEFAULT_LABEL_FONT_SIZE;
+            metrics = this._labelMetricsCache = {
+                gen: this._decorGen,
+                gap: c.barLabelGap,
+                lineHeight: Math.ceil(fontSize * LABEL_LINE_HEIGHT_RATIO),
+                iconSize: c.barIconSize
+            };
+        }
+        return metrics;
+    }
+
+    // Drawn width of one bar label, in the configured bar-label font. Widths are
+    // cached by text: a row of bars is measured once per data load, not once per
+    // frame, and labels repeat across bars.
+    _labelWidth(text) {
+        let widths = this._labelWidths;
+        if (widths === null || this._labelWidthsGen !== this._decorGen) {
+            widths = this._labelWidths = new Map();
+            this._labelWidthsGen = this._decorGen;
+        }
+        let width = widths.get(text);
+        if (width === undefined) {
+            const ctx = this._measureCtx;
+            // The context is shared with the axis, which measures in its own
+            // font, so the font is set per measurement rather than per pass.
+            ctx.font = this.config.barLabelFont;
+            width = ctx.measureText(text).width;
+            widths.set(text, width);
+        }
+        return width;
+    }
+
+    // Pixel extents of one bar's decorations, mirroring how
+    // _buildBarDecorations lays them out: how far they reach beyond each edge of
+    // the bar (`above`/`below`/`left`/`right`) and how wide the ones centered on
+    // the bar are (`width`). All are independent of the zoom, so they are cached
+    // per allocation - measuring text once per bar per frame is not affordable.
+    //
+    // Icons are measured by their box rather than their loaded, aspect-fitted
+    // size, so the geometry does not shift as images arrive.
+    _decorationBox(alloc) {
+        let box = this._decorBoxes.get(alloc);
+        if (box === undefined || box.gen !== this._decorGen) {
+            box = this._measureDecorations(alloc);
+            box.gen = this._decorGen;
+            this._decorBoxes.set(alloc, box);
+        }
+        return box;
+    }
+
+    _measureDecorations(alloc) {
+        const c = this.config;
+        const metrics = this._labelMetrics();
+        const gap = metrics.gap;
+        const lineHeight = metrics.lineHeight;
+        const barHeight = alloc.height && alloc.height > 0 ? alloc.height : c.barHeight;
+        // Label widths are only needed to decide whether decorations collide
+        // horizontally; without that, the text is never measured.
+        const measure = c.stackOnLabelCollision;
+
+        // Running distance from the bar edge to where the next stacked item on
+        // that side is drawn, tracking the aboveY/belowY walk in the layout.
+        let aboveRun = gap;
+        let belowRun = gap;
+        let above = 0;
+        let below = 0;
+        let left = 0;
+        let right = 0;
+        // Tallest and widest decoration centered on the bar. Anything taller
+        // than the bar spills evenly above and below it; anything wider than the
+        // bar overhangs both its ends.
+        let centerHeight = 0;
+        let centerWidth = 0;
+        let centerGroup = 0;
+
+        if (alloc.textStart || alloc.textEnd) centerHeight = lineHeight;
+
+        if (alloc.icons) {
+            for (const icon of alloc.icons) {
+                if (!icon || !icon.source) continue;
+                const size = icon.size && icon.size > 0 ? icon.size : metrics.iconSize;
+                const pos = String(icon.position || 'start').toLowerCase();
+                if (icon.inside) {
+                    // Placed against the matching inner edge, so only the part
+                    // that does not fit inside the bar needs room.
+                    if (pos === 'above') below = Math.max(below, gap + size - barHeight);
+                    else if (pos === 'below') above = Math.max(above, gap + size - barHeight);
+                    else centerHeight = Math.max(centerHeight, size);
+                    centerWidth = Math.max(centerWidth, size);
+                } else if (pos === 'above') {
+                    above = Math.max(above, aboveRun + size);
+                    aboveRun += size + gap;
+                    centerWidth = Math.max(centerWidth, size);
+                } else if (pos === 'below') {
+                    below = Math.max(below, belowRun + size);
+                    belowRun += size + gap;
+                    centerWidth = Math.max(centerWidth, size);
+                } else if (pos === 'center') {
+                    centerHeight = Math.max(centerHeight, size);
+                    centerGroup += centerGroup === 0 ? size : gap + size;
+                } else if (pos === 'end') {
+                    centerHeight = Math.max(centerHeight, size);
+                    right += gap + size;
+                } else {
+                    centerHeight = Math.max(centerHeight, size);
+                    left += gap + size;
+                }
+            }
+        }
+
+        if (alloc.textAbove) {
+            above = Math.max(above, aboveRun + lineHeight);
+            if (measure) centerWidth = Math.max(centerWidth, this._labelWidth(alloc.textAbove));
+        }
+        if (alloc.textBelow) {
+            below = Math.max(below, belowRun + lineHeight);
+            if (measure) centerWidth = Math.max(centerWidth, this._labelWidth(alloc.textBelow));
+        }
+        if (alloc.textStart && measure) left += gap + this._labelWidth(alloc.textStart);
+        if (alloc.textEnd && measure) right += gap + this._labelWidth(alloc.textEnd);
+
+        const spill = (centerHeight - barHeight) / 2;
+        return {
+            // Stamped by _decorationBox; declared here so every box has one shape.
+            gen: 0,
+            above: Math.max(0, above, spill),
+            below: Math.max(0, below, spill),
+            left,
+            right,
+            width: Math.max(centerWidth, centerGroup)
+        };
+    }
+
+    // The span a bar actually paints over, as the time it reaches before its
+    // start (`lead`) and past its end (`trail`) at the given scale in pixels per
+    // ms. Its delay bars always count; its labels and icons count only at a zoom
+    // where they are drawn at all, which is what keeps a zoomed-out row from
+    // stacking every bar in it. Written into `out` to keep the lane pass
+    // allocation-free.
+    _paintedSpan(alloc, scale, out) {
+        const startEdge = alloc.startBar && alloc.startBar.duration > 0 ? alloc.startBar.duration : 0;
+        const endEdge = alloc.endBar && alloc.endBar.duration > 0 ? alloc.endBar.duration : 0;
+        out.lead = startEdge;
+        out.trail = endEdge;
+
+        const width = (alloc.endTime - alloc.startTime) * scale;
+        if (width < this.config.minBarWidthForLabels) return out;
+
+        const box = this._decorationBox(alloc);
+        const overhang = Math.max(0, (box.width - width) / 2) / scale;
+        out.lead = Math.max(startEdge + box.left / scale, overhang);
+        out.trail = Math.max(endEdge + box.right / scale, overhang);
+        return out;
+    }
+
     // Vertical offset (in pixels) of a bar's center from its row's center line.
-    // Lanes in a multi-lane cluster are stacked by their actual heights plus
-    // barMargin between them, and the whole stack is centered on the row, so a
-    // cluster mixing bar heights still lays out without overlap. Offsets are
-    // computed once per cluster and cached until barHeight/barMargin change.
-    // Single-lane bars sit exactly on the center line (offset 0).
+    // Lanes in a multi-lane cluster are stacked by their actual heights, plus
+    // barMargin and the room their labels/icons need between them, and the
+    // whole stack is centered on the row, so a cluster mixing bar heights and
+    // decorations still lays out without overlap. Offsets are computed once per
+    // cluster and cached until the bar layout options change. Single-lane bars
+    // sit exactly on the center line (offset 0).
     _stackOffset(alloc) {
         const info = this._laneInfo.get(alloc);
         if (!info || info.overflow) return 0;
@@ -4128,15 +4477,15 @@ export class TimelineEngine {
         if (cluster.key !== key) {
             const heights = cluster.laneHeights;
             const count = heights.length;
-            let total = c.barMargin * (count - 1);
-            for (let i = 0; i < count; i++) total += heights[i] || c.barHeight;
-
             const offsets = new Array(count);
-            let y = -total / 2;
+            // The stack is centered by its bars, not by its clearance: the row
+            // pads the outermost labels just as it pads a single bar's.
+            let y = -this._clusterStackHeight(cluster) / 2;
             for (let i = 0; i < count; i++) {
+                if (i > 0) y += c.barMargin + cluster.laneBelow[i - 1] + cluster.laneAbove[i];
                 const h = heights[i] || c.barHeight;
                 offsets[i] = y + h / 2;
-                y += h + c.barMargin;
+                y += h;
             }
             cluster.offsets = offsets;
             cluster.key = key;
@@ -4481,6 +4830,14 @@ export class TimelineEngine {
         const prevResourceHeight = this.config.resourceHeight;
         const prevNowRefresh = this.config.nowLineRefreshMs;
         const prevMaxStack = this.config.maxStackLanes;
+        // The decoration measurements are baked into the lane records when they
+        // are built, so everything they are taken from has to force a rebuild.
+        const prevClearance = this.config.stackLabelClearance;
+        const prevCollision = this.config.stackOnLabelCollision;
+        const prevLabelGap = this.config.barLabelGap;
+        const prevLabelFont = this.config.barLabelFont;
+        const prevIconSize = this.config.barIconSize;
+        const prevLabelMinWidth = this.config.minBarWidthForLabels;
         this._applyOptions(options);
         this._rebuildDateFormatters();
         if (this.config.nowLineRefreshMs !== prevNowRefresh) {
@@ -4490,21 +4847,34 @@ export class TimelineEngine {
         // Cached stacking offsets are derived from these two; invalidate them.
         const barLayoutChanged =
             this.config.barHeight !== prevBarHeight || this.config.barMargin !== prevBarMargin;
-        if (barLayoutChanged) {
-            this._barLayoutGen++;
+        // Lane records themselves - their membership, or the clearance they
+        // reserve - have to be rebuilt rather than just laid out again.
+        const decorMetricsChanged =
+            this.config.barHeight !== prevBarHeight
+            || this.config.barLabelGap !== prevLabelGap
+            || this.config.barLabelFont !== prevLabelFont
+            || this.config.barIconSize !== prevIconSize;
+        const collisionOn = this.config.stackOnLabelCollision;
+        const clearanceOn = this.config.stackLabelClearance;
+        if (decorMetricsChanged || collisionOn !== prevCollision) this._decorGen++;
+        const lanesChanged =
+            this.config.maxStackLanes !== prevMaxStack
+            || clearanceOn !== prevClearance
+            || collisionOn !== prevCollision
+            || ((clearanceOn || prevClearance) && decorMetricsChanged)
+            || ((collisionOn || prevCollision) && (
+                decorMetricsChanged
+                || this.config.minBarWidthForLabels !== prevLabelMinWidth));
+        if (barLayoutChanged || lanesChanged) this._barLayoutGen++;
+        if (lanesChanged) {
+            this._reassignAllLanes();
+        } else if (barLayoutChanged) {
             // Tallest cluster per row can change when mixed explicit heights
             // compete with default-height multi-lane stacks.
             this._refreshMaxClusterLanes();
         }
-        if (this.config.maxStackLanes !== prevMaxStack) {
-            this._barLayoutGen++;
-            for (const row of this.allocationsByResource.values()) {
-                this._assignStackLanes(row.items, row);
-            }
-            this._recomputeRowMetrics();
-            this._reportResourceRows();
-        }
-        if (barLayoutChanged || this.config.resourceHeight !== prevResourceHeight) {
+        if (barLayoutChanged || lanesChanged
+            || this.config.resourceHeight !== prevResourceHeight) {
             this._recomputeRowMetrics();
             this._reportResourceRows();
         }
@@ -4580,10 +4950,15 @@ export class TimelineEngine {
             : this.config.resourceAxisWidth + this._visibleWidth / 2;
         // Time currently under the anchor (uses the pre-zoom scale and scroll).
         const anchorTime = this.getXToTime(ax);
+        // Zooming can change which bars collide, and so how tall their rows are
+        // (stackOnLabelCollision). Hold the top row in place across that, or the
+        // view would drift vertically as the user zooms.
+        const rowAnchor = this._captureRowAnchor();
 
         this._userPixelsPerHour = pph;
         // Recompute scale + spacer at the new zoom before repositioning.
         this._relayout();
+        this._restoreRowAnchor(rowAnchor);
 
         // Scroll so anchorTime maps back to the same anchor x. Work in virtual
         // space, then map onto the capped native scrollbar. Syncing scrollX and

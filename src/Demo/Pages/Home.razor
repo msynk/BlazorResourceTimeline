@@ -133,6 +133,14 @@
                            @bind="_maxStackLanes" @bind:event="oninput" @bind:after="ApplyOptions" />
                     <span class="ctl-value">@(_maxStackLanes == 0 ? "off" : _maxStackLanes.ToString())</span>
                 </label>
+                <label class="ctl-check" title="Options.StackLabelClearance: spread stacked bars far enough apart for their labels and icons, not just for the bars">
+                    <input type="checkbox" @bind="_stackLabelClearance" @bind:after="ApplyOptions" />
+                    Label clearance
+                </label>
+                <label class="ctl-check" title="Options.StackOnLabelCollision: stack bars whose labels, icons or delay bars would collide, not only bars that overlap in time">
+                    <input type="checkbox" @bind="_stackOnLabelCollision" @bind:after="ApplyOptions" />
+                    Stack on collision
+                </label>
                 <label class="ctl-check" title="BarIcon.Inside: draw each bar icon within its bar, against the edge its position names, instead of beside it (bars carrying one are grown to fit)">
                     <input type="checkbox" @bind="_insideIcons" @bind:after="ToggleIconPlacement" />
                     Icons inside
@@ -381,6 +389,8 @@
     private bool _hour12;
     private bool _shadeWeekends;
     private int _maxStackLanes;
+    private bool _stackLabelClearance = true;
+    private bool _stackOnLabelCollision = true;
     private bool _insideIcons;
     private bool _windowed;
     private bool _customColumn;
@@ -783,6 +793,8 @@
         WorkingHoursEnd = _shadeWeekends ? 1020 : 0,
         BarHeight = _barHeight,
         BarMargin = _barMargin,
+        StackLabelClearance = _stackLabelClearance,
+        StackOnLabelCollision = _stackOnLabelCollision,
         Renderer = _renderer switch
         {
             "svg" => BlazorResourceTimelineRendererType.Svg,

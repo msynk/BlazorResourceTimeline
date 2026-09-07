@@ -1,11 +1,13 @@
 // Hover tooltip. Runs against a minimal DOM stub rather than a real browser -
 // enough to assert the show-delay, subject switching and edge flipping, which
-// is where the behaviour actually lives.
+// is where the behaviour actually lives. The engine's side of it (what a hover
+// resolves to, and the text it asks for) needs no DOM at all.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Tooltip } from '../../BlazorResourceTimeline/wwwroot/tooltip.js';
+import { makeZonedEngine } from './helpers/engine-fixture.mjs';
 
 // Minimal document/window stub. The tooltip only creates one div, appends it to
 // body, writes styles and measures itself.
@@ -186,4 +188,105 @@ test('dispose removes the element and cancels any pending show', async () => {
     } finally {
         uninstallDom();
     }
+});
+
+// ---- What the engine puts in a tooltip, and when ----
+
+function hidden(id, startHour, endHour, extra = {}) {
+    return {
+        id,
+        resourceId: 'r0',
+        startTime: Date.UTC(2026, 4, 4, startHour),
+        endTime: Date.UTC(2026, 4, 4, endHour),
+        ...extra
+    };
+}
+
+// An engine that reports what it was asked to show instead of building a real
+// tooltip, with one +N marker registered at a known spot in the content area.
+function makeHoverEngine(bars, overrides = {}) {
+    const engine = makeZonedEngine('UTC');
+    Object.assign(engine.config, overrides);
+    engine._overflowHits = [{
+        x: 400, y: 200, width: 22, height: 14,
+        ids: bars.map(b => b.id),
+        bars
+    }];
+    engine.shown = [];
+    engine.hovered = [];
+    engine._tooltip = {
+        trackPointer() {},
+        show: (subject, content) => engine.shown.push({ subject, content }),
+        hide: () => engine.shown.push(null)
+    };
+    engine._notifyHover = (id) => engine.hovered.push(id);
+    return engine;
+}
+
+test('a +N tooltip counts the hidden bars and lists them', () => {
+    const engine = makeZonedEngine('UTC');
+    const bars = [
+        hidden('h1', 9, 10, { textAbove: 'SRV01' }),
+        hidden('h2', 11, 12, { tooltip: 'Batch job\nsecond line' }),
+        hidden('h3', 13, 14)
+    ];
+
+    const lines = engine._buildOverflowTooltip(bars).split('\n');
+
+    assert.equal(lines.length, 4, 'a count and one line per hidden bar');
+    assert.equal(lines[0], '3 hidden allocations');
+    assert.ok(lines[1].startsWith('SRV01 · '), lines[1]);
+    assert.ok(lines[2].startsWith('Batch job · '), 'a host tooltip stands in for a missing label');
+    assert.ok(!lines[2].includes('second line'), 'only its first line, to keep the list scannable');
+    for (const line of lines.slice(1)) {
+        assert.ok(line.includes('–'), `every entry needs its time range: ${line}`);
+    }
+});
+
+test('a single hidden bar is described in the singular', () => {
+    const engine = makeZonedEngine('UTC');
+    const text = engine._buildOverflowTooltip([hidden('h1', 9, 10)]);
+    assert.equal(text.split('\n')[0], '1 hidden allocation');
+});
+
+test('a long +N list is cut off with a count of the rest', () => {
+    const engine = makeZonedEngine('UTC');
+    const bars = [];
+    for (let i = 0; i < 30; i++) bars.push(hidden('h' + i, 1, 2, { textAbove: 'B' + i }));
+
+    const lines = engine._buildOverflowTooltip(bars).split('\n');
+
+    assert.equal(lines[0], '30 hidden allocations');
+    assert.ok(lines.length < 12, `a tooltip must not grow with the cluster (${lines.length} lines)`);
+    assert.equal(lines[lines.length - 1], `… and ${30 - (lines.length - 2)} more`);
+});
+
+test('hovering a +N marker describes it instead of the bars behind it', () => {
+    const bars = [hidden('h1', 9, 10, { textAbove: 'SRV01' }), hidden('h2', 11, 12)];
+    const engine = makeHoverEngine(bars);
+    let barAtCalls = 0;
+    engine._barAt = () => { barAtCalls += 1; return null; };
+
+    engine._hoverAt(405, 205, 500, 300);
+
+    assert.equal(barAtCalls, 0, 'the marker wins the hit-test, as it does for a click');
+    assert.equal(engine.shown.length, 1);
+    assert.equal(engine.shown[0].subject, bars, 'the cluster is the tooltip subject');
+    assert.ok(engine.shown[0].content.startsWith('2 hidden allocations'));
+    assert.deepEqual(engine.hovered, [null], 'no bar is hovered on a marker');
+});
+
+test('a +N marker is described even when a TooltipTemplate is set', () => {
+    // There is no allocation to hand the template, so the built-in text is all
+    // that can describe the marker.
+    const engine = makeHoverEngine([hidden('h1', 9, 10)], { tooltipTemplate: true });
+    engine._hoverAt(405, 205, 500, 300);
+    assert.equal(engine.shown.length, 1);
+    assert.ok(engine.shown[0].content.startsWith('1 hidden allocation'));
+});
+
+test('showTooltips off leaves the +N marker silent', () => {
+    const engine = makeHoverEngine([hidden('h1', 9, 10)], { showTooltips: false });
+    engine._hoverAt(405, 205, 500, 300);
+    assert.deepEqual(engine.shown, []);
 });

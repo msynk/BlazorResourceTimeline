@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Hovering a `+N` overflow marker (`Options.MaxStackLanes`) now describes what is
+  hidden behind it: the count, then one line per bar with its label and time
+  range, cut off with a count of the rest for a long cluster. A marker has no
+  allocation to hand a `TooltipTemplate`, so it uses the built-in text tooltip
+  either way; `Options.ShowTooltips = false` silences it with everything else.
+
+- `Options.StackOnLabelCollision` (default `true`): bars are stacked into
+  separate lanes when what they *paint* would collide - their labels, icons and
+  delay bars - and not only when their times overlap. Two bars a few minutes
+  apart were each drawing a time label into the few pixels between them, which no
+  amount of vertical spacing within one lane can fix. A collision is measured in
+  pixels, so lane membership and row height are recomputed when the zoom or the
+  viewport width changes the scale: zooming in until the labels fit returns the
+  bars to one lane, and zooming out past `MinBarWidthForLabels` (where
+  decorations are not drawn) collapses the stacks rather than growing them. The
+  row at the top of the viewport is held in place across a zoom so the view does
+  not drift when row heights change. Set it to `false` to stack on a time overlap
+  alone.
+
+- `Options.StackLabelClearance` (default `true`): the vertical gap between bars
+  that overlap in time now also covers the room each bar's labels and icons
+  need, so stacked text, icons and images stay readable instead of being drawn
+  over the neighbouring bar - `BarMargin` on its own only kept the bars apart,
+  which for the default 4px bar left every label overlapping. Clearance is
+  reserved per side (a lane whose labels point away from its neighbour does not
+  push it away), the outermost labels still sit in the row's existing padding,
+  and rows grow to fit. It is measured from the icon boxes and the label font
+  rather than from loaded images or the current zoom, so rows do not reflow as
+  images arrive or as the user zooms. Set it to `false` for the previous, tighter
+  stack.
+
 ## [0.7.0] - 2026-08-31
 
 ### Added

@@ -230,6 +230,43 @@ test('inside icons anchored above and below hug the bar\'s top and bottom', () =
     }
 });
 
+// Vertical band a bar node actually paints into: the bar itself plus every
+// label and icon around it. Labels carry no height in the display list (the
+// renderer measures the text), so their box is taken as the font's pixel size
+// about the anchor its baseline names - a lower bound on the real line box.
+function paintedBand(engine, node) {
+    const lineHeight = parseFloat(engine.config.barLabelFont);
+    let top = node.y;
+    let bottom = node.y + node.height;
+    for (const label of node.labels || []) {
+        const height = label.baseline === 'middle' ? lineHeight / 2 : lineHeight;
+        top = Math.min(top, label.baseline === 'top' ? label.y : label.y - height);
+        bottom = Math.max(bottom, label.baseline === 'bottom' ? label.y : label.y + height);
+    }
+    for (const icon of node.icons || []) {
+        top = Math.min(top, icon.y);
+        bottom = Math.max(bottom, icon.y + icon.height);
+    }
+    return { top, bottom };
+}
+
+test('nothing a stacked bar paints reaches into what its neighbour paints', () => {
+    const decorated = {
+        textAbove: 'SRV01', textBelow: '2h', textStart: '08:30', textEnd: '10:30',
+        icons: [{ source: 'i.png', position: 'center' }]
+    };
+    const engine = makeSceneEngine([
+        bar('a', 'r0', 1, 3, decorated),
+        bar('b', 'r0', 2, 4, decorated)
+    ]);
+    engine._getImage = () => ({ complete: true, naturalWidth: 16, naturalHeight: 16 });
+
+    const [first, second] = engine.buildScene().bars.map(n => paintedBand(engine, n));
+
+    assert.ok(first.bottom < second.top,
+        `the upper bar paints down to ${first.bottom}, the lower one from ${second.top}`);
+});
+
 test('edge bars from one bar do not leak into the next bar in the same frame', () => {
     // Two bars share the pool; the second must start clean even though the
     // first filled its backing arrays.

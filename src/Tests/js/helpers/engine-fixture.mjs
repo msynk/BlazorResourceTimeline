@@ -24,6 +24,8 @@ export function makeBareEngine(overrides = {}) {
         dateRowHeight: 22,
         barHeight: 4,
         barMargin: 2,
+        stackLabelClearance: true,
+        stackOnLabelCollision: true,
         minBarWidth: 2,
         minBarWidthForLabels: 24,
         barLabelGap: 3,
@@ -58,6 +60,8 @@ export function makeBareEngine(overrides = {}) {
         workingHoursEnd: null,
         maxStackLanes: 0,
         allowDelete: false,
+        showTooltips: true,
+        tooltipDelayMs: 300,
         tooltipTemplate: false,
         ...(overrides.config || {}),
         // Always present on the real config, and _applyOptions merges into it.
@@ -78,6 +82,18 @@ export function makeBareEngine(overrides = {}) {
     engine._laneInfo = new WeakMap();
     engine._barLayoutGen = 1;
     engine._configGen = 1;
+
+    // Lane assignment measures bar labels, which the real engine does through a
+    // 2D context created in its constructor. A fixed width per character keeps
+    // the geometry a test asserts on predictable.
+    engine._measureCtx = { font: '', measureText: (t) => ({ width: t.length * 7 }) };
+    engine._decorGen = 1;
+    engine._decorBoxes = new WeakMap();
+    engine._labelMetricsCache = null;
+    engine._labelWidths = null;
+    engine._labelWidthsGen = 0;
+    engine._spanScratch = { lead: 0, trail: 0 };
+    engine._laneScale = null;
     engine._configSnap = null;
     engine._configSnapGen = -1;
     engine._rowHeights = [];

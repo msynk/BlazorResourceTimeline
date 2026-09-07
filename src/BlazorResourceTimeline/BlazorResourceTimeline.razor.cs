@@ -231,6 +231,10 @@ public partial class BlazorResourceTimeline
     /// a positioned overlay (all renderers, including canvas). The built-in
     /// text tooltip is not shown. Requires
     /// <see cref="BlazorResourceTimelineOptions.ShowTooltips"/> (default on).
+    /// <para>
+    /// A <c>+N</c> overflow marker has no allocation to pass here, so hovering
+    /// one still shows the built-in text tooltip listing the hidden bars.
+    /// </para>
     /// </summary>
     [Parameter] public RenderFragment<BlazorResourceTimelineAllocation>? TooltipTemplate { get; set; }
 

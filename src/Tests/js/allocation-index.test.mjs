@@ -14,6 +14,12 @@ function alloc(id, resourceId, startTime, endTime, extra = {}) {
     return { id, resourceId, startTime, endTime, ...extra };
 }
 
+// Height of a row holding two undecorated bars stacked barMargin apart: the
+// baseline the label clearance is measured against.
+function tightRowHeight(c) {
+    return 2 * c.barHeight + c.barMargin + (c.resourceHeight - c.barHeight);
+}
+
 test('index groups allocations by resource, sorted by start time', () => {
     const engine = makeIndexedEngine([
         alloc('c', 'r1', 300, 400),
@@ -153,6 +159,150 @@ test('stacking offsets follow barHeight/barMargin changes', () => {
 
     assert.notDeepEqual(before, after, 'a larger margin must spread the lanes apart');
     assert.ok(Math.abs(after[0] - after[1]) > Math.abs(before[0] - before[1]));
+});
+
+test('stacked bars leave room between them for the labels they carry', () => {
+    const engine = makeIndexedEngine([
+        alloc('a', 'r0', 0, 100, { textAbove: 'A', textBelow: '1h' }),
+        alloc('b', 'r0', 50, 150, { textAbove: 'B', textBelow: '1h' })
+    ]);
+    const c = engine.config;
+    // Lower bound on what one label needs beside a bar: its gap plus the font's
+    // pixel size. The real line box is a little taller, so asserting against
+    // this checks that the text fits rather than restating the engine's maths.
+    const labelRoom = c.barLabelGap + parseFloat(c.barLabelFont);
+    const [first, second] = engine.allocations.map(a => engine._stackOffset(a));
+    const between = Math.abs(second - first) - c.barHeight;
+
+    // The upper bar's textBelow and the lower bar's textAbove both live in the
+    // space between the two bars, so neither is drawn over a bar.
+    assert.ok(between >= 2 * labelRoom + c.barMargin,
+        `two stacked labels need ${2 * labelRoom + c.barMargin}px between the bars, got ${between}`);
+
+    // The row grew by exactly that extra room: the outermost bars still sit on
+    // the padding a single default bar has in a minimum-height row, which is
+    // where their own outward-facing labels are drawn.
+    const half = engine._rowHeight(0) / 2;
+    const pad = (c.resourceHeight - c.barHeight) / 2;
+    assert.equal(Math.min(first, second) - c.barHeight / 2, -half + pad);
+    assert.equal(Math.max(first, second) + c.barHeight / 2, half - pad);
+});
+
+test('clearance is reserved only on the side carrying the decoration', () => {
+    const engine = makeIndexedEngine([
+        alloc('a', 'r0', 0, 100),
+        alloc('b', 'r0', 50, 150, { textBelow: 'below' })
+    ]);
+    const c = engine.config;
+    const [first, second] = engine.allocations.map(a => engine._stackOffset(a));
+
+    // The label hangs below the lower lane, into the padding a single bar's
+    // label would use, so the lanes themselves need not move apart.
+    assert.equal(Math.abs(second - first), c.barHeight + c.barMargin);
+    assert.equal(engine._rowHeight(0), tightRowHeight(c));
+});
+
+test('an icon above a stacked bar reserves its box, loaded or not', () => {
+    // Icons are measured by their box rather than their aspect-fitted natural
+    // size, so a stack's geometry does not shift as images arrive.
+    const engine = makeIndexedEngine([
+        alloc('a', 'r0', 0, 100),
+        alloc('b', 'r0', 50, 150, { icons: [{ source: 'i.png', position: 'above', size: 20 }] })
+    ]);
+    const c = engine.config;
+    const [first, second] = engine.allocations.map(a => engine._stackOffset(a));
+
+    assert.equal(Math.abs(second - first) - c.barHeight, c.barMargin + c.barLabelGap + 20);
+});
+
+test('turning stackLabelClearance off collapses the stack again', () => {
+    const engine = makeIndexedEngine([
+        alloc('a', 'r0', 0, 100, { textAbove: 'A' }),
+        alloc('b', 'r0', 50, 150, { textAbove: 'B' })
+    ]);
+    engine.render = () => {};
+    engine._syncAxisSplitterChrome = () => {};
+    const c = engine.config;
+    assert.ok(engine._rowHeight(0) > tightRowHeight(c), 'clearance is on by default');
+
+    engine.setOptions({ stackLabelClearance: false });
+
+    const [first, second] = engine.allocations.map(a => engine._stackOffset(a));
+    assert.equal(Math.abs(second - first), c.barHeight + c.barMargin);
+    assert.equal(engine._rowHeight(0), tightRowHeight(c));
+});
+
+// The arrangement from the bug report: two bars a few minutes apart, each wide
+// enough to carry labels, with their start/end times drawn into the gap between
+// them. At one pixel per minute the gap is 8px and each label is 35px wide.
+const MINUTE = 60000;
+const NEIGHBOURS = [
+    alloc('a', 'r0', 0, 60 * MINUTE, { textStart: '13:03', textEnd: '14:00' }),
+    alloc('b', 'r0', 68 * MINUTE, 128 * MINUTE, { textStart: '15:12', textEnd: '16:12' })
+];
+
+function lanesOf(engine) {
+    return engine.allocations.map(a => engine._laneInfo.get(a).lane);
+}
+
+test('bars whose labels collide are stacked though their times do not overlap', () => {
+    const engine = makeIndexedEngine(NEIGHBOURS, { engine: { _pixelsPerMs: 1 / MINUTE } });
+
+    assert.deepEqual(lanesOf(engine), [0, 1], 'the labels do not fit beside each other');
+    const [first, second] = engine.allocations.map(a => engine._stackOffset(a));
+    assert.ok(first < second, 'the second bar belongs below the first');
+    assert.ok(engine._rowHeight(0) > engine.config.resourceHeight, 'the row grows for the stack');
+});
+
+test('zooming in until the labels fit puts the bars back on one lane', () => {
+    const engine = makeIndexedEngine(NEIGHBOURS, { engine: { _pixelsPerMs: 10 / MINUTE } });
+
+    assert.deepEqual(lanesOf(engine), [0, 0]);
+    for (const a of engine.allocations) assert.equal(engine._stackOffset(a), 0);
+    assert.equal(engine._rowHeight(0), engine.config.resourceHeight);
+});
+
+test('bars too narrow to carry labels claim no room when zoomed out', () => {
+    // Below minBarWidthForLabels nothing is drawn around a bar, so a zoomed-out
+    // row collapses back to one lane instead of stacking every bar in it.
+    const engine = makeIndexedEngine(NEIGHBOURS, { engine: { _pixelsPerMs: 0.1 / MINUTE } });
+
+    assert.deepEqual(lanesOf(engine), [0, 0]);
+    assert.equal(engine._rowHeight(0), engine.config.resourceHeight);
+});
+
+test('delay bars count towards a collision even with no labels', () => {
+    const engine = makeIndexedEngine([
+        alloc('a', 'r0', 0, 60 * MINUTE, { endBar: { duration: 30 * MINUTE } }),
+        alloc('b', 'r0', 70 * MINUTE, 130 * MINUTE, { startBar: { duration: 30 * MINUTE } })
+    ], { engine: { _pixelsPerMs: 1 / MINUTE } });
+
+    assert.deepEqual(lanesOf(engine), [0, 1]);
+});
+
+test('a scale change reassigns the lanes, an unchanged one does not', () => {
+    const engine = makeIndexedEngine(NEIGHBOURS, { engine: { _pixelsPerMs: 10 / MINUTE } });
+    assert.deepEqual(lanesOf(engine), [0, 0]);
+
+    const before = engine._laneInfo.get(engine.allocations[0]).cluster;
+    engine._syncLanesToScale();
+    assert.equal(engine._laneInfo.get(engine.allocations[0]).cluster, before,
+        'the same scale must not rebuild the lane records');
+
+    engine._pixelsPerMs = 1 / MINUTE;
+    engine._syncLanesToScale();
+    assert.deepEqual(lanesOf(engine), [0, 1]);
+    assert.ok(engine._rowHeight(0) > engine.config.resourceHeight);
+});
+
+test('stackOnLabelCollision off stacks on a time overlap alone', () => {
+    const engine = makeIndexedEngine(NEIGHBOURS, {
+        config: { stackOnLabelCollision: false },
+        engine: { _pixelsPerMs: 1 / MINUTE }
+    });
+
+    assert.deepEqual(lanesOf(engine), [0, 0]);
+    assert.equal(engine._rowHeight(0), engine.config.resourceHeight);
 });
 
 test('lane state is not written onto the caller\'s allocation objects', () => {

@@ -73,6 +73,36 @@ public class BlazorResourceTimelineOptions
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? BarMargin { get; set; }
 
+    /// <summary>
+    /// When <c>true</c> (the default), the gap between bars that overlap in time
+    /// also covers the vertical room each bar's labels and icons need, so their
+    /// text stays readable instead of being drawn over the neighbouring bar -
+    /// <see cref="BarMargin"/> on its own only keeps the bars themselves apart.
+    /// Rows grow to fit. The reserved room does not depend on the zoom level, so
+    /// rows do not reflow while zooming. Set to <c>false</c> for the tighter
+    /// stack of undecorated bars.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? StackLabelClearance { get; set; }
+
+    /// <summary>
+    /// When <c>true</c> (the default), bars are stacked into separate lanes when
+    /// what they <i>paint</i> would collide - their labels, icons and delay bars,
+    /// not just the bars - rather than only when their times overlap. Two bars a
+    /// few minutes apart both draw their end/start labels into the gap between
+    /// them, and a single lane cannot hold both legibly.
+    /// <para>
+    /// A collision is measured in pixels, so lane membership (and therefore row
+    /// height) is recomputed when the zoom or the viewport width changes the
+    /// horizontal scale. Bars too narrow to carry decorations at all (see
+    /// <see cref="MinBarWidthForLabels"/>) claim no extra room, so zooming out
+    /// collapses the stacks again rather than growing them.
+    /// </para>
+    /// Set to <c>false</c> to stack on a time overlap alone.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? StackOnLabelCollision { get; set; }
+
     /// <summary>Minimum drawn bar width so very short allocations stay visible, in pixels.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? MinBarWidth { get; set; }
@@ -208,8 +238,9 @@ public class BlazorResourceTimelineOptions
     /// <summary>
     /// Maximum stacking lanes per overlapping cluster. <c>null</c> or <c>0</c>
     /// is unlimited (today's behaviour). Extra bars are hidden and a <c>+N</c>
-    /// label is drawn at the cluster's trailing edge; clicking it selects them.
-    /// Row height is capped at the max-lane stack.
+    /// label is drawn at the cluster's trailing edge; clicking it selects them,
+    /// and hovering it lists what is hidden (requires
+    /// <see cref="ShowTooltips"/>). Row height is capped at the max-lane stack.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? MaxStackLanes { get; set; }
@@ -361,7 +392,8 @@ public class BlazorResourceTimelineOptions
     /// Whether hovering a bar (mouse/pen) shows a tooltip. The tooltip text is the
     /// allocation's <see cref="BlazorResourceTimelineAllocation.Tooltip"/> when set,
     /// otherwise a default built from its labels, resource name and time range.
-    /// Defaults to <c>true</c>.
+    /// Hovering a <c>+N</c> overflow marker (see <see cref="MaxStackLanes"/>)
+    /// lists the bars hidden behind it. Defaults to <c>true</c>.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? ShowTooltips { get; set; }
