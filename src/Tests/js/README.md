@@ -21,7 +21,7 @@ and CI only has to add a `setup-node` step.
 | `view-scroll.test.mjs` | Where the viewport lands on the first load and across reloads, the `panByDays` day/week steps (24-hour, `panToDayStart`, and per-call override), `zoomToDays` fitting N days into the viewport, the "now" indicator's refresh timer, `OnViewChanged`, and `scrollToAllocation` |
 | `tooltip.test.mjs` | Show delay, subject switching and viewport-edge flipping, against a minimal DOM stub; what a hover resolves to and the text it asks for, including `+N` overflow markers |
 | `hit-test.test.mjs` | `_barAt` click tolerance, resize handle vs move, locked bars, stacked-lane Y, overflow hits, `_pointerHit` regions, double-click pairing, click-select notify |
-| `renderer-contract.test.mjs` | `buildScene()` bar ids, non-overlap within a row, weekend/off-hour bands, `Hour12` tick labels |
+| `renderer-contract.test.mjs` | `buildScene()` bar ids, non-overlap within a row, weekend/off-hour bands, surface stripes (days, shifts, rows, checker, bands), `Hour12` tick labels |
 | `edit-commit.test.mjs` | Move/resize commit, overlap refuse, delete, multi-move accept/reject |
 
 `helpers/engine-fixture.mjs` builds an engine on the prototype with only the

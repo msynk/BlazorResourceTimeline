@@ -43,6 +43,10 @@
     <!-- Serialized .NET -> JS when options are applied. -->
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineOptions" preserve="all" />
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineColors" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineSurface" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineColumnStripes" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineRowStripes" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineSurfaceBand" preserve="all" />
 
     <!-- Serialized .NET -> JS on every data load. -->
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineResource" preserve="all" />
@@ -54,6 +58,9 @@
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineRendererType" preserve="all" />
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineBarIconPosition" preserve="all" />
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineEmptyDragAction" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineSurfaceUnit" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineStripeAlign" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineSurfaceCombine" preserve="all" />
 
     <!-- Deserialized JS -> .NET: the layout read back after init, and the
          visible-row descriptors pushed to the resource-template overlay. -->

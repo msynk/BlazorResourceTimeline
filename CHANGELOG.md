@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Options.Surface` colors the content pane under the grid and bars. Column
+  stripes cycle by day, hour or week (two colors alternate calendar days across
+  the whole range; `Align = Repeat` and `Span` cover weekday palettes and
+  8-hour shifts). Row stripes zebra the resource list. `Resource.Background`
+  and `Surface.ResourceColors` color one row. `Combine = Checker` paints a
+  pattern of (column index + row index) across the surface. `Bands` highlight
+  a time span, or one resource's row inside it. `ShadeTimeAxis` and
+  `ShadeResourceAxis` continue those colors into the axes, under the labels.
+  The non-working wash still paints on top. The demo's Surface menu shows each
+  of these.
+
 ## [0.8.0] - 2026-09-07
 
 ### Added

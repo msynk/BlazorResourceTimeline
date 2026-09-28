@@ -69,6 +69,9 @@ lot of data must stay readable and interactive.
   or a `TooltipTemplate` overlay on every renderer), on by default and configurable.
 - **Working-time shading**: `NonWorkingDays` and `WorkingHoursStart` /
   `WorkingHoursEnd` wash weekends and off-hours (visual only; snap is unchanged).
+- **Surface colors**: paint the content pane by time column, resource row, or a
+  pattern across both — alternating days, hour shifts, a checkerboard, per-resource
+  colors and explicit bands — via `Options.Surface`.
 - **Resource hierarchy**: nest resources into multi-level, collapsible groups
   via `ParentId`; click a group row (or use it from data) to expand/collapse.
 - **On-demand (windowed) loading**: for effectively unbounded datasets, serve
@@ -386,9 +389,9 @@ more room.
 
 `Options.Hour12 = true` keeps tick positions on whole hours but labels them with
 the locale's 12-hour clock (`3 PM` in `en-US`). `Options.FirstDayOfWeek` (Sunday
-= 0 … Saturday = 6) is reserved for week-oriented banding; `PanByDaysAsync(7)`
-already steps a week. When null, the engine uses `Intl.Locale` weekInfo where
-available, otherwise Monday.
+= 0 … Saturday = 6) is where a week starts for `Surface` week stripes and for
+day stripes with `Align = Repeat`. `PanByDaysAsync(7)` already steps a week.
+When null, the engine uses `Intl.Locale` weekInfo where available, otherwise Monday.
 
 ### Working-time shading
 
@@ -400,6 +403,46 @@ draw nothing.
 
 The rows are not captioned - use [`TopStartContent`](#notable-parameters) to
 label them in the otherwise blank top-start corner, as the demo does.
+
+The wash paints **over** `Options.Surface`, so a weekend shade still reads on
+top of alternating days.
+
+## Surface colors
+
+`Options.Surface` colors the content pane under the grid and the bars. A pattern
+is tied to the calendar and the resource list, so a stripe stays on the same day
+or row as the user scrolls. It is visual only. Assigning a new `Surface` replaces
+the previous one entirely — an empty `new BlazorResourceTimelineSurface()` clears
+it. (`null` is omitted on the wire and leaves the previous surface in place.)
+
+Painted bottom to top: the content background, row fills, column stripes, explicit
+bands, then the non-working wash.
+
+```csharp
+Surface = new()
+{
+    // Two colors: consecutive local days alternate across the whole range.
+    Columns = new()
+    {
+        Colors = ["#e7eef5", "#ffffff"],
+    },
+    ShadeTimeAxis = true, // continue the stripe into the date row
+};
+```
+
+| Piece | What it does |
+| --- | --- |
+| `Columns` | Vertical stripes. `Unit` is `Day` (default), `Hour` or `Week`. `Colors` cycles in order. `Span` is how many units one color covers (`Hour` + three colors + `Span = 8` is three daily shifts). `Align = Repeat` restarts the cycle each day (hours) or each week (days), so a weekday keeps its color; `Continuous` (default) runs the sequence across the whole range. `Offset` rotates which stripe is first. |
+| `Rows` | Horizontal stripes down the visible resource list. `Span` groups several rows onto one color. |
+| `Resource.Background` | That row's own color. Wins over `ResourceColors` and over `Rows`. |
+| `ResourceColors` | A color per resource id, for rows that do not set `Background`. |
+| `Combine` | `Overlay` (default) paints columns over rows — use a translucent column color to tint the row underneath. `RowsOnTop` reverses that. `Checker` paints each cell from the column colors by (column index + row index), so two colors are a checkerboard across the whole surface. |
+| `Bands` | Explicit rectangles. No `ResourceId` spans every row; a resource id spans only that row. |
+| `ShadeTimeAxis` / `ShadeResourceAxis` | Continue column colors into the date row (or the hour row, for hour stripes) and row colors into the resource column. Labels stay above the tint. |
+
+Stripes thinner than about a pixel, or more than a few hundred in one frame, are
+not drawn. A checker that would be that fine falls back to full-height column
+stripes.
 
 ## Theming and dark mode
 

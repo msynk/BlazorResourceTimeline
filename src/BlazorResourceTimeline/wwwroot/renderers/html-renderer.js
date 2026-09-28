@@ -54,6 +54,10 @@ export class HtmlRenderer {
             return el;
         };
         this._bgLayer = layer();
+        // Separate layers so stripe counts can grow without covering the wash
+        // or the grid (pools that share a parent append new nodes at the end).
+        this._surfaceLayer = layer();
+        this._washLayer = layer();
         this._gridLayer = layer();
         this._barsLayer = layer();
         this._nowLayer = layer();
@@ -64,11 +68,17 @@ export class HtmlRenderer {
         this._timeAxisInner = div({ position: 'absolute', top: '0' });
         this._timeAxis.appendChild(this._timeAxisInner);
         this._frame.appendChild(this._timeAxis);
+        // Zero-size anchor, appended before the label pools, so column tints
+        // sit under the day titles and share the inner's viewport coordinates.
+        this._timeAxisTint = div({ position: 'absolute', left: '0', top: '0', width: '0', height: '0' });
+        this._timeAxisInner.appendChild(this._timeAxisTint);
 
         this._resourceAxis = div({ position: 'absolute', overflow: 'hidden', boxSizing: 'border-box' });
         this._resourceAxisInner = div({ position: 'absolute', left: '0' });
         this._resourceAxis.appendChild(this._resourceAxisInner);
         this._frame.appendChild(this._resourceAxis);
+        this._resourceAxisTint = div({ position: 'absolute', left: '0', top: '0', width: '0', height: '0' });
+        this._resourceAxisInner.appendChild(this._resourceAxisTint);
 
         // Marquee and edit ghost, clipped to the content area.
         this._overlayClip = div({ position: 'absolute', overflow: 'hidden' });
@@ -93,7 +103,8 @@ export class HtmlRenderer {
         };
         this._pools = {
             bg: new NodePool(this._bgLayer),
-            nonWorking: new NodePool(this._bgLayer),
+            surface: new NodePool(this._surfaceLayer),
+            nonWorking: new NodePool(this._washLayer),
             gridH: new NodePool(this._gridLayer),
             gridV: new NodePool(this._gridLayer),
             barEdges: new NodePool(this._barsLayer),
@@ -102,6 +113,8 @@ export class HtmlRenderer {
             barIcons: new NodePool(this._barsLayer),
             barLabels: new NodePool(this._barsLayer),
             now: new NodePool(this._nowLayer),
+            axisTints: new NodePool(this._timeAxisTint),
+            resourceTints: new NodePool(this._resourceAxisTint),
             axisLines: new NodePool(this._timeAxisInner),
             axisDayLabels: new NodePool(this._timeAxisInner),
             axisTicks: new NodePool(this._timeAxisInner),
@@ -122,6 +135,7 @@ export class HtmlRenderer {
         for (const key in this._pools) this._pools[key].begin();
 
         this._buildBackground(scene);
+        this._buildSurface(scene);
         this._buildNonWorking(scene);
         this._buildGrid(scene);
         this._buildBars(scene);
@@ -179,6 +193,14 @@ export class HtmlRenderer {
         this._rect(pool, 0, 0, v.axisWidth, v.axisHeight, colors.axisBg);
         this._rect(pool, 0, v.axisHeight, v.axisWidth, contentHeight, colors.axisBg);
         this._rect(pool, v.axisWidth, 0, contentWidth, v.axisHeight, colors.axisBg);
+    }
+
+    _buildSurface(scene) {
+        const bands = scene.surface;
+        if (!bands || !bands.length) return;
+        for (const b of bands) {
+            this._rect(this._pools.surface, b.x, b.y, b.width, b.height, b.color);
+        }
     }
 
     _buildNonWorking(scene) {
@@ -315,6 +337,12 @@ export class HtmlRenderer {
         });
         // Children are positioned in viewport coordinates; shift them back.
         applyStyle(this._timeAxisInner, { left: px(-startX) });
+        const timeTints = scene.surfaceTimeAxis;
+        if (timeTints) {
+            for (const b of timeTints) {
+                this._rect(p.axisTints, b.x, b.y, b.width, b.height, b.color);
+            }
+        }
 
         // Divider between the date row and the hour row(s), the one between the
         // UTC row and the zone row when both are shown, then the day separators.
@@ -369,6 +397,12 @@ export class HtmlRenderer {
             borderRight: `1px solid ${colors.axisBorder}`
         });
         applyStyle(this._resourceAxisInner, { top: px(-startY) });
+        const rowTints = scene.surfaceResourceAxis;
+        if (rowTints) {
+            for (const b of rowTints) {
+                this._rect(p.resourceTints, b.x, b.y, b.width, b.height, b.color);
+            }
+        }
 
         // When the HTML resource-column template overlay is active it renders
         // the labels/chevrons; only the axis background/border is painted.

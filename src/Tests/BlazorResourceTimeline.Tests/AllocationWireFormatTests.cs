@@ -266,6 +266,86 @@ public class AllocationWireFormatTests
     }
 
     [Fact]
+    public void Options_SerializeSurfaceWithExpectedNames()
+    {
+        var start = new DateTimeOffset(2026, 5, 4, 0, 0, 0, TimeSpan.Zero);
+        var options = new BlazorResourceTimelineOptions
+        {
+            Surface = new()
+            {
+                Columns = new()
+                {
+                    Unit = BlazorResourceTimelineSurfaceUnit.Day,
+                    Align = BlazorResourceTimelineStripeAlign.Repeat,
+                    Span = 1,
+                    Offset = 1,
+                    Colors = ["#aaa", "#bbb"],
+                },
+                Rows = new() { Colors = ["#111", "#222"], Span = 2 },
+                Combine = BlazorResourceTimelineSurfaceCombine.Checker,
+                ResourceColors = new Dictionary<string, string> { ["r1"] = "#abc" },
+                Bands =
+                [
+                    new()
+                    {
+                        Start = start,
+                        End = start.AddHours(2),
+                        Color = "#f00",
+                        ResourceId = "r1",
+                    },
+                ],
+                ShadeTimeAxis = true,
+                ShadeResourceAxis = false,
+            },
+        };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(options, Web));
+        var surface = doc.RootElement.GetProperty("surface");
+        var columns = surface.GetProperty("columns");
+
+        Assert.Equal("day", columns.GetProperty("unit").GetString(), ignoreCase: true);
+        Assert.Equal("repeat", columns.GetProperty("align").GetString(), ignoreCase: true);
+        Assert.Equal(1, columns.GetProperty("span").GetInt32());
+        Assert.Equal(1, columns.GetProperty("offset").GetInt32());
+        Assert.Equal("#bbb", columns.GetProperty("colors")[1].GetString());
+        Assert.Equal(2, surface.GetProperty("rows").GetProperty("span").GetInt32());
+        Assert.Equal("checker", surface.GetProperty("combine").GetString(), ignoreCase: true);
+        Assert.Equal("#abc", surface.GetProperty("resourceColors").GetProperty("r1").GetString());
+        var band = surface.GetProperty("bands")[0];
+        Assert.Equal(start.ToUnixTimeMilliseconds(), band.GetProperty("start").GetInt64());
+        Assert.Equal(start.AddHours(2).ToUnixTimeMilliseconds(), band.GetProperty("end").GetInt64());
+        Assert.Equal("#f00", band.GetProperty("color").GetString());
+        Assert.Equal("r1", band.GetProperty("resourceId").GetString());
+        Assert.True(surface.GetProperty("shadeTimeAxis").GetBoolean());
+        Assert.False(surface.GetProperty("shadeResourceAxis").GetBoolean());
+    }
+
+    [Fact]
+    public void Options_OmitSurfaceWhenNull()
+    {
+        var options = new BlazorResourceTimelineOptions();
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(options, Web));
+
+        Assert.False(doc.RootElement.TryGetProperty("surface", out _));
+    }
+
+    [Fact]
+    public void Resource_SerializesBackgroundWhenSet()
+    {
+        var resource = new BlazorResourceTimelineResource
+        {
+            Id = "r1",
+            Name = "Server-01",
+            Background = "#e7f5ff",
+        };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(resource, Web));
+
+        Assert.Equal("#e7f5ff", doc.RootElement.GetProperty("background").GetString());
+    }
+
+    [Fact]
     public void Options_SerializeLocaleWithExpectedName()
     {
         var options = new BlazorResourceTimelineOptions { Locale = "de-DE" };

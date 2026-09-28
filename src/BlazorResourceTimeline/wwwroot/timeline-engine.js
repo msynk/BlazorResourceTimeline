@@ -155,7 +155,8 @@ export class TimelineEngine {
             // screen-reader announcements. null uses the viewer's locale.
             locale: null,
             // First day of the week: 0=Sunday … 6=Saturday. null = locale
-            // weekInfo (else Monday). Used if week banding is added later.
+            // weekInfo (else Monday). Week column stripes (surface.columns
+            // unit "week", and day stripes with align "repeat") start there.
             firstDayOfWeek: null,
             // Hour-row labels as 12-hour clock (e.g. "3 PM"). Tick positions
             // stay on whole hours. Default is 00–23.
@@ -166,6 +167,10 @@ export class TimelineEngine {
             // off-hour bands. Visual only.
             workingHoursStart: null,
             workingHoursEnd: null,
+            // Content-pane coloring (column stripes, row stripes, bands).
+            // null draws only contentBg. Replaced as a whole by setOptions,
+            // not merged. See _buildSurfaceScene.
+            surface: null,
             // Max stacking lanes per cluster. 0 = unlimited. Extra bars are
             // hidden and a +N label is drawn at the cluster's trailing edge.
             maxStackLanes: 0,
@@ -1224,7 +1229,8 @@ export class TimelineEngine {
     // semantic (bars, ticks, rows - not raw rects) so retained-mode renderers
     // (SVG/HTML) can produce meaningful elements, while the canvas renderer
     // paints it immediate-mode. Draw order for renderers:
-    //   background -> grid -> bars -> now line -> sticky axes -> marquee -> ghost
+    //   background -> surface -> non-working -> grid -> bars -> now line ->
+    //   sticky axes (column/row tints under the labels) -> marquee -> ghost
     // Bars may extend under the axes; the (opaque) axes are drawn after them,
     // exactly like the original canvas z-order. Marquee and ghost must be
     // clipped to the content area.
@@ -1252,6 +1258,11 @@ export class TimelineEngine {
                 bars: [],
                 overflow: [],
                 nonWorking: [],
+                // Content-pane fills, then optional tints for the date/hour row
+                // and the resource column. Each is { x, y, width, height, color }.
+                surface: [],
+                surfaceTimeAxis: [],
+                surfaceResourceAxis: [],
                 nowX: null,
                 marquee: null,
                 ghost: null
@@ -1275,6 +1286,12 @@ export class TimelineEngine {
         else scene.overflow.length = 0;
         if (!scene.nonWorking) scene.nonWorking = [];
         else scene.nonWorking.length = 0;
+        if (!scene.surface) scene.surface = [];
+        else scene.surface.length = 0;
+        if (!scene.surfaceTimeAxis) scene.surfaceTimeAxis = [];
+        else scene.surfaceTimeAxis.length = 0;
+        if (!scene.surfaceResourceAxis) scene.surfaceResourceAxis = [];
+        else scene.surfaceResourceAxis.length = 0;
         scene.resourceRows = null;
         scene.nowX = null;
         scene.marquee = null;
@@ -1353,6 +1370,7 @@ export class TimelineEngine {
             : null;
         this._buildTimeAxisScene(scene, hours, utcHours);
         this._buildGridScene(scene);
+        this._buildSurfaceScene(scene);
         this._buildNonWorkingScene(scene);
         this._buildBarsScene(scene);
         this._buildNowScene(scene);
@@ -1516,6 +1534,358 @@ export class TimelineEngine {
         const x = this.getTimeToX(now);
         if (x < this.config.resourceAxisWidth || x > this._viewportW) return;
         scene.nowX = x;
+    }
+
+    // Content-pane colors: row fills, column stripes, checker cells and explicit
+    // bands, culled to the viewport. A stripe's color comes from the calendar
+    // (or the row index), not from the scroll position, so it stays put as the
+    // user pans. Renderers paint scene.surface in order, under the non-working
+    // wash; scene.surfaceTimeAxis / scene.surfaceResourceAxis are tints the
+    // axis painters draw under their labels.
+    _buildSurfaceScene(scene) {
+        if (!this._surfaceNodes) this._surfaceNodes = [];
+        this._surfaceUsed = 0;
+        const s = this.config.surface;
+        if (!s || !this.visibleTimeRange || !this._hasTimeRange() || !(this._pixelsPerMs > 0)) return;
+
+        const axisX = this.config.resourceAxisWidth;
+        const axisY = this.config.timeAxisHeight;
+        const contentW = this._viewportW - axisX;
+        const contentH = this._viewportH - axisY;
+        if (contentW <= 0 || contentH <= 0) return;
+
+        const columns = this._columnStripes(s.columns);
+        const fills = this._rowFills(s);
+        const combine = String(s.combine || 'overlay').toLowerCase();
+        const checker = combine === 'checker' && columns && this._checkerAffordable(columns);
+
+        if (checker) {
+            this._paintChecker(scene, columns, s);
+        } else if (combine === 'rowsontop') {
+            this._paintColumnBands(scene, columns, axisY, contentH);
+            this._paintRowBands(scene, fills, axisX, contentW);
+        } else {
+            this._paintRowBands(scene, fills, axisX, contentW);
+            this._paintColumnBands(scene, columns, axisY, contentH);
+        }
+        this._paintSurfaceBands(scene, s.bands, axisX, axisY, contentH);
+        if (s.shadeTimeAxis && columns) this._paintTimeAxisStripes(scene, columns);
+        if (s.shadeResourceAxis) {
+            this._paintResourceAxisStripes(scene, checker ? this._explicitFills(s) : fills);
+        }
+    }
+
+    // Positive modulo, so a negative calendar index still picks a color.
+    _mod(n, m) {
+        return ((n % m) + m) % m;
+    }
+
+    _colorString(value) {
+        return typeof value === 'string' && value ? value : null;
+    }
+
+    _colorList(colors) {
+        if (!Array.isArray(colors) || colors.length === 0) return null;
+        const out = [];
+        for (let i = 0; i < colors.length; i++) {
+            const color = this._colorString(colors[i]);
+            if (color) out.push(color);
+        }
+        return out.length ? out : null;
+    }
+
+    // Resource.Background, else Surface.ResourceColors. Null when neither is set.
+    _explicitRowColor(surface, resource) {
+        if (!resource) return null;
+        const own = this._colorString(resource.background);
+        if (own) return own;
+        const map = surface && surface.resourceColors;
+        if (map) return this._colorString(map[resource.id]);
+        return null;
+    }
+
+    // One color per visible row: explicit color, else the row stripe. null = none.
+    _rowFills(surface) {
+        const n = this._rows.length;
+        const fills = new Array(n);
+        const rows = surface.rows;
+        const palette = this._colorList(rows && rows.colors);
+        const span = rows ? Math.max(1, (rows.span | 0) || 1) : 1;
+        const offset = rows ? (rows.offset | 0) : 0;
+        for (let i = 0; i < n; i++) {
+            const explicit = this._explicitRowColor(surface, this._rows[i].resource);
+            const striped = !explicit && palette
+                ? palette[this._mod(Math.floor(i / span) + offset, palette.length)]
+                : null;
+            fills[i] = explicit || striped || null;
+        }
+        return fills;
+    }
+
+    _explicitFills(surface) {
+        const n = this._rows.length;
+        const fills = new Array(n);
+        for (let i = 0; i < n; i++) {
+            fills[i] = this._explicitRowColor(surface, this._rows[i].resource);
+        }
+        return fills;
+    }
+
+    _dayOrdinal(parts) {
+        return Math.floor(Date.UTC(parts.year, parts.month - 1, parts.day) / 86400000);
+    }
+
+    _weekday(parts) {
+        return new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
+    }
+
+    // Weeks aligned to Options.FirstDayOfWeek, so adjacent weeks differ by 1.
+    _weekOrdinal(parts) {
+        const day = this._dayOrdinal(parts);
+        const delta = (this._weekday(parts) - this._weekStartDay() + 7) % 7;
+        return Math.floor((day - delta) / 7);
+    }
+
+    // Visible column stripes, or null when the pattern would be subpixel noise
+    // or more rects than a frame should carry. `key` is the color-cycle index
+    // before the row is added, so a checker can shift it per row.
+    _columnStripes(spec) {
+        if (!spec) return null;
+        const colors = this._colorList(spec.colors);
+        if (!colors) return null;
+        const unitName = String(spec.unit || 'day').toLowerCase();
+        const unit = unitName === 'hour' ? 'hour' : unitName === 'week' ? 'week' : 'day';
+        const align = String(spec.align || 'continuous').toLowerCase() === 'repeat'
+            ? 'repeat' : 'continuous';
+        const span = Math.max(1, (spec.span | 0) || 1);
+        const offset = spec.offset | 0;
+        const pph = this._pixelsPerHour;
+        if (!(pph > 0)) return null;
+        const unitHours = unit === 'hour' ? 1 : unit === 'week' ? 168 : 24;
+        // A stripe narrower than this reads as a solid blur, and a frame with
+        // more than a few hundred of them costs more than the pattern is worth
+        // (a year of hours). The content background shows through instead.
+        if (pph * unitHours * span < 1.25) return null;
+        if ((this._visibleWidth / pph) / (unitHours * span) > 800) return null;
+
+        const stripes = [];
+        if (unit === 'hour') this._pushHourStripes(stripes, colors, span, offset, align);
+        else this._pushCalendarStripes(stripes, colors, span, offset, align, unit);
+        if (!stripes.length) return null;
+        return { stripes, unit, colors, span, offset };
+    }
+
+    _pushCalendarStripes(out, colors, span, offset, align, unit) {
+        const visEnd = this.visibleTimeRange.end;
+        let dayStart = this._time.startOfDay(this.visibleTimeRange.start);
+        let current = null;
+        // A stuck nextDay (a zone that cannot advance) must not hang the frame.
+        for (let guard = 0; dayStart < visEnd && guard < 10000; guard++) {
+            const dayEnd = this._time.nextDay(dayStart);
+            if (!(dayEnd > dayStart)) break;
+            const p = this._time.parts(dayStart);
+            let ordinal;
+            if (unit === 'week') ordinal = this._weekOrdinal(p);
+            else if (align === 'repeat') {
+                ordinal = (this._weekday(p) - this._weekStartDay() + 7) % 7;
+            } else ordinal = this._dayOrdinal(p);
+            const key = Math.floor(ordinal / span);
+            const color = colors[this._mod(key + offset, colors.length)];
+            if (current && current.key === key) current.endTs = dayEnd;
+            else {
+                if (current) this._emitStripe(out, current.startTs, current.endTs, current.color, current.key);
+                current = { startTs: dayStart, endTs: dayEnd, color, key };
+            }
+            dayStart = dayEnd;
+        }
+        if (current) this._emitStripe(out, current.startTs, current.endTs, current.color, current.key);
+    }
+
+    _hourStripePoints() {
+        const HOUR = 3600000;
+        const visStart = this.visibleTimeRange.start;
+        const visEnd = this.visibleTimeRange.end;
+        // One boundary before the window so a partial first hour still has a color.
+        const lead = this._time.hourBoundaries(visStart - HOUR, visStart, 1);
+        const bounds = this._time.hourBoundaries(visStart, visEnd + 2 * HOUR, 1);
+        const points = [];
+        if (lead.length) points.push(lead[lead.length - 1]);
+        for (let i = 0; i < bounds.length; i++) {
+            const b = bounds[i];
+            if (!points.length || b.ts !== points[points.length - 1].ts) points.push(b);
+        }
+        return points;
+    }
+
+    _pushHourStripes(out, colors, span, offset, align) {
+        const points = this._hourStripePoints();
+        let current = null;
+        for (let i = 0; i < points.length - 1; i++) {
+            const a = points[i];
+            const b = points[i + 1];
+            if (!(b.ts > a.ts)) continue;
+            const p = this._time.parts(a.ts);
+            const ordinal = align === 'repeat'
+                ? p.hour
+                : (this._dayOrdinal(p) * 24 + p.hour);
+            const key = Math.floor(ordinal / span);
+            const color = colors[this._mod(key + offset, colors.length)];
+            if (current && current.key === key) current.endTs = b.ts;
+            else {
+                if (current) this._emitStripe(out, current.startTs, current.endTs, current.color, current.key);
+                current = { startTs: a.ts, endTs: b.ts, color, key };
+            }
+        }
+        if (current) this._emitStripe(out, current.startTs, current.endTs, current.color, current.key);
+    }
+
+    _emitStripe(out, startTs, endTs, color, key) {
+        if (!color || !(endTs > startTs)) return;
+        const axisX = this.config.resourceAxisWidth;
+        const x0 = Math.max(axisX, this.getTimeToX(startTs));
+        const x1 = Math.min(this._viewportW, this.getTimeToX(endTs));
+        if (!(x1 > x0)) return;
+        out.push({ x: x0, width: x1 - x0, color, key });
+    }
+
+    // Checker cells are one rect per row per stripe. Below a few pixels, or
+    // past a few hundred cells, full-height stripes show the same colors
+    // without the per-row shift.
+    _checkerAffordable(columns) {
+        const stripes = columns.stripes;
+        for (let i = 0; i < stripes.length; i++) {
+            if (stripes[i].width < 4) return false;
+        }
+        const { start, end } = this._visibleRowWindow(1);
+        return stripes.length * Math.max(0, end - start) <= 800;
+    }
+
+    _rowBand(index) {
+        const top = this.config.timeAxisHeight;
+        const y0 = this.getResourceToY(index);
+        const y1 = y0 + this._rowHeight(index);
+        const c0 = Math.max(top, y0);
+        const c1 = Math.min(this._viewportH, y1);
+        if (!(c1 > c0)) return null;
+        return { y: c0, height: c1 - c0 };
+    }
+
+    _paintColumnBands(scene, columns, axisY, contentH) {
+        if (!columns) return;
+        const stripes = columns.stripes;
+        for (let i = 0; i < stripes.length; i++) {
+            const stripe = stripes[i];
+            this._pushSurfaceRect(scene.surface, stripe.x, axisY, stripe.width, contentH, stripe.color);
+        }
+    }
+
+    _paintRowBands(scene, fills, axisX, contentW) {
+        const { start, end } = this._visibleRowWindow(1);
+        for (let i = start; i < end; i++) {
+            const color = fills[i];
+            if (!color) continue;
+            const band = this._rowBand(i);
+            if (!band) continue;
+            this._pushSurfaceRect(scene.surface, axisX, band.y, contentW, band.height, color);
+        }
+    }
+
+    _paintChecker(scene, columns, surface) {
+        const axisX = this.config.resourceAxisWidth;
+        const contentW = this._viewportW - axisX;
+        const { start, end } = this._visibleRowWindow(1);
+        const colors = columns.colors;
+        const offset = columns.offset;
+        const stripes = columns.stripes;
+        for (let i = start; i < end; i++) {
+            const band = this._rowBand(i);
+            if (!band) continue;
+            const explicit = this._explicitRowColor(surface, this._rows[i].resource);
+            if (explicit) {
+                this._pushSurfaceRect(scene.surface, axisX, band.y, contentW, band.height, explicit);
+                continue;
+            }
+            for (let s = 0; s < stripes.length; s++) {
+                const stripe = stripes[s];
+                const color = colors[this._mod(stripe.key + i + offset, colors.length)];
+                this._pushSurfaceRect(scene.surface, stripe.x, band.y, stripe.width, band.height, color);
+            }
+        }
+    }
+
+    _paintSurfaceBands(scene, bands, axisX, axisY, contentH) {
+        if (!Array.isArray(bands)) return;
+        const visStart = this.visibleTimeRange.start;
+        const visEnd = this.visibleTimeRange.end;
+        for (let i = 0; i < bands.length; i++) {
+            const band = bands[i];
+            if (!band) continue;
+            const color = this._colorString(band.color);
+            if (!color) continue;
+            const start = +band.start;
+            const end = +band.end;
+            if (!(end > start)) continue;
+            const x0 = Math.max(axisX, this.getTimeToX(Math.max(start, visStart)));
+            const x1 = Math.min(this._viewportW, this.getTimeToX(Math.min(end, visEnd)));
+            if (!(x1 > x0)) continue;
+            if (band.resourceId) {
+                const index = this._rowIndexById && this._rowIndexById.get(band.resourceId);
+                if (index == null) continue;
+                const row = this._rowBand(index);
+                if (!row) continue;
+                this._pushSurfaceRect(scene.surface, x0, row.y, x1 - x0, row.height, color);
+            } else {
+                this._pushSurfaceRect(scene.surface, x0, axisY, x1 - x0, contentH, color);
+            }
+        }
+    }
+
+    _paintTimeAxisStripes(scene, columns) {
+        const v = scene.viewport;
+        let y;
+        let height;
+        if (columns.unit === 'hour') {
+            y = v.utcRowY == null ? v.dateRowHeight : v.utcRowY;
+            height = v.axisHeight - y;
+        } else {
+            y = 0;
+            height = v.dateRowHeight;
+        }
+        if (!(height > 0)) return;
+        const stripes = columns.stripes;
+        for (let i = 0; i < stripes.length; i++) {
+            const stripe = stripes[i];
+            this._pushSurfaceRect(scene.surfaceTimeAxis, stripe.x, y, stripe.width, height, stripe.color);
+        }
+    }
+
+    _paintResourceAxisStripes(scene, fills) {
+        const width = this.config.resourceAxisWidth;
+        if (!(width > 0)) return;
+        const { start, end } = this._visibleRowWindow(1);
+        for (let i = start; i < end; i++) {
+            const color = fills[i];
+            if (!color) continue;
+            const band = this._rowBand(i);
+            if (!band) continue;
+            this._pushSurfaceRect(scene.surfaceResourceAxis, 0, band.y, width, band.height, color);
+        }
+    }
+
+    // Not `_surfaceRect`: that name is the cached DOM rect used for hit testing.
+    _pushSurfaceRect(list, x, y, width, height, color) {
+        if (!color || !(width > 0) || !(height > 0)) return;
+        const i = this._surfaceUsed++;
+        let node = this._surfaceNodes[i];
+        if (node === undefined) {
+            node = this._surfaceNodes[i] = { x: 0, y: 0, width: 0, height: 0, color: '' };
+        }
+        node.x = x;
+        node.y = y;
+        node.width = width;
+        node.height = height;
+        node.color = color;
+        list.push(node);
     }
 
     // Weekend columns and off-hour bands, clipped to the content area.

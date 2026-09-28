@@ -295,6 +295,12 @@
     color: #868e96;
 }
 
+.demo-stats .surface-note {
+    flex: 1 1 100%;
+    color: #868e96;
+    font-size: 0.75rem;
+}
+
 .demo-stats .demo-keys kbd {
     display: inline-block;
     padding: 0.05rem 0.3rem;
@@ -621,6 +627,10 @@
 
 .demo-page.theme-dark .demo-stats .last-edit {
     color: #adb5bd;
+}
+
+.demo-page.theme-dark .demo-stats .surface-note {
+    color: #868e96;
 }
 
 .demo-page.theme-dark .demo-stats .demo-keys kbd {

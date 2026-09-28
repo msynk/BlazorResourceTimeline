@@ -31,4 +31,13 @@ public class BlazorResourceTimelineResource
     /// resources without children. Defaults to <c>false</c> (expanded).
     /// </summary>
     public bool Collapsed { get; set; }
+
+    /// <summary>
+    /// CSS color painted behind this resource's row, under the grid and bars.
+    /// Wins over <c>Options.Surface</c> row stripes and
+    /// <see cref="BlazorResourceTimelineSurface.ResourceColors"/>. <c>null</c>
+    /// leaves the row to those, or to the content background.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Background { get; set; }
 }

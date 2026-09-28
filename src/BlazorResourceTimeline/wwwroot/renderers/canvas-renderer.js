@@ -116,9 +116,10 @@ export class CanvasRenderer {
         // full-surface fill - on a 4K display at 2x that is ~33M pixels a frame.
         ctx.setTransform(this._scaleX, 0, 0, this._scaleY, 0, 0);
 
-        // z-order: background -> grid -> bars -> now line -> sticky axes ->
-        // marquee -> edit ghost (matches the scene contract).
+        // z-order: background -> surface -> non-working -> grid -> bars ->
+        // now line -> sticky axes -> marquee -> edit ghost (matches the scene contract).
         this._drawBackground(scene);
+        this._drawSurface(scene);
         this._drawNonWorking(scene);
         this._drawGrid(scene);
         this._drawBars(scene);
@@ -143,6 +144,25 @@ export class CanvasRenderer {
         this.ctx.fillRect(0, 0, v.axisWidth, v.axisHeight);
         this.ctx.fillRect(0, v.axisHeight, v.axisWidth, contentHeight);
         this.ctx.fillRect(v.axisWidth, 0, contentWidth, v.axisHeight);
+    }
+
+    // One fillStyle per run of the same color. Surface rects are already in
+    // paint order (rows, then columns, then bands — or checker cells).
+    _drawSurface(scene) {
+        this._fillBands(scene.surface);
+    }
+
+    _fillBands(bands) {
+        if (!bands || !bands.length) return;
+        const ctx = this.ctx;
+        let style = null;
+        for (const b of bands) {
+            if (b.color !== style) {
+                style = b.color;
+                ctx.fillStyle = style;
+            }
+            ctx.fillRect(b.x, b.y, b.width, b.height);
+        }
     }
 
     _drawNonWorking(scene) {
@@ -289,6 +309,7 @@ export class CanvasRenderer {
 
         ctx.fillStyle = colors.axisBg;
         ctx.fillRect(startX, 0, visibleEndX - startX, axisHeight);
+        this._fillBands(scene.surfaceTimeAxis);
 
         // Bottom border of the whole axis.
         ctx.strokeStyle = colors.axisBorder;
@@ -376,6 +397,7 @@ export class CanvasRenderer {
 
         ctx.fillStyle = colors.axisBg;
         ctx.fillRect(0, startY, axisWidth, visibleEndY - startY);
+        this._fillBands(scene.surfaceResourceAxis);
 
         ctx.strokeStyle = colors.axisBorder;
         ctx.lineWidth = 1;

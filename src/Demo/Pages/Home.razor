@@ -167,9 +167,32 @@
                     <input type="checkbox" @bind="_hour12" @bind:after="ApplyOptions" />
                     12-hour
                 </label>
-                <label class="ctl-check" title="Options.NonWorkingDays + working hours: shade weekends and 09:00–17:00 off-hours (visual only)">
+                <label class="ctl-check" title="Options.NonWorkingDays + working hours: shade weekends and 09:00–17:00 off-hours (visual only, painted over the surface)">
                     <input type="checkbox" @bind="_shadeWeekends" @bind:after="ApplyOptions" />
                     Shade weekends
+                </label>
+            </div>
+
+            <div class="ctl-group">
+                <label title="Options.Surface: color the content pane by time column, resource row, or a pattern across both">
+                    Surface
+                    <select @bind="_surfacePreset" @bind:after="ApplyOptions">
+                        <option value="">None</option>
+                        <option value="days">Alternating days</option>
+                        <option value="hours">Alternating hours</option>
+                        <option value="weeks">Alternating weeks</option>
+                        <option value="weekdays">Weekday colors</option>
+                        <option value="shifts">8-hour shifts</option>
+                        <option value="rows">Alternating rows</option>
+                        <option value="resources">Resource colors</option>
+                        <option value="checker">Day checkerboard</option>
+                        <option value="both">Days over rows</option>
+                        <option value="bands">Highlight bands</option>
+                    </select>
+                </label>
+                <label class="ctl-check" title="Surface.ShadeTimeAxis and ShadeResourceAxis: continue column colors into the date or hour row, and row colors into the resource column">
+                    <input type="checkbox" @bind="_shadeSurfaceAxes" @bind:after="ApplyOptions" />
+                    Tint axes
                 </label>
             </div>
 
@@ -223,6 +246,10 @@
         @if (_lastMenuAction is not null)
         {
             <span class="last-edit">Menu action: @_lastMenuAction</span>
+        }
+        @if (!string.IsNullOrEmpty(SurfaceCaption))
+        {
+            <span class="surface-note">@SurfaceCaption</span>
         }
         @* Keep selection chrome in the layout even when empty so toggling
            selection does not resize the flex timeline (canvas backing-store
@@ -388,6 +415,8 @@
     private bool _allowDelete;
     private bool _hour12;
     private bool _shadeWeekends;
+    private string _surfacePreset = "days";
+    private bool _shadeSurfaceAxes = true;
     private int _maxStackLanes;
     private bool _stackLabelClearance = true;
     private bool _stackOnLabelCollision = true;
@@ -440,6 +469,7 @@
         @using BlazorResourceTimeline
 
         <BlazorResourceTimeline Config="_config"
+                                Options="_options"
                                 OnSelectionChanged="HandleSelectionChanged"
                                 OnClick="HandleClick"
                                 OnDoubleClick="HandleDoubleClick"
@@ -513,6 +543,22 @@
                             new() { Source = "/icons/lock.svg", Position = BlazorResourceTimelineBarIconPosition.Start, Size = 16 },
                         },
                     },
+                },
+            };
+
+            // Options.Surface paints the pane under the bars. Two day colors
+            // alternate across the whole range; the same calendar day keeps its
+            // color when the loaded window moves. ShadeTimeAxis continues the
+            // stripe into the date row.
+            private readonly BlazorResourceTimelineOptions _options = new()
+            {
+                Surface = new()
+                {
+                    Columns = new()
+                    {
+                        Colors = ["#e7eef5", "#ffffff"],
+                    },
+                    ShadeTimeAxis = true,
                 },
             };
 
@@ -804,6 +850,192 @@
         // Always send a full palette: the engine merges colors and leaves prior
         // values in place when Colors is null, so light↔dark would stick otherwise.
         Colors = _darkTheme ? DarkTimelineColors : LightTimelineColors,
+        // Surface is replaced as a whole (an empty instance clears it), so every
+        // rebuild sends the current preset rather than a partial patch.
+        Surface = BuildSurface(),
+    };
+
+    private string SurfaceCaption => _surfacePreset switch
+    {
+        "days" => "Columns, unit Day, two colors: consecutive local days alternate across the whole range.",
+        "hours" => "Columns, unit Hour: consecutive hours alternate, and the sequence continues through midnight.",
+        "weeks" => "Columns, unit Week: each week is one color. FirstDayOfWeek decides where a week starts.",
+        "weekdays" => "Columns, align Repeat: the cycle restarts each week, so a weekday keeps its color.",
+        "shifts" => "Hour, align Repeat, span 8: three colors cover 00:00–08:00, 08:00–16:00 and 16:00–24:00 every day.",
+        "rows" => "Rows: colors cycle down the visible resource list. Resource.Background replaces one row.",
+        "resources" => "Surface.ResourceColors paints each resource type. A resource's own Background would win.",
+        "checker" => "Combine Checker: each cell is (day index + row index), a pattern across the whole surface.",
+        "both" => "Overlay: row stripes first, then a translucent day stripe, so both stay visible.",
+        "bands" => "Bands: today across every row, the next two days, and 08:00–16:00 on one resource.",
+        _ => "",
+    };
+
+    private BlazorResourceTimelineSurface BuildSurface()
+    {
+        var surface = new BlazorResourceTimelineSurface
+        {
+            ShadeTimeAxis = _shadeSurfaceAxes,
+            ShadeResourceAxis = _shadeSurfaceAxes,
+        };
+
+        switch (_surfacePreset)
+        {
+            case "days":
+                surface.Columns = new()
+                {
+                    Unit = BlazorResourceTimelineSurfaceUnit.Day,
+                    Colors = Pair("#e7eef5", "#ffffff", "#243044", "#1a1d21"),
+                };
+                break;
+            case "hours":
+                surface.Columns = new()
+                {
+                    Unit = BlazorResourceTimelineSurfaceUnit.Hour,
+                    Colors = Pair("#e7f5ff", "#ffffff", "#1c3344", "#1a1d21"),
+                };
+                break;
+            case "weeks":
+                surface.Columns = new()
+                {
+                    Unit = BlazorResourceTimelineSurfaceUnit.Week,
+                    Colors = Pair("#fff4e6", "#ffffff", "#3a2e1c", "#1a1d21"),
+                };
+                break;
+            case "weekdays":
+                surface.Columns = new()
+                {
+                    Unit = BlazorResourceTimelineSurfaceUnit.Day,
+                    Align = BlazorResourceTimelineStripeAlign.Repeat,
+                    Colors = _darkTheme
+                        ? ["#1c3344", "#1b3326", "#3a2e1c", "#3a2430", "#2c2438", "#2a241c", "#22262c"]
+                        : ["#e7f5ff", "#ebfbee", "#fff4e6", "#fff0f6", "#f8f0fc", "#fff9db", "#f1f3f5"],
+                };
+                break;
+            case "shifts":
+                surface.Columns = new()
+                {
+                    Unit = BlazorResourceTimelineSurfaceUnit.Hour,
+                    Align = BlazorResourceTimelineStripeAlign.Repeat,
+                    Span = 8,
+                    Colors = _darkTheme
+                        ? ["#1c2438", "#1a1d21", "#3a2e1c"]
+                        : ["#edf2ff", "#ffffff", "#fff4e6"],
+                };
+                break;
+            case "rows":
+                surface.Rows = new()
+                {
+                    Colors = Pair("#ffffff", "#e9ecef", "#1a1d21", "#262b31"),
+                };
+                break;
+            case "resources":
+                surface.ResourceColors = ResourceColorMap();
+                break;
+            case "checker":
+                surface.Combine = BlazorResourceTimelineSurfaceCombine.Checker;
+                surface.Columns = new()
+                {
+                    Unit = BlazorResourceTimelineSurfaceUnit.Day,
+                    Colors = Pair("#d0ebff", "#fff3bf", "#1c3a52", "#3a3420"),
+                };
+                break;
+            case "both":
+                surface.Rows = new()
+                {
+                    Colors = Pair("#ffffff", "#e9ecef", "#1a1d21", "#262b31"),
+                };
+                surface.Columns = new()
+                {
+                    Unit = BlazorResourceTimelineSurfaceUnit.Day,
+                    Colors = _darkTheme
+                        ? ["rgba(116, 192, 252, 0.16)", "rgba(116, 192, 252, 0)"]
+                        : ["rgba(25, 113, 194, 0.14)", "rgba(25, 113, 194, 0)"],
+                };
+                break;
+            case "bands":
+                surface.Bands = SurfaceBands();
+                break;
+        }
+
+        return surface;
+    }
+
+    private string[] Pair(string lightA, string lightB, string darkA, string darkB) =>
+        _darkTheme ? [darkA, darkB] : [lightA, lightB];
+
+    private Dictionary<string, string>? ResourceColorMap()
+    {
+        if (_config is null) return null;
+        var palette = _darkTheme ? DarkTypeColors : LightTypeColors;
+        var map = new Dictionary<string, string>();
+        foreach (var resource in _config.Resources)
+        {
+            if (palette.TryGetValue(TypeKey(resource), out var color))
+            {
+                map[resource.Id] = color;
+            }
+        }
+        return map.Count == 0 ? null : map;
+    }
+
+    private static string TypeKey(BlazorResourceTimelineResource resource)
+    {
+        if (resource.Id.StartsWith("grp-", StringComparison.Ordinal))
+        {
+            return resource.Id[4..];
+        }
+        if (resource.ParentId is { } parent && parent.StartsWith("grp-", StringComparison.Ordinal))
+        {
+            return parent[4..];
+        }
+        var dash = resource.Name.LastIndexOf('-');
+        return dash > 0 ? resource.Name[..dash] : resource.Name;
+    }
+
+    private List<BlazorResourceTimelineSurfaceBand> SurfaceBands()
+    {
+        var now = DateTimeOffset.Now;
+        var today = new DateTimeOffset(now.Year, now.Month, now.Day, 0, 0, 0, now.Offset);
+        var todayColor = _darkTheme ? "rgba(64, 192, 87, 0.24)" : "rgba(47, 158, 68, 0.18)";
+        var spanColor = _darkTheme ? "rgba(173, 181, 189, 0.16)" : "rgba(134, 142, 150, 0.20)";
+        var cellColor = _darkTheme ? "rgba(250, 176, 5, 0.42)" : "rgba(250, 176, 5, 0.50)";
+        var bands = new List<BlazorResourceTimelineSurfaceBand>
+        {
+            new() { Start = today.AddDays(1), End = today.AddDays(3), Color = spanColor },
+            new() { Start = today, End = today.AddDays(1), Color = todayColor },
+        };
+        var leaf = _config?.Resources.FirstOrDefault(r => r.ParentId is not null);
+        if (leaf is not null)
+        {
+            bands.Add(new()
+            {
+                Start = today.AddHours(8),
+                End = today.AddHours(16),
+                ResourceId = leaf.Id,
+                Color = cellColor,
+            });
+        }
+        return bands;
+    }
+
+    private static readonly Dictionary<string, string> LightTypeColors = new()
+    {
+        ["Server"] = "#e7f5ff",
+        ["Database"] = "#ebfbee",
+        ["Cache"] = "#fff4e6",
+        ["Worker"] = "#f8f0fc",
+        ["API-Gateway"] = "#e3fafc",
+        ["Load-Balancer"] = "#fff5f5",
+    };
+
+    private static readonly Dictionary<string, string> DarkTypeColors = new()
+    {
+        ["Server"] = "#1c3144",
+        ["Database"] = "#1b3324",
+        ["Cache"] = "#3a2e1b",
+        ["Worker"] = "#2e2438",
+        ["API-Gateway"] = "#16343a",
+        ["Load-Balancer"] = "#3a2224",
     };
 
     private static readonly BlazorResourceTimelineColors LightTimelineColors = new()

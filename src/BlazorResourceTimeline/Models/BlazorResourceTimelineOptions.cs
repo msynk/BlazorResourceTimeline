@@ -4,7 +4,8 @@ namespace BlazorResourceTimeline;
 
 /// <summary>
 /// Optional visual configuration for the timeline: axis/row dimensions, bar
-/// sizing, fonts and colors. Every property is nullable; those left <c>null</c>
+/// sizing, fonts, colors and the content-pane surface. Every property is
+/// nullable; those left <c>null</c>
 /// keep the renderer's defaults, so a partial instance overrides only what it
 /// sets. Assign to the component's <c>Options</c> parameter. Assigning a new
 /// instance re-applies the options (and re-lays-out the timeline).
@@ -445,4 +446,15 @@ public class BlazorResourceTimelineOptions
     /// <summary>Color overrides. Individual colors left <c>null</c> keep their defaults.</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public BlazorResourceTimelineColors? Colors { get; set; }
+
+    /// <summary>
+    /// Colors the content pane under the grid and bars: column stripes (alternating
+    /// days, hours, weeks or shifts), row stripes, per-resource colors and explicit
+    /// time bands. <c>null</c> leaves whatever surface was applied before, the same
+    /// way other options do; assign an empty
+    /// <see cref="BlazorResourceTimelineSurface"/> to clear it. The non-working
+    /// wash, when enabled, paints over this.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public BlazorResourceTimelineSurface? Surface { get; set; }
 }

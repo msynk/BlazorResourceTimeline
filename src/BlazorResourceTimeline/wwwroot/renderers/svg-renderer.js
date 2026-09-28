@@ -69,13 +69,32 @@ export class SvgRenderer {
             return g;
         };
         this._bgGroup = group();
+        // Own groups so a growing stripe list stays between the content fill
+        // and the non-working wash, instead of appending over later siblings.
+        this._surfaceGroup = group();
+        this._washGroup = group();
         this._gridGroup = group();
         this._barsGroup = group();
         this._nowGroup = group();
         this._timeAxisGroup = group();
+        // Fill, then column tints, then ticks, then day labels. The label group
+        // is last so a date-row tint cannot cover the titles (and so the titles
+        // stay above the axis fill).
+        this._timeAxisFillGroup = el('g');
+        this._timeAxisTintGroup = el('g');
+        this._timeAxisMarkGroup = el('g');
         this._timeAxisLabelGroup = el('g', { 'clip-path': `url(#${this._timeAxisClipId})` });
+        this._timeAxisGroup.appendChild(this._timeAxisFillGroup);
+        this._timeAxisGroup.appendChild(this._timeAxisTintGroup);
+        this._timeAxisGroup.appendChild(this._timeAxisMarkGroup);
         this._timeAxisGroup.appendChild(this._timeAxisLabelGroup);
         this._resourceAxisGroup = group();
+        this._resourceFillGroup = el('g');
+        this._resourceTintGroup = el('g');
+        this._resourceMarkGroup = el('g');
+        this._resourceAxisGroup.appendChild(this._resourceFillGroup);
+        this._resourceAxisGroup.appendChild(this._resourceTintGroup);
+        this._resourceAxisGroup.appendChild(this._resourceMarkGroup);
         this._resourceLabelGroup = group({ 'clip-path': `url(#${this._axisClipId})` });
         this._overlayGroup = group({ 'clip-path': `url(#${this._contentClipId})` });
 
@@ -92,7 +111,8 @@ export class SvgRenderer {
         const pool = (parent, onHide) => new NodePool(parent, SVG_NS, onHide);
         this._pools = {
             bg: pool(this._bgGroup),
-            nonWorking: pool(this._bgGroup),
+            surface: pool(this._surfaceGroup),
+            nonWorking: pool(this._washGroup),
             gridH: pool(this._gridGroup),
             gridV: pool(this._gridGroup),
             barEdges: pool(this._barsGroup),
@@ -101,12 +121,15 @@ export class SvgRenderer {
             barIcons: pool(this._barsGroup),
             barLabels: pool(this._barsGroup),
             now: pool(this._nowGroup),
-            axisBg: pool(this._timeAxisGroup),
-            axisLines: pool(this._timeAxisGroup),
+            axisBg: pool(this._timeAxisFillGroup),
+            axisTints: pool(this._timeAxisTintGroup),
+            axisLines: pool(this._timeAxisMarkGroup),
             axisDayLabels: pool(this._timeAxisLabelGroup),
-            axisTicks: pool(this._timeAxisGroup),
-            axisTickLabels: pool(this._timeAxisGroup),
-            resourceAxis: pool(this._resourceAxisGroup),
+            axisTicks: pool(this._timeAxisMarkGroup),
+            axisTickLabels: pool(this._timeAxisMarkGroup),
+            resourceAxis: pool(this._resourceFillGroup),
+            resourceTints: pool(this._resourceTintGroup),
+            resourceBorder: pool(this._resourceMarkGroup),
             resChevrons: pool(this._resourceLabelGroup),
             resLabels: pool(this._resourceLabelGroup),
             overlayRects: pool(this._overlayGroup),
@@ -148,6 +171,7 @@ export class SvgRenderer {
         for (const key in this._pools) this._pools[key].begin();
 
         this._buildBackground(scene);
+        this._buildSurface(scene);
         this._buildNonWorking(scene);
         this._buildGrid(scene);
         this._buildBars(scene);
@@ -213,6 +237,14 @@ export class SvgRenderer {
         this._rect(pool, 0, 0, v.axisWidth, v.axisHeight, colors.axisBg);
         this._rect(pool, 0, v.axisHeight, v.axisWidth, contentHeight, colors.axisBg);
         this._rect(pool, v.axisWidth, 0, contentWidth, v.axisHeight, colors.axisBg);
+    }
+
+    _buildSurface(scene) {
+        const bands = scene.surface;
+        if (!bands || !bands.length) return;
+        for (const b of bands) {
+            this._rect(this._pools.surface, b.x, b.y, b.width, b.height, b.color);
+        }
     }
 
     _buildNonWorking(scene) {
@@ -324,6 +356,12 @@ export class SvgRenderer {
         const startX = v.axisWidth;
 
         this._rect(p.axisBg, startX, 0, v.width - startX, v.axisHeight, colors.axisBg);
+        const timeTints = scene.surfaceTimeAxis;
+        if (timeTints) {
+            for (const b of timeTints) {
+                this._rect(p.axisTints, b.x, b.y, b.width, b.height, b.color);
+            }
+        }
         // Bottom border of the whole axis, the date/hour row divider, then the
         // day separators - all lines, so they share one pool.
         this._line(p.axisLines, startX, v.axisHeight, v.width, v.axisHeight, colors.axisBorder);
@@ -369,9 +407,14 @@ export class SvgRenderer {
         const v = scene.viewport;
         const startY = v.axisHeight;
 
-        const pool = this._pools.resourceAxis;
-        this._rect(pool, 0, startY, v.axisWidth, v.height - startY, colors.axisBg);
-        this._line(pool, v.axisWidth, startY, v.axisWidth, v.height, colors.axisBorder);
+        this._rect(this._pools.resourceAxis, 0, startY, v.axisWidth, v.height - startY, colors.axisBg);
+        const rowTints = scene.surfaceResourceAxis;
+        if (rowTints) {
+            for (const b of rowTints) {
+                this._rect(this._pools.resourceTints, b.x, b.y, b.width, b.height, b.color);
+            }
+        }
+        this._line(this._pools.resourceBorder, v.axisWidth, startY, v.axisWidth, v.height, colors.axisBorder);
 
         // When the HTML resource-column template overlay is active it renders
         // the labels/chevrons; only the axis background/border is painted.
