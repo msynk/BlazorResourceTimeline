@@ -194,6 +194,16 @@
                     <input type="checkbox" @bind="_shadeSurfaceAxes" @bind:after="ApplyOptions" />
                     Tint axes
                 </label>
+                <label title="Options.AxisLines: color the vertical time lines and the horizontal resource lines">
+                    Lines
+                    <select @bind="_linePreset" @bind:after="ApplyOptions">
+                        <option value="">Grid</option>
+                        <option value="days">Day boundaries</option>
+                        <option value="columns">Day columns</option>
+                        <option value="rows">Row lines</option>
+                        <option value="both">Days and rows</option>
+                    </select>
+                </label>
             </div>
 
             <div class="ctl-group">
@@ -250,6 +260,10 @@
         @if (!string.IsNullOrEmpty(SurfaceCaption))
         {
             <span class="surface-note">@SurfaceCaption</span>
+        }
+        @if (!string.IsNullOrEmpty(LineCaption))
+        {
+            <span class="surface-note">@LineCaption</span>
         }
         @* Keep selection chrome in the layout even when empty so toggling
            selection does not resize the flex timeline (canvas backing-store
@@ -417,6 +431,7 @@
     private bool _shadeWeekends;
     private string _surfacePreset = "days";
     private bool _shadeSurfaceAxes = true;
+    private string _linePreset = "days";
     private int _maxStackLanes;
     private bool _stackLabelClearance = true;
     private bool _stackOnLabelCollision = true;
@@ -559,6 +574,16 @@
                         Colors = ["#e7eef5", "#ffffff"],
                     },
                     ShadeTimeAxis = true,
+                },
+                // AxisLines colors the grid lines. BoundariesOnly keeps the
+                // hour lines on Colors.Grid and recolors each midnight.
+                AxisLines = new()
+                {
+                    BoundariesOnly = true,
+                    Vertical = new()
+                    {
+                        Colors = ["#4dabf7", "#868e96"],
+                    },
                 },
             };
 
@@ -853,7 +878,59 @@
         // Surface is replaced as a whole (an empty instance clears it), so every
         // rebuild sends the current preset rather than a partial patch.
         Surface = BuildSurface(),
+        AxisLines = BuildAxisLines(),
     };
+
+    private string LineCaption => _linePreset switch
+    {
+        "days" => "AxisLines.Vertical, boundaries only: the midnight line of each day alternates, and so does its date-row separator.",
+        "columns" => "AxisLines.Vertical: every vertical grid line takes the color of the day it sits in.",
+        "rows" => "AxisLines.Horizontal: the line along the top of each resource row alternates, including in the resource column.",
+        "both" => "Day-boundary lines and alternating row lines together. Resource.LineColor replaces one row.",
+        _ => "",
+    };
+
+    private BlazorResourceTimelineAxisLines BuildAxisLines()
+    {
+        var lines = new BlazorResourceTimelineAxisLines();
+        switch (_linePreset)
+        {
+            case "days":
+                lines.BoundariesOnly = true;
+                lines.Vertical = new()
+                {
+                    Unit = BlazorResourceTimelineSurfaceUnit.Day,
+                    Colors = Pair("#4dabf7", "#868e96", "#74c0fc", "#495057"),
+                };
+                break;
+            case "columns":
+                lines.Vertical = new()
+                {
+                    Unit = BlazorResourceTimelineSurfaceUnit.Day,
+                    Colors = Pair("#4dabf7", "#ced4da", "#74c0fc", "#343a40"),
+                };
+                break;
+            case "rows":
+                lines.Horizontal = new()
+                {
+                    Colors = Pair("#2f9e44", "#ced4da", "#69db7c", "#343a40"),
+                };
+                break;
+            case "both":
+                lines.BoundariesOnly = true;
+                lines.Vertical = new()
+                {
+                    Unit = BlazorResourceTimelineSurfaceUnit.Day,
+                    Colors = Pair("#1971c2", "#868e96", "#74c0fc", "#495057"),
+                };
+                lines.Horizontal = new()
+                {
+                    Colors = Pair("#2f9e44", "#dee2e6", "#69db7c", "#343a40"),
+                };
+                break;
+        }
+        return lines;
+    }
 
     private string SurfaceCaption => _surfacePreset switch
     {

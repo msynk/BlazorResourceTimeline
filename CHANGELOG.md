@@ -20,6 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The non-working wash still paints on top. The demo's Surface menu shows each
   of these.
 
+- `Options.AxisLines` colors the vertical time lines and the horizontal resource
+  lines. `Vertical` uses the same day/hour/week cycle as surface columns;
+  `BoundariesOnly` recolors just the stripe starts (each midnight, for days)
+  and leaves the other grid lines on `Colors.Grid`. `Horizontal` cycles a color
+  down the resource rows, and that line is also drawn in the resource column.
+  `Resource.LineColor` and `AxisLines.ResourceColors` color one row's line.
+  The date-row separator at each midnight uses the vertical color. The demo's
+  Lines menu shows day boundaries, day columns, and row lines.
+
 ## [0.8.0] - 2026-09-07
 
 ### Added

@@ -349,7 +349,8 @@ test('bars outside the visible time range are culled', () => {
 test('grid lines line up with the hour ticks', () => {
     const engine = makeSceneEngine([]);
     const scene = engine.buildScene();
-    assert.deepEqual(scene.gridV, scene.hourTicks.map(t => t.x));
+    assert.deepEqual(scene.gridV.map(line => line.x), scene.hourTicks.map(t => t.x));
+    assert.ok(scene.gridV.every(line => line.color == null));
 });
 
 test('the hour row fills the band under the date row when the UTC row is off', () => {

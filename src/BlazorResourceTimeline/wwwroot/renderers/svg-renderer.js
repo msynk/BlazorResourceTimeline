@@ -130,6 +130,7 @@ export class SvgRenderer {
             resourceAxis: pool(this._resourceFillGroup),
             resourceTints: pool(this._resourceTintGroup),
             resourceBorder: pool(this._resourceMarkGroup),
+            resourceLines: pool(this._resourceMarkGroup),
             resChevrons: pool(this._resourceLabelGroup),
             resLabels: pool(this._resourceLabelGroup),
             overlayRects: pool(this._overlayGroup),
@@ -259,11 +260,11 @@ export class SvgRenderer {
     _buildGrid(scene) {
         const grid = scene.config.colors.grid;
         const v = scene.viewport;
-        for (const y of scene.gridH) {
-            this._line(this._pools.gridH, v.axisWidth, y, v.width, y, grid);
+        for (const line of scene.gridH) {
+            this._line(this._pools.gridH, v.axisWidth, line.y, v.width, line.y, line.color || grid);
         }
-        for (const x of scene.gridV) {
-            this._line(this._pools.gridV, x, v.axisHeight, x, v.height, grid);
+        for (const line of scene.gridV) {
+            this._line(this._pools.gridV, line.x, v.axisHeight, line.x, v.height, line.color || grid);
         }
     }
 
@@ -372,7 +373,8 @@ export class SvgRenderer {
         }
         for (const day of scene.days) {
             if (day.sepX != null) {
-                this._line(p.axisLines, day.sepX, 0, day.sepX, v.dateRowHeight, colors.axisBorder);
+                this._line(p.axisLines, day.sepX, 0, day.sepX, v.dateRowHeight,
+                    day.sepColor || colors.axisBorder);
             }
         }
         for (const day of scene.days) {
@@ -412,6 +414,12 @@ export class SvgRenderer {
         if (rowTints) {
             for (const b of rowTints) {
                 this._rect(this._pools.resourceTints, b.x, b.y, b.width, b.height, b.color);
+            }
+        }
+        const rowLines = scene.resourceAxisLines;
+        if (rowLines) {
+            for (const line of rowLines) {
+                this._line(this._pools.resourceLines, 0, line.y, v.axisWidth, line.y, line.color);
             }
         }
         this._line(this._pools.resourceBorder, v.axisWidth, startY, v.axisWidth, v.height, colors.axisBorder);

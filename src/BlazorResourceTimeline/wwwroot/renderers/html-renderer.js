@@ -115,6 +115,7 @@ export class HtmlRenderer {
             now: new NodePool(this._nowLayer),
             axisTints: new NodePool(this._timeAxisTint),
             resourceTints: new NodePool(this._resourceAxisTint),
+            resourceLines: new NodePool(this._resourceAxisTint),
             axisLines: new NodePool(this._timeAxisInner),
             axisDayLabels: new NodePool(this._timeAxisInner),
             axisTicks: new NodePool(this._timeAxisInner),
@@ -215,11 +216,11 @@ export class HtmlRenderer {
     _buildGrid(scene) {
         const grid = scene.config.colors.grid;
         const v = scene.viewport;
-        for (const y of scene.gridH) {
-            this._rect(this._pools.gridH, v.axisWidth, y, v.width - v.axisWidth, 1, grid);
+        for (const line of scene.gridH) {
+            this._rect(this._pools.gridH, v.axisWidth, line.y, v.width - v.axisWidth, 1, line.color || grid);
         }
-        for (const x of scene.gridV) {
-            this._rect(this._pools.gridV, x, v.axisHeight, 1, v.height - v.axisHeight, grid);
+        for (const line of scene.gridV) {
+            this._rect(this._pools.gridV, line.x, v.axisHeight, 1, v.height - v.axisHeight, line.color || grid);
         }
     }
 
@@ -352,7 +353,8 @@ export class HtmlRenderer {
         }
         for (const day of scene.days) {
             if (day.sepX != null) {
-                this._rect(p.axisLines, day.sepX, 0, 1, v.dateRowHeight, colors.axisBorder);
+                this._rect(p.axisLines, day.sepX, 0, 1, v.dateRowHeight,
+                    day.sepColor || colors.axisBorder);
             }
         }
         for (const day of scene.days) {
@@ -401,6 +403,12 @@ export class HtmlRenderer {
         if (rowTints) {
             for (const b of rowTints) {
                 this._rect(p.resourceTints, b.x, b.y, b.width, b.height, b.color);
+            }
+        }
+        const rowLines = scene.resourceAxisLines;
+        if (rowLines) {
+            for (const line of rowLines) {
+                this._rect(p.resourceLines, 0, line.y, v.axisWidth, 1, line.color);
             }
         }
 

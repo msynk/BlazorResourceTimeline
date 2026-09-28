@@ -47,6 +47,7 @@
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineColumnStripes" preserve="all" />
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineRowStripes" preserve="all" />
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineSurfaceBand" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineAxisLines" preserve="all" />
 
     <!-- Serialized .NET -> JS on every data load. -->
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineResource" preserve="all" />

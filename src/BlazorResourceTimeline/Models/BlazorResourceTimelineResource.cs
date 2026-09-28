@@ -40,4 +40,13 @@ public class BlazorResourceTimelineResource
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Background { get; set; }
+
+    /// <summary>
+    /// CSS color of the horizontal line along the top of this resource's row.
+    /// Wins over <c>Options.AxisLines</c> row stripes and
+    /// <see cref="BlazorResourceTimelineAxisLines.ResourceColors"/>. <c>null</c>
+    /// leaves the line to those, or to <see cref="BlazorResourceTimelineColors.Grid"/>.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LineColor { get; set; }
 }

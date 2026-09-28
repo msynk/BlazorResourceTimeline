@@ -315,6 +315,48 @@ test('clearing the surface drops the previous frame\'s rects', () => {
     assert.equal(scene.surfaceResourceAxis.length, 0);
 });
 
+test('day boundary lines are colored and the other hour lines are not', () => {
+    const colors = ['#15a', '#888'];
+    const engine = surfaceEngine(null, { pph: 40, hours: 48 });
+    engine.config.axisLines = {
+        vertical: { unit: 'day', colors },
+        boundariesOnly: true
+    };
+    const scene = engine.buildScene();
+
+    const midnight = scene.gridV.filter(line => line.color);
+    const plain = scene.gridV.filter(line => line.color == null);
+    assert.ok(midnight.length >= 1);
+    assert.ok(plain.length >= 1, 'hour lines between midnights keep the grid color');
+    assert.notEqual(midnight[0].color, plain[0] && plain[0].color);
+    const ordinal = dayOrdinal(2026, 5, 4);
+    assert.equal(midnight[0].color, colors[((ordinal % 2) + 2) % 2]);
+    const seps = scene.days.filter(day => day.sepX != null);
+    assert.ok(seps.every(day => day.sepColor));
+    assert.equal(seps[0].sepColor, midnight[0].color);
+});
+
+test('every vertical line takes the color of the day it sits in', () => {
+    const engine = surfaceEngine(null, { pph: 40, hours: 48 });
+    engine.config.axisLines = { vertical: { unit: 'day', colors: ['#15a', '#888'] } };
+    const scene = engine.buildScene();
+    assert.ok(scene.gridV.length > 2);
+    assert.ok(scene.gridV.every(line => line.color));
+    assert.notEqual(scene.gridV[0].color, scene.gridV[scene.gridV.length - 1].color);
+});
+
+test('row lines alternate and a resource line color wins', () => {
+    const engine = surfaceEngine(null);
+    engine.config.axisLines = { horizontal: { colors: ['#111', '#222'] } };
+    engine.resources[0].lineColor = '#abc';
+    const scene = engine.buildScene();
+    const tops = scene.gridH.filter(line => line.rowIndex === 0 || line.rowIndex === 1);
+    assert.equal(tops.find(line => line.rowIndex === 0).color, '#abc');
+    assert.equal(tops.find(line => line.rowIndex === 1).color, '#222');
+    assert.equal(scene.resourceAxisLines.length, scene.gridH.filter(line => line.color).length);
+    assert.equal(scene.resourceAxisLines[0].color, '#abc');
+});
+
 test('weekend wash still builds when a surface is set', () => {
     const engine = surfaceEngine({ columns: { colors: ['#aaa', '#bbb'] } });
     engine.config.nonWorkingDays = [0, 6];

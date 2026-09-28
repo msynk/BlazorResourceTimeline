@@ -321,6 +321,49 @@ public class AllocationWireFormatTests
     }
 
     [Fact]
+    public void Options_SerializeAxisLinesWithExpectedNames()
+    {
+        var options = new BlazorResourceTimelineOptions
+        {
+            AxisLines = new()
+            {
+                BoundariesOnly = true,
+                Vertical = new()
+                {
+                    Unit = BlazorResourceTimelineSurfaceUnit.Day,
+                    Colors = ["#15a", "#888"],
+                },
+                Horizontal = new() { Colors = ["#111", "#222"], Span = 2 },
+                ResourceColors = new Dictionary<string, string> { ["r1"] = "#abc" },
+            },
+        };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(options, Web));
+        var lines = doc.RootElement.GetProperty("axisLines");
+
+        Assert.True(lines.GetProperty("boundariesOnly").GetBoolean());
+        Assert.Equal("day", lines.GetProperty("vertical").GetProperty("unit").GetString(), ignoreCase: true);
+        Assert.Equal("#888", lines.GetProperty("vertical").GetProperty("colors")[1].GetString());
+        Assert.Equal(2, lines.GetProperty("horizontal").GetProperty("span").GetInt32());
+        Assert.Equal("#abc", lines.GetProperty("resourceColors").GetProperty("r1").GetString());
+    }
+
+    [Fact]
+    public void Resource_SerializesLineColorWhenSet()
+    {
+        var resource = new BlazorResourceTimelineResource
+        {
+            Id = "r1",
+            Name = "Server-01",
+            LineColor = "#15a",
+        };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(resource, Web));
+
+        Assert.Equal("#15a", doc.RootElement.GetProperty("lineColor").GetString());
+    }
+
+    [Fact]
     public void Options_OmitSurfaceWhenNull()
     {
         var options = new BlazorResourceTimelineOptions();

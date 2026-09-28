@@ -174,28 +174,61 @@ export class CanvasRenderer {
         }
     }
 
-    // All grid lines share one style, so they go into a single path with one
-    // stroke instead of a begin/stroke pair each - dozens of rasterizer setups
-    // per frame otherwise. The half-pixel offset puts a 1px line inside a pixel
-    // row rather than straddling two, which is what made the grid look blurry.
+    // Lines that share a color go into one path. A run of the default grid
+    // color stays a single stroke; a colored line starts a new one. The
+    // half-pixel offset puts a 1px line inside a pixel row rather than
+    // straddling two, which is what made the grid look blurry.
     _drawGrid(scene) {
         const ctx = this.ctx;
         const v = scene.viewport;
-        ctx.strokeStyle = scene.config.colors.grid;
+        const fallback = scene.config.colors.grid;
         ctx.lineWidth = 1;
+        this._strokeHLines(scene.gridH, v.axisWidth, v.width, fallback,
+            (line) => line.y, (line) => line.color);
+        this._strokeVLines(scene.gridV, v.axisHeight, v.height, fallback,
+            (line) => line.x, (line) => line.color);
+    }
 
-        ctx.beginPath();
-        for (const y of scene.gridH) {
-            const py = Math.round(y) + 0.5;
-            ctx.moveTo(v.axisWidth, py);
-            ctx.lineTo(v.width, py);
+    _strokeHLines(lines, x0, x1, fallback, yOf, colorOf) {
+        const ctx = this.ctx;
+        let style = null;
+        let open = false;
+        const end = () => { if (open) { ctx.stroke(); open = false; } };
+        for (let i = 0; i < lines.length; i++) {
+            const color = colorOf(lines[i]) || fallback;
+            if (color !== style) {
+                end();
+                ctx.beginPath();
+                ctx.strokeStyle = color;
+                style = color;
+                open = true;
+            }
+            const py = Math.round(yOf(lines[i])) + 0.5;
+            ctx.moveTo(x0, py);
+            ctx.lineTo(x1, py);
         }
-        for (const x of scene.gridV) {
-            const px = Math.round(x) + 0.5;
-            ctx.moveTo(px, v.axisHeight);
-            ctx.lineTo(px, v.height);
+        end();
+    }
+
+    _strokeVLines(lines, y0, y1, fallback, xOf, colorOf) {
+        const ctx = this.ctx;
+        let style = null;
+        let open = false;
+        const end = () => { if (open) { ctx.stroke(); open = false; } };
+        for (let i = 0; i < lines.length; i++) {
+            const color = colorOf(lines[i]) || fallback;
+            if (color !== style) {
+                end();
+                ctx.beginPath();
+                ctx.strokeStyle = color;
+                style = color;
+                open = true;
+            }
+            const px = Math.round(xOf(lines[i])) + 0.5;
+            ctx.moveTo(px, y0);
+            ctx.lineTo(px, y1);
         }
-        ctx.stroke();
+        end();
     }
 
     _drawBars(scene) {
@@ -331,15 +364,10 @@ export class CanvasRenderer {
         ctx.stroke();
 
         // Date row: separators batched into one stroke, then the pinned labels.
-        ctx.strokeStyle = colors.axisBorder;
-        ctx.beginPath();
-        for (const day of scene.days) {
-            if (day.sepX == null) continue;
-            const px = Math.round(day.sepX) + 0.5;
-            ctx.moveTo(px, 0);
-            ctx.lineTo(px, dateRowHeight);
-        }
-        ctx.stroke();
+        this._strokeVLines(
+            scene.days.filter(day => day.sepX != null),
+            0, dateRowHeight, colors.axisBorder,
+            (day) => day.sepX, (day) => day.sepColor);
 
         ctx.font = scene.config.dateLabelFont;
         ctx.textBaseline = 'middle';
@@ -398,6 +426,11 @@ export class CanvasRenderer {
         ctx.fillStyle = colors.axisBg;
         ctx.fillRect(0, startY, axisWidth, visibleEndY - startY);
         this._fillBands(scene.surfaceResourceAxis);
+        const rowLines = scene.resourceAxisLines;
+        if (rowLines && rowLines.length) {
+            this._strokeHLines(rowLines, 0, axisWidth, colors.grid,
+                (line) => line.y, (line) => line.color);
+        }
 
         ctx.strokeStyle = colors.axisBorder;
         ctx.lineWidth = 1;

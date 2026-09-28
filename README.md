@@ -72,6 +72,8 @@ lot of data must stay readable and interactive.
 - **Surface colors**: paint the content pane by time column, resource row, or a
   pattern across both — alternating days, hour shifts, a checkerboard, per-resource
   colors and explicit bands — via `Options.Surface`.
+- **Axis lines**: color the vertical time lines and the horizontal resource lines
+  (`Options.AxisLines`), including midnight-only day boundaries and per-row lines.
 - **Resource hierarchy**: nest resources into multi-level, collapsible groups
   via `ParentId`; click a group row (or use it from data) to expand/collapse.
 - **On-demand (windowed) loading**: for effectively unbounded datasets, serve
@@ -443,6 +445,35 @@ Surface = new()
 Stripes thinner than about a pixel, or more than a few hundred in one frame, are
 not drawn. A checker that would be that fine falls back to full-height column
 stripes.
+
+## Axis lines
+
+`Options.AxisLines` colors the grid lines that bound time columns and resource
+rows. A line with no color keeps `Colors.Grid`. A new `AxisLines` instance
+replaces the previous one; an empty instance clears it.
+
+```csharp
+AxisLines = new()
+{
+    // Recolor each midnight. The hour lines between them stay Colors.Grid.
+    BoundariesOnly = true,
+    Vertical = new()
+    {
+        Colors = ["#4dabf7", "#868e96"],
+    },
+}
+```
+
+| Piece | What it does |
+| --- | --- |
+| `Vertical` | Vertical lines, using the same day / hour / week cycle as surface columns. Every grid line takes the color of the stripe it sits in. The date-row separator at each midnight uses that day's color. |
+| `BoundariesOnly` | Only the line where a stripe starts is recolored. |
+| `Horizontal` | The line along the top of each resource row, cycling down the list. The same line is drawn across the resource column. |
+| `Resource.LineColor` | That row's line. Wins over `ResourceColors` and over `Horizontal`. |
+| `ResourceColors` | A line color per resource id, for rows that do not set `LineColor`. |
+
+When the hour grid has dropped out (zoomed out past a day of labels), day and week
+boundary lines are still drawn so the pattern has a line to sit on.
 
 ## Theming and dark mode
 

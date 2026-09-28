@@ -457,4 +457,13 @@ public class BlazorResourceTimelineOptions
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public BlazorResourceTimelineSurface? Surface { get; set; }
+
+    /// <summary>
+    /// Colors the vertical time lines and the horizontal resource lines. <c>null</c>
+    /// leaves whatever was applied before; assign an empty
+    /// <see cref="BlazorResourceTimelineAxisLines"/> to clear it. Lines left
+    /// uncolored keep <see cref="BlazorResourceTimelineColors.Grid"/>.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public BlazorResourceTimelineAxisLines? AxisLines { get; set; }
 }

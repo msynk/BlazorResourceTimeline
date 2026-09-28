@@ -171,6 +171,10 @@ export class TimelineEngine {
             // null draws only contentBg. Replaced as a whole by setOptions,
             // not merged. See _buildSurfaceScene.
             surface: null,
+            // Per-line colors for the vertical time grid and the horizontal
+            // resource grid. null keeps Colors.Grid on every line. Replaced
+            // as a whole, like surface. See _colorAxisLines.
+            axisLines: null,
             // Max stacking lanes per cluster. 0 = unlimited. Extra bars are
             // hidden and a +N label is drawn at the cluster's trailing edge.
             maxStackLanes: 0,
@@ -1254,6 +1258,9 @@ export class TimelineEngine {
                 utcTicks: [],
                 gridH: [],
                 gridV: [],
+                // Horizontal line segments across the resource column, present
+                // only for rows that have their own line color. { y, color }.
+                resourceAxisLines: [],
                 resourceRows: null,
                 bars: [],
                 overflow: [],
@@ -1281,6 +1288,8 @@ export class TimelineEngine {
         scene.utcTicks.length = 0;
         scene.gridH.length = 0;
         scene.gridV.length = 0;
+        if (!scene.resourceAxisLines) scene.resourceAxisLines = [];
+        else scene.resourceAxisLines.length = 0;
         scene.bars.length = 0;
         if (!scene.overflow) scene.overflow = [];
         else scene.overflow.length = 0;
@@ -1330,11 +1339,12 @@ export class TimelineEngine {
     buildScene() {
         const c = this.config;
         // Contents:
-        //   days       [{ sepX|null, label, labelX, labelY }]
-        //   hourTicks  [{ x, label, labelY }]  the axis-zone hour row
+        //   days       [{ sepX|null, sepColor|null, label, labelX, labelY }]
+        //   hourTicks  [{ x, ts, label, labelY }]  the axis-zone hour row
         //   utcTicks   the same, for the optional UTC row (empty when off)
-        //   gridH      horizontal grid line y positions
-        //   gridV      vertical grid line x positions
+        //   gridH      [{ y, color|null }]  horizontal lines; null color is Colors.Grid
+        //   gridV      [{ x, ts, color|null }]  vertical lines
+        //   resourceAxisLines  [{ y, color }]  row lines inside the resource column
         //   resourceRows  null when the HTML template overlay is active
         const scene = this._resetScene();
         // Renderers read colors/fonts/dimensions from here. This is a snapshot,
@@ -1419,6 +1429,8 @@ export class TimelineEngine {
             let day = this._dayNodes[scene.days.length];
             if (day === undefined) day = this._dayNodes[scene.days.length] = {};
             day.sepX = null;
+            day.sepTs = null;
+            day.sepColor = null;
             day.label = null;
             day.labelX = 0;
             day.labelY = dateRowHeight / 2;
@@ -1426,6 +1438,7 @@ export class TimelineEngine {
             // Day separator at the start boundary.
             if (dayStartX >= startX && dayStartX <= visibleEndX) {
                 day.sepX = dayStartX;
+                day.sepTs = dayStart;
             }
 
             // Sticky-header pinning: sit at the left of the day's visible
@@ -1480,6 +1493,7 @@ export class TimelineEngine {
             let tick = pool[n];
             if (tick === undefined) tick = pool[n] = {};
             tick.x = x;
+            tick.ts = hours[i].ts;
             tick.label = this._time.formatHour(hours[i].hour, this.config.hour12);
             tick.labelY = labelY;
             out.push(tick);
@@ -1514,7 +1528,7 @@ export class TimelineEngine {
         for (let i = visibleStart; i <= visibleEnd; i++) {
             const y = this.getResourceToY(i);
             if (y >= startY && y <= visibleEndY) {
-                scene.gridH.push(y);
+                scene.gridH.push({ y, color: null, rowIndex: i });
             }
         }
 
@@ -1522,8 +1536,164 @@ export class TimelineEngine {
         // has already culled to the visible span - reuse them rather than
         // repeating the (expensive) zoned-hour walk.
         for (let i = 0; i < scene.hourTicks.length; i++) {
-            scene.gridV.push(scene.hourTicks[i].x);
+            const tick = scene.hourTicks[i];
+            scene.gridV.push({ x: tick.x, ts: tick.ts, color: null });
         }
+        this._colorAxisLines(scene);
+    }
+
+    // Recolors grid lines from config.axisLines. A null color still means
+    // Colors.Grid. Day separators pick up the vertical color of that midnight,
+    // and rows with their own line color also draw that line in the resource column.
+    _colorAxisLines(scene) {
+        const spec = this.config.axisLines;
+        if (!spec) return;
+        const vertical = spec.vertical;
+        const verticalColors = vertical && this._colorList(vertical.colors);
+        if (verticalColors) {
+            const boundariesOnly = !!spec.boundariesOnly;
+            for (let i = 0; i < scene.gridV.length; i++) {
+                const line = scene.gridV[i];
+                if (line.ts == null) continue;
+                if (boundariesOnly && !this._isColumnBoundary(vertical, line.ts)) continue;
+                line.color = this._columnColorAt(vertical, line.ts);
+            }
+            if (scene.gridV.length === 0) this._addMissingBoundaryLines(scene, vertical);
+            for (let i = 0; i < scene.days.length; i++) {
+                const day = scene.days[i];
+                if (day.sepX == null || day.sepTs == null) continue;
+                day.sepColor = this._columnColorAt(vertical, day.sepTs);
+            }
+        }
+
+        const hasRowLines = (spec.horizontal && this._colorList(spec.horizontal.colors))
+            || spec.resourceColors
+            || this._anyResourceLineColor();
+        if (!hasRowLines) return;
+        for (let i = 0; i < scene.gridH.length; i++) {
+            const line = scene.gridH[i];
+            const color = this._rowLineColor(spec, line.rowIndex);
+            if (!color) continue;
+            line.color = color;
+            scene.resourceAxisLines.push({ y: line.y, color });
+        }
+    }
+
+    _anyResourceLineColor() {
+        const rows = this._rows;
+        for (let i = 0; i < rows.length; i++) {
+            if (this._colorString(rows[i].resource && rows[i].resource.lineColor)) return true;
+        }
+        return false;
+    }
+
+    // Stripe color at an instant. Same calendar rules as surface column stripes.
+    _columnColorAt(spec, ts) {
+        const colors = this._colorList(spec.colors);
+        if (!colors) return null;
+        const key = this._columnKey(spec, ts);
+        const offset = spec.offset | 0;
+        return colors[this._mod(key + offset, colors.length)];
+    }
+
+    _columnKey(spec, ts) {
+        const unitName = String(spec.unit || 'day').toLowerCase();
+        const unit = unitName === 'hour' ? 'hour' : unitName === 'week' ? 'week' : 'day';
+        const align = String(spec.align || 'continuous').toLowerCase() === 'repeat'
+            ? 'repeat' : 'continuous';
+        const span = Math.max(1, (spec.span | 0) || 1);
+        const p = this._time.parts(ts);
+        let ordinal;
+        if (unit === 'hour') {
+            ordinal = align === 'repeat' ? p.hour : (this._dayOrdinal(p) * 24 + p.hour);
+        } else if (unit === 'week') {
+            ordinal = this._weekOrdinal(p);
+        } else if (align === 'repeat') {
+            ordinal = (this._weekday(p) - this._weekStartDay() + 7) % 7;
+        } else {
+            ordinal = this._dayOrdinal(p);
+        }
+        return Math.floor(ordinal / span);
+    }
+
+    // True when `ts` is the first instant of its stripe (midnight, week start,
+    // or the first hour of a span).
+    _isColumnBoundary(spec, ts) {
+        return this._columnKey(spec, ts) !== this._columnKey(spec, ts - 60000);
+    }
+
+    // When the hour grid has dropped out (zoomed out past a day of labels),
+    // still draw the stripe boundaries so a day or week line has somewhere to sit.
+    _addMissingBoundaryLines(scene, spec) {
+        if (!this.visibleTimeRange || !this._time) return;
+        const unitName = String(spec.unit || 'day').toLowerCase();
+        const unit = unitName === 'hour' ? 'hour' : unitName === 'week' ? 'week' : 'day';
+        const pph = this._pixelsPerHour;
+        if (!(pph > 0)) return;
+        const lines = scene.gridV;
+        const visEnd = this.visibleTimeRange.end;
+        let count = 0;
+        if (unit === 'hour') {
+            if (pph < 1.25) return;
+            const points = this._hourStripePoints();
+            for (let i = 0; i < points.length && count < 800; i++) {
+                const ts = points[i].ts;
+                if (!this._isColumnBoundary(spec, ts)) continue;
+                this._pushBoundaryLine(lines, ts, this._columnColorAt(spec, ts));
+                count++;
+            }
+            return;
+        }
+        let dayStart = this._time.startOfDay(this.visibleTimeRange.start);
+        for (let guard = 0; dayStart <= visEnd && guard < 10000 && count < 800; guard++) {
+            const dayEnd = this._time.nextDay(dayStart);
+            if (!(dayEnd > dayStart)) break;
+            if (this._isColumnBoundary(spec, dayStart)) {
+                this._pushBoundaryLine(lines, dayStart, this._columnColorAt(spec, dayStart));
+                count++;
+            }
+            dayStart = dayEnd;
+        }
+        lines.sort((a, b) => a.x - b.x);
+    }
+
+    _pushBoundaryLine(lines, ts, color) {
+        const axisX = this.config.resourceAxisWidth;
+        const x = this.getTimeToX(ts);
+        if (x < axisX || x > this._viewportW || !color) return;
+        for (let i = 0; i < lines.length; i++) {
+            if (Math.abs(lines[i].x - x) < 0.75) {
+                lines[i].color = color;
+                lines[i].ts = ts;
+                return;
+            }
+        }
+        lines.push({ x, ts, color });
+    }
+
+    _rowStripeColor(rows, index) {
+        if (!rows) return null;
+        const palette = this._colorList(rows.colors);
+        if (!palette) return null;
+        const span = Math.max(1, (rows.span | 0) || 1);
+        const offset = rows.offset | 0;
+        return palette[this._mod(Math.floor(index / span) + offset, palette.length)];
+    }
+
+    // Line along the top of row `index`. The closing line under the last row
+    // has no resource and follows the stripe only.
+    _rowLineColor(spec, index) {
+        if (index >= 0 && index < this._rows.length) {
+            const resource = this._rows[index].resource;
+            const own = this._colorString(resource && resource.lineColor);
+            if (own) return own;
+            const map = spec.resourceColors;
+            if (map && resource) {
+                const mapped = this._colorString(map[resource.id]);
+                if (mapped) return mapped;
+            }
+        }
+        return this._rowStripeColor(spec.horizontal, index);
     }
 
     // Vertical indicator at the current time, only when "now" falls within the
