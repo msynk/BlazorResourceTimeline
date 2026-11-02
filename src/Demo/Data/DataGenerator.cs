@@ -55,6 +55,11 @@ public static class DataGenerator
     // Fraction of bars that receive one or more decorative icons.
     private const double IconProbability = 0.35;
 
+    // Fraction of the bars without icons that are split into phases with bar
+    // sections, and the height those bars get so the section text fits.
+    private const double SectionProbability = 0.2;
+    private const int SectionedBarHeight = 16;
+
     // Fraction of bars that get a second bar overlapping them in time, so the
     // overlap stacking (the bar-margin option) has something to demonstrate.
     private const double OverlapProbability = 0.15;
@@ -288,6 +293,39 @@ public static class DataGenerator
         allocation.Height = tallestInsideIcon > 0 ? tallestInsideIcon + 6 : null;
     }
 
+    // Prep, main and wrap-up phases of one bar. Bounded by percentages, so they
+    // move and stretch with the bar when it is edited. The main phase sets no
+    // background and shows the bar's own color; the wrap-up phase is outlined
+    // in it.
+    private static List<BlazorResourceTimelineBarSection> PhaseSections(string barColor, string label) =>
+    [
+        new()
+        {
+            EndPercent = 20,
+            BackgroundColor = "#fab005",
+            ForegroundColor = "#212529",
+            Text = "Prep",
+            Icon = IconSources[5],
+            IconSize = 12,
+        },
+        new()
+        {
+            StartPercent = 20,
+            EndPercent = 85,
+            ForegroundColor = "#ffffff",
+            Text = label,
+        },
+        new()
+        {
+            StartPercent = 85,
+            BackgroundColor = "#e9ecef",
+            BorderColor = barColor,
+            ForegroundColor = "#212529",
+            Text = "Wrap",
+            TextPosition = BlazorResourceTimelineBarSectionPosition.End,
+        },
+    ];
+
     // Generates and appends the allocation bars for a single resource. Shared by the
     // synchronous and asynchronous generation paths to keep their behavior identical.
     private static void AddAllocationsForResource(
@@ -386,6 +424,14 @@ public static class DataGenerator
 
                 allocation.Icons = icons;
                 ApplyIconPlacement(allocation, inside: false);
+            }
+            // Split some of the others into phases to showcase bar sections.
+            // Bars with icons are left out: the icon placement toggle resets
+            // their height.
+            else if (random.NextDouble() < SectionProbability)
+            {
+                allocation.Height = SectionedBarHeight;
+                allocation.Sections = PhaseSections(color, $"{abbrev}{resourceNum}");
             }
 
             allocations.Add(allocation);

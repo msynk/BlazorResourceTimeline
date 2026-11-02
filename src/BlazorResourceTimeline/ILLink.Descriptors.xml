@@ -54,10 +54,12 @@
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineAllocation" preserve="all" />
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineBarIcon" preserve="all" />
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineEdgeBar" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineBarSection" preserve="all" />
 
     <!-- Enum fields are read by name by JsonStringEnumConverter. -->
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineRendererType" preserve="all" />
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineBarIconPosition" preserve="all" />
+    <type fullname="BlazorResourceTimeline.BlazorResourceTimelineBarSectionPosition" preserve="all" />
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineEmptyDragAction" preserve="all" />
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineSurfaceUnit" preserve="all" />
     <type fullname="BlazorResourceTimeline.BlazorResourceTimelineStripeAlign" preserve="all" />
@@ -70,6 +72,7 @@
 
     <!-- Instantiated by System.Text.Json from the [JsonConverter] attributes. -->
     <type fullname="BlazorResourceTimeline.UnixTimeMillisecondsJsonConverter" preserve="all" />
+    <type fullname="BlazorResourceTimeline.NullableUnixTimeMillisecondsJsonConverter" preserve="all" />
     <type fullname="BlazorResourceTimeline.MillisecondsTimeSpanJsonConverter" preserve="all" />
 
   </assembly>

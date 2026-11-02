@@ -100,8 +100,9 @@ lot of data must stay readable and interactive.
   a light, dark or brand palette is just another `Options` instance - switchable
   at runtime (the demo ships a dark theme).
 - **Rich bars**: per-bar colors and heights, labels (above/below/start/end),
-  image/SVG icons anchored to any side, start/end "edge" (delay) bars, and
-  `ClassName` on the HTML renderer.
+  image/SVG icons anchored to any side, start/end "edge" (delay) bars,
+  sections that split a bar into parts with their own colors, text and icon,
+  and `ClassName` on the HTML renderer.
 - **Dimensions & fonts**: axis sizes, row height, bar sizing and every label
   font are configurable. The resource column is resizable by default.
 
@@ -537,6 +538,7 @@ presentation:
 | `TextStart` / `TextEnd` | Labels just outside the start / end edge. |
 | `Icons` | Images or data-URI SVGs anchored `Start`, `End`, `Above`, `Below` or `Center`. Several at one position lay out side by side, growing away from the bar - or as one centered group for `Center`. `Inside = true` moves an icon within the bar, against the edge its position names (`Center` is always inside). |
 | `StartBar` / `EndBar` | Decorative "edge" bars extending before the start / after the end, each with its own `Duration` and `Color` - typically delays. |
+| `Sections` | Parts of the bar with their own background, border and text colors, text and icon (see [Bar sections](#bar-sections)). |
 | `Tooltip` | Hover text (see [Tooltips](#tooltips)). |
 | `ClassName` | CSS class on the HTML-renderer bar element (paint only; canvas/SVG ignore it). Pointer events still go to the surface, so `:hover` on the bar does not fire. |
 | `Locked` | Selectable, not movable/resizable. |
@@ -567,6 +569,63 @@ so zoomed-out boards stay readable. Edge bars and icons are decoration only -
 they are not selectable and never become hit targets. When a decorated bar
 overlaps another on the same row, the two are stacked far enough apart to keep
 both readable (see [Overlapping allocations](#overlapping-allocations)).
+
+### Bar sections
+
+`Sections` splits a bar into parts - the phases of a turnaround, the portion
+of a job that has run, a maintenance window inside a booking. Each
+`BlazorResourceTimelineBarSection` is drawn over the bar, in list order, and
+always stays inside it:
+
+| Property | Effect |
+| --- | --- |
+| `StartTime` / `EndTime` | Bounds as absolute times. Win over the percentages for the same edge. |
+| `StartPercent` / `EndPercent` | Bounds as 0-100 percent of the bar's duration, from its start. |
+| `BackgroundColor` | Section fill. Unset leaves the bar's own fill showing. |
+| `BorderColor` | 1px border just inside the section. Unset draws none, like the bar. |
+| `ForegroundColor` | Text color. Unset uses `Colors.BarLabel`. |
+| `Text` / `TextPosition` | Text inside the section at `Start`, `Center` (default) or `End`. |
+| `Icon` / `IconPosition` / `IconSize` | Image URL or data URI at `Start` (default), `Center` or `End`, fitted in an `IconSize` box (default `Options.BarIconSize`). |
+
+An edge given neither way is the bar's own edge, so a section without bounds
+covers the whole bar. Bounds are clamped to the bar; a section left empty is
+not drawn. An icon sharing a position with the text sits nearer the section's
+edge, or before the text when both are centered.
+
+Text and icons are fitted, never cut off or allowed to spill over: an icon
+shrinks to the bar's height, and anything that does not fit the room left in
+its section (text wider than it, or taller than the bar) is skipped for that
+frame. Give sectioned bars a `Height` that fits the label font - the default
+4px bar shows a section's colors but not its text.
+
+```csharp
+new BlazorResourceTimelineAllocation
+{
+    Id = "f-100",
+    ResourceId = "gate-a1",
+    StartTime = start,
+    EndTime = start.AddHours(2),
+    Color = "#1971c2",
+    Height = 16,
+    Sections =
+    [
+        // First 15 minutes: boarding, by time.
+        new() { EndTime = start.AddMinutes(15), BackgroundColor = "#fab005",
+                ForegroundColor = "#212529", Text = "Boarding" },
+        // The rest keeps the bar color and just carries a label and an icon.
+        new() { StartTime = start.AddMinutes(15), ForegroundColor = "#fff", Text = "LH441",
+                Icon = "/icons/plane.svg", IconPosition = BlazorResourceTimelineBarSectionPosition.Start },
+        // Last 10 percent: outlined buffer.
+        new() { StartPercent = 90, BackgroundColor = "#e9ecef", BorderColor = "#1971c2" },
+    ],
+}
+```
+
+Times are absolute. Moving or resizing the bar leaves a time-bounded section
+where it was (clipped to the bar's new span), while a percentage-bounded one
+travels and stretches with the bar - prefer percentages on editable bars, or
+update the sections in `OnAllocationChanged`. Sections are decoration only:
+the whole bar stays the hit target.
 
 ## Editing
 

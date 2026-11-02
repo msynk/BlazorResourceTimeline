@@ -46,6 +46,18 @@ public class InteropTimeConvertersTests
     }
 
     [Fact]
+    public void NullableDateTimeOffset_RoundTripsValueAndNull()
+    {
+        var options = Options(new NullableUnixTimeMillisecondsJsonConverter());
+        DateTimeOffset? value = DateTimeOffset.FromUnixTimeMilliseconds(1_700_000_000_123);
+
+        Assert.Equal("1700000000123", JsonSerializer.Serialize(value, options));
+        Assert.Equal(value, JsonSerializer.Deserialize<DateTimeOffset?>("1700000000123", options));
+        Assert.Equal("null", JsonSerializer.Serialize<DateTimeOffset?>(null, options));
+        Assert.Null(JsonSerializer.Deserialize<DateTimeOffset?>("null", options));
+    }
+
+    [Fact]
     public void TimeSpan_WritesMillisecondsNumber()
     {
         var options = Options(new MillisecondsTimeSpanJsonConverter());

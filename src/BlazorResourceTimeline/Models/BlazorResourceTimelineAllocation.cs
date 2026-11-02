@@ -80,6 +80,15 @@ public class BlazorResourceTimelineAllocation
     public List<BlazorResourceTimelineBarIcon>? Icons { get; set; }
 
     /// <summary>
+    /// Optional parts of the bar drawn with their own background, border and text
+    /// colors, and their own text and icon. Each is bounded by times or by
+    /// percentages of the bar, always within the bar, and drawn over it in list
+    /// order. See <see cref="BlazorResourceTimelineBarSection"/>.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<BlazorResourceTimelineBarSection>? Sections { get; set; }
+
+    /// <summary>
     /// Optional host payload preserved on this instance. Serialized as camelCase
     /// <c>data</c> on the JS wire; the engine never reads it and does not paint it.
     /// Stuff a host DTO with <c>JsonSerializer.SerializeToElement</c>.

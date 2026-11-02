@@ -29,6 +29,40 @@ public sealed class UnixTimeMillisecondsJsonConverter : JsonConverter<DateTimeOf
 }
 
 /// <summary>
+/// The nullable form of <see cref="UnixTimeMillisecondsJsonConverter"/>: a set
+/// value is written as Unix milliseconds, and <c>null</c> stays a JSON null.
+/// </summary>
+public sealed class NullableUnixTimeMillisecondsJsonConverter : JsonConverter<DateTimeOffset?>
+{
+    /// <inheritdoc />
+    public override DateTimeOffset? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.Null)
+        {
+            return null;
+        }
+
+        var ms = reader.TokenType == JsonTokenType.String
+            ? long.Parse(reader.GetString()!, CultureInfo.InvariantCulture)
+            : reader.GetInt64();
+        return DateTimeOffset.FromUnixTimeMilliseconds(ms);
+    }
+
+    /// <inheritdoc />
+    public override void Write(Utf8JsonWriter writer, DateTimeOffset? value, JsonSerializerOptions options)
+    {
+        if (value is { } time)
+        {
+            writer.WriteNumberValue(time.ToUnixTimeMilliseconds());
+        }
+        else
+        {
+            writer.WriteNullValue();
+        }
+    }
+}
+
+/// <summary>
 /// Serializes a <see cref="TimeSpan"/> as a whole number of milliseconds (a JSON
 /// number), matching the duration representation the canvas renderer expects.
 /// </summary>

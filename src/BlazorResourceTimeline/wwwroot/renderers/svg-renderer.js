@@ -117,6 +117,7 @@ export class SvgRenderer {
             gridV: pool(this._gridGroup),
             barEdges: pool(this._barsGroup),
             barRects: pool(this._barsGroup, clearBarId),
+            barSections: pool(this._barsGroup),
             barOutlines: pool(this._barsGroup),
             barIcons: pool(this._barsGroup),
             barLabels: pool(this._barsGroup),
@@ -285,6 +286,20 @@ export class SvgRenderer {
                 barEl.__barId = bar.id;
             }
 
+            if (bar.sections) {
+                for (const s of bar.sections) {
+                    // A bordered section is inset by half the stroke, which
+                    // keeps the 1px border inside it and the fill still
+                    // reaching its edges under the stroke.
+                    if (s.borderColor) {
+                        this._rect(p.barSections, s.x + 0.5, s.y + 0.5, s.width - 1, s.height - 1,
+                            s.color, s.borderColor, 1);
+                    } else {
+                        this._rect(p.barSections, s.x, s.y, s.width, s.height, s.color);
+                    }
+                }
+            }
+
             if (bar.outline) {
                 this._rect(p.barOutlines, bar.outline.x, bar.outline.y, bar.outline.width, bar.outline.height,
                     null, c.colors.barSelectedBorder, 2);
@@ -317,7 +332,7 @@ export class SvgRenderer {
             if (bar.labels) {
                 for (const label of bar.labels) {
                     this._text(p.barLabels, label.text, label.x, label.y,
-                        c.barLabelFont, c.colors.barLabel, label.align, label.baseline);
+                        c.barLabelFont, label.color || c.colors.barLabel, label.align, label.baseline);
                 }
             }
         }

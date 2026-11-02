@@ -1316,21 +1316,23 @@ export class TimelineEngine {
             node = this._barNodes[index] = {
                 id: '', x: 0, y: 0, width: 0, height: 0, color: '', selected: false,
                 className: '',
-                edges: null, outline: null, focusRing: null, icons: null, labels: null,
+                edges: null, sections: null, outline: null, focusRing: null, icons: null, labels: null,
                 // Reusable backing storage, attached to the public fields above
                 // only when this bar actually has that decoration.
-                _edges: [], _icons: [], _labels: [],
+                _edges: [], _sections: [], _icons: [], _labels: [],
                 _outline: { x: 0, y: 0, width: 0, height: 0 },
                 _focusRing: { x: 0, y: 0, width: 0, height: 0 }
             };
         }
         node.edges = null;
+        node.sections = null;
         node.outline = null;
         node.focusRing = null;
         node.icons = null;
         node.labels = null;
         node.className = '';
         node._edges.length = 0;
+        node._sections.length = 0;
         node._icons.length = 0;
         node._labels.length = 0;
         return node;
@@ -2290,6 +2292,12 @@ export class TimelineEngine {
                     node.focusRing = ring;
                 }
 
+                // Sections paint over the main bar at any zoom; their text and
+                // icons are dropped individually when they stop fitting.
+                if (alloc.sections && alloc.sections.length) {
+                    this._buildBarSections(alloc, node, barX, barWidth, barTop, stackCenterY, barHeight);
+                }
+
                 // Per-bar labels and icons (only when present, to keep the
                 // common path cheap). Level-of-detail: skip decorations for
                 // bars too narrow to sit beside without overlapping their
@@ -2440,6 +2448,132 @@ export class TimelineEngine {
             labels.push({ text: alloc.textEnd, x: endEdgeX + gap, y: barCenterY, align: 'left', baseline: 'middle' });
         }
         if (labels.length) node.labels = labels;
+    }
+
+    // Lays out the optional sections of a single bar: spans of the main bar,
+    // each bounded by times or by percentages of the bar's duration (a time
+    // wins for the same edge, and a missing edge is the bar's own), clamped
+    // to the bar as drawn. A section without its own background leaves the
+    // bar's fill showing, so the node carries a null color for it. Section
+    // text joins the bar's labels with its own color; icons join the icons.
+    _buildBarSections(alloc, node, barX, barWidth, barTop, barCenterY, barHeight) {
+        const barStart = alloc.startTime;
+        const barEnd = alloc.endTime;
+        const duration = barEnd - barStart;
+        const barRight = barX + barWidth;
+        for (const section of alloc.sections) {
+            if (!section) continue;
+            const start = Math.max(barStart,
+                this._sectionEdge(section.startTime, section.startPercent, barStart, duration, barStart));
+            const end = Math.min(barEnd,
+                this._sectionEdge(section.endTime, section.endPercent, barStart, duration, barEnd));
+            if (!(end > start)) continue;
+            const x = Math.max(barX, this.getTimeToX(start));
+            const endX = Math.min(barRight, this.getTimeToX(end));
+            if (!(endX > x)) continue;
+
+            const color = section.backgroundColor || null;
+            const borderColor = section.borderColor || null;
+            if (color || borderColor) {
+                node.sections = node._sections;
+                node._sections.push({ x, y: barTop, width: endX - x, height: barHeight, color, borderColor });
+            }
+            if (section.text || section.icon) {
+                this._buildSectionContent(section, node, x, endX, barCenterY, barHeight);
+            }
+        }
+    }
+
+    _sectionEdge(time, percent, barStart, duration, fallback) {
+        if (typeof time === 'number' && Number.isFinite(time)) return time;
+        if (typeof percent === 'number' && Number.isFinite(percent)) {
+            return barStart + duration * percent / 100;
+        }
+        return fallback;
+    }
+
+    // Places a section's icon and text within [left, right], inset by the
+    // label gap. Icons go first: one at the start or end hugs that edge and
+    // narrows the room left, then text at an edge takes the next slot in from
+    // it. Centered items form one group (icon before text) centered on the
+    // section. Whatever does not fit the room left is dropped - the text when
+    // a centered pair is too wide - so nothing overlaps or leaves the section.
+    _buildSectionContent(section, node, left, right, centerY, height) {
+        const metrics = this._labelMetrics();
+        const gap = metrics.gap;
+        let lo = left + gap;
+        let hi = right - gap;
+
+        let icon = null;
+        if (section.icon) {
+            const img = this._getImage(section.icon);
+            // Skip until loaded, like bar icons; onload re-renders.
+            if (img && img.complete && img.naturalWidth > 0) {
+                const box = Math.min(section.iconSize > 0 ? section.iconSize : metrics.iconSize, height);
+                const ratio = img.naturalWidth / img.naturalHeight;
+                icon = ratio >= 1
+                    ? { width: box, height: box / ratio }
+                    : { width: box * ratio, height: box };
+            }
+        }
+        const text = section.text && metrics.fontSize <= height ? section.text : null;
+        const textWidth = text ? this._labelWidth(text) : 0;
+        const iconPos = this._sectionPosition(section.iconPosition, 'start');
+        const textPos = this._sectionPosition(section.textPosition, 'center');
+
+        const placeIcon = (x) => {
+            node.icons = node._icons;
+            node._icons.push({
+                source: section.icon,
+                x, y: centerY - icon.height / 2,
+                width: icon.width, height: icon.height
+            });
+        };
+        const placeText = (x, align) => {
+            node.labels = node._labels;
+            node._labels.push({
+                text, x, y: centerY, align, baseline: 'middle',
+                color: section.foregroundColor || null
+            });
+        };
+
+        if (icon && iconPos !== 'center') {
+            if (icon.width <= hi - lo) {
+                if (iconPos === 'end') {
+                    placeIcon(hi - icon.width);
+                    hi -= icon.width + gap;
+                } else {
+                    placeIcon(lo);
+                    lo += icon.width + gap;
+                }
+            }
+            icon = null;
+        }
+        let centerText = text;
+        if (text && textPos !== 'center') {
+            if (textWidth <= hi - lo) {
+                if (textPos === 'end') placeText(hi, 'right');
+                else placeText(lo, 'left');
+            }
+            centerText = null;
+        }
+
+        const centerX = (left + right) / 2;
+        const fits = (width) => centerX - width / 2 >= lo && centerX + width / 2 <= hi;
+        if (icon && centerText && fits(icon.width + gap + textWidth)) {
+            const x = centerX - (icon.width + gap + textWidth) / 2;
+            placeIcon(x);
+            placeText(x + icon.width + gap, 'left');
+        } else if (icon && fits(icon.width)) {
+            placeIcon(centerX - icon.width / 2);
+        } else if (centerText && fits(textWidth)) {
+            placeText(centerX, 'center');
+        }
+    }
+
+    _sectionPosition(value, fallback) {
+        const pos = String(value || fallback).toLowerCase();
+        return pos === 'start' || pos === 'center' || pos === 'end' ? pos : fallback;
     }
 
     // Marquee rectangle (converting content coords back to viewport space).
@@ -4845,6 +4979,7 @@ export class TimelineEngine {
             metrics = this._labelMetricsCache = {
                 gen: this._decorGen,
                 gap: c.barLabelGap,
+                fontSize,
                 lineHeight: Math.ceil(fontSize * LABEL_LINE_HEIGHT_RATIO),
                 iconSize: c.barIconSize
             };
@@ -5187,6 +5322,7 @@ export class TimelineEngine {
         dest.startBar = src.startBar;
         dest.endBar = src.endBar;
         dest.icons = src.icons;
+        dest.sections = src.sections;
         dest.data = src.data;
         dest.locked = src.locked;
         dest.className = src.className;

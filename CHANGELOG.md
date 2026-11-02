@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Allocation.Sections` splits a bar into parts drawn over it, each a
+  `BlazorResourceTimelineBarSection`. A section is bounded by `StartTime` /
+  `EndTime` or by `StartPercent` / `EndPercent` of the bar (a time wins for the
+  same edge, a missing edge is the bar's own) and is clamped to the bar. It has
+  optional `BackgroundColor`, `BorderColor` and `ForegroundColor` - falling back
+  to the bar's fill, no border, and `Colors.BarLabel` - plus optional `Text` and
+  `Icon`, each placed at `Start`, `Center` or `End` of the section
+  (`BlazorResourceTimelineBarSectionPosition`). Text and icons that do not fit
+  their section are skipped rather than clipped. Works on all three renderers.
+  The demo splits some generated bars into prep, main and wrap-up phases.
+
 ## [0.9.0] - 2026-09-28
 
 ### Added

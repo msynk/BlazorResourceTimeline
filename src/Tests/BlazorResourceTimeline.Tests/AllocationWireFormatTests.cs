@@ -70,6 +70,89 @@ public class AllocationWireFormatTests
     }
 
     [Fact]
+    public void Sections_SerializeWithExpectedNames()
+    {
+        var alloc = new BlazorResourceTimelineAllocation
+        {
+            Id = "a1",
+            ResourceId = "r1",
+            StartTime = DateTimeOffset.FromUnixTimeMilliseconds(0),
+            EndTime = DateTimeOffset.FromUnixTimeMilliseconds(3_600_000),
+            Sections =
+            [
+                new()
+                {
+                    StartTime = DateTimeOffset.FromUnixTimeMilliseconds(600_000),
+                    EndPercent = 75.5,
+                    BackgroundColor = "#e03131",
+                    BorderColor = "#000",
+                    ForegroundColor = "#fff",
+                    Text = "Taxi",
+                    TextPosition = BlazorResourceTimelineBarSectionPosition.End,
+                    Icon = "/icons/plane.svg",
+                    IconPosition = BlazorResourceTimelineBarSectionPosition.Center,
+                    IconSize = 12,
+                },
+            ],
+        };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(alloc, Web));
+        var section = doc.RootElement.GetProperty("sections")[0];
+
+        Assert.Equal(JsonValueKind.Number, section.GetProperty("startTime").ValueKind);
+        Assert.Equal(600_000, section.GetProperty("startTime").GetInt64());
+        Assert.Equal(75.5, section.GetProperty("endPercent").GetDouble());
+        Assert.Equal("#e03131", section.GetProperty("backgroundColor").GetString());
+        Assert.Equal("#000", section.GetProperty("borderColor").GetString());
+        Assert.Equal("#fff", section.GetProperty("foregroundColor").GetString());
+        Assert.Equal("Taxi", section.GetProperty("text").GetString());
+        Assert.Equal("end", section.GetProperty("textPosition").GetString(), ignoreCase: true);
+        Assert.Equal("/icons/plane.svg", section.GetProperty("icon").GetString());
+        Assert.Equal("center", section.GetProperty("iconPosition").GetString(), ignoreCase: true);
+        Assert.Equal(12, section.GetProperty("iconSize").GetInt32());
+    }
+
+    [Fact]
+    public void Sections_OmitUnsetBoundsAndColors()
+    {
+        var alloc = new BlazorResourceTimelineAllocation
+        {
+            Id = "a1",
+            ResourceId = "r1",
+            StartTime = DateTimeOffset.FromUnixTimeMilliseconds(0),
+            EndTime = DateTimeOffset.FromUnixTimeMilliseconds(1000),
+            Sections = [new() { StartPercent = 50 }],
+        };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(alloc, Web));
+        var section = doc.RootElement.GetProperty("sections")[0];
+
+        // The engine falls back to the bar's own edge and colors for anything
+        // missing, so an unset value must be absent rather than a 0 or "".
+        Assert.False(section.TryGetProperty("startTime", out _));
+        Assert.False(section.TryGetProperty("endTime", out _));
+        Assert.False(section.TryGetProperty("endPercent", out _));
+        Assert.False(section.TryGetProperty("backgroundColor", out _));
+        Assert.Equal("start", section.GetProperty("iconPosition").GetString(), ignoreCase: true);
+        Assert.Equal("center", section.GetProperty("textPosition").GetString(), ignoreCase: true);
+    }
+
+    [Fact]
+    public void Allocation_OmitsSectionsWhenNull()
+    {
+        var alloc = new BlazorResourceTimelineAllocation
+        {
+            Id = "a1",
+            ResourceId = "r1",
+            StartTime = DateTimeOffset.FromUnixTimeMilliseconds(0),
+            EndTime = DateTimeOffset.FromUnixTimeMilliseconds(1000),
+        };
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(alloc, Web));
+        Assert.False(doc.RootElement.TryGetProperty("sections", out _));
+    }
+
+    [Fact]
     public void Options_SerializeEditingKeysWithExpectedNames()
     {
         var options = new BlazorResourceTimelineOptions

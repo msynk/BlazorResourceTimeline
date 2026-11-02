@@ -250,6 +250,23 @@ export class CanvasRenderer {
             ctx.fillStyle = bar.color;
             ctx.fillRect(bar.x, bar.y, bar.width, bar.height);
 
+            if (bar.sections) {
+                for (const section of bar.sections) {
+                    if (section.color) {
+                        ctx.fillStyle = section.color;
+                        ctx.fillRect(section.x, section.y, section.width, section.height);
+                    }
+                    // Inset by half the line so the 1px border stays inside
+                    // the section rather than straddling its edge.
+                    if (section.borderColor) {
+                        ctx.strokeStyle = section.borderColor;
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(section.x + 0.5, section.y + 0.5,
+                            Math.max(0, section.width - 1), Math.max(0, section.height - 1));
+                    }
+                }
+            }
+
             if (bar.outline) {
                 ctx.strokeStyle = c.colors.barSelectedBorder;
                 ctx.lineWidth = 2;
@@ -280,8 +297,9 @@ export class CanvasRenderer {
                     ctx.font = c.barLabelFont;
                     fontSet = true;
                 }
-                ctx.fillStyle = c.colors.barLabel;
                 for (const label of bar.labels) {
+                    // Section text carries its own color; other labels do not.
+                    ctx.fillStyle = label.color || c.colors.barLabel;
                     ctx.textAlign = label.align;
                     ctx.textBaseline = label.baseline;
                     ctx.fillText(label.text, label.x, label.y);

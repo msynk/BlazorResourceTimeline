@@ -109,6 +109,7 @@ export class HtmlRenderer {
             gridV: new NodePool(this._gridLayer),
             barEdges: new NodePool(this._barsLayer),
             barRects: new NodePool(this._barsLayer, null, clearBarId),
+            barSections: new NodePool(this._barsLayer),
             barOutlines: new NodePool(this._barsLayer),
             barIcons: new NodePool(this._barsLayer),
             barLabels: new NodePool(this._barsLayer),
@@ -246,6 +247,13 @@ export class HtmlRenderer {
                 barEl.__className = nextClass;
             }
 
+            if (bar.sections) {
+                for (const s of bar.sections) {
+                    this._rect(p.barSections, s.x, s.y, s.width, s.height, s.color,
+                        s.borderColor ? `1px solid ${s.borderColor}` : null);
+                }
+            }
+
             // A 2px stroke centred on the rect covers one extra pixel on each
             // side; a border-box div grown by 1px per side matches that.
             if (bar.outline) {
@@ -287,7 +295,7 @@ export class HtmlRenderer {
             if (bar.labels) {
                 for (const label of bar.labels) {
                     this._text(p.barLabels, label.text, label.x, label.y,
-                        c.barLabelFont, c.colors.barLabel, label.align, label.baseline);
+                        c.barLabelFont, label.color || c.colors.barLabel, label.align, label.baseline);
                 }
             }
         }

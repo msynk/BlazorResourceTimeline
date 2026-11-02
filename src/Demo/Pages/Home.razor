@@ -552,10 +552,20 @@
                         StartTime = DateTimeOffset.UtcNow.AddHours(2).ToUnixTimeMilliseconds(),
                         EndTime = DateTimeOffset.UtcNow.AddHours(8).ToUnixTimeMilliseconds(),
                         Color = "#2f9e44",
+                        Height = 16,
                         TextBelow = "Maintenance",
                         Icons = new List<BlazorResourceTimelineBarIcon>
                         {
                             new() { Source = "/icons/lock.svg", Position = BlazorResourceTimelineBarIconPosition.Start, Size = 16 },
+                        },
+                        // Sections split the bar into parts with their own
+                        // colors, text and icon, bounded by times or by
+                        // percentages of the bar. Colors left unset fall back
+                        // to the bar's.
+                        Sections = new List<BlazorResourceTimelineBarSection>
+                        {
+                            new() { EndPercent = 25, BackgroundColor = "#8ce99a", ForegroundColor = "#212529", Text = "Backup" },
+                            new() { StartPercent = 25, ForegroundColor = "#fff", Text = "Upgrade", TextPosition = BlazorResourceTimelineBarSectionPosition.Start },
                         },
                     },
                 },
